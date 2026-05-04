@@ -1,0 +1,49 @@
+# Framework (should not contain competition-specific files)
+
+## Credentials
+.env
+
+## Competition data (regenerated per instance)
+data/raw/
+data/processed/
+/SKILL_STATE.json
+/challenge_config.json
+
+## Competition outputs
+submissions/
+/notebooks/
+/reports/experiments.db
+/reports/experiments.json
+/reports/*.md
+/competitions/
+
+## Per-competition folders (if multi-competition layout)
+competitions/*/data/
+competitions/*/submissions/
+competitions/*/reports/
+competitions/*/SKILL_STATE.json
+competitions/*/challenge_config.json
+
+## Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+## Debug artifacts
+opencode_output.txt
+*.jsonl
+
+## IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## OS
+.DS_Store
+Thumbs.db

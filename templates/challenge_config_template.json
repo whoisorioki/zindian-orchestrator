@@ -1,0 +1,18 @@
+{
+    "name": null,
+    "slug": null,
+    "metric": null,
+    "metric_direction": null,
+    "submission_format": null,
+    "use_probabilities": false,
+    "daily_limit": null,
+    "total_limit": null,
+    "public_split_pct": null,
+    "private_split_pct": null,
+    "team_allowed": null,
+    "code_review_tier": null,
+    "allowed_external_data": false,
+    "automl_permitted": false,
+    "data_modality": null,
+    "domain": null
+}

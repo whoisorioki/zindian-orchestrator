@@ -1,0 +1,21 @@
+{
+    "competition": "<slug>",
+    "md5_target_hash": null,
+    "current_git_branch": "main",
+    "anchor_git_branch": null,
+    "anchor_oof_rmse": null,
+    "anchor_lb_score": null,
+    "feature_round": 0,
+    "variants_tested": 0,
+    "variants_passed": 0,
+    "best_variant_this_round": null,
+    "best_variant_oof_rmse": null,
+    "submissions_used_today": 0,
+    "submissions_used_total": 0,
+    "remaining_submissions": null,
+    "dag_phase": "uninitialized",
+    "human_gate_13_approved": false,
+    "human_gate_14_approved": false,
+    "selected_submissions": [],
+    "last_updated": null
+}
