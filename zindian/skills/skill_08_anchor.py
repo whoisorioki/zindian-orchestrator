@@ -28,11 +28,14 @@ def load_data(paths) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     train = pd.read_csv(paths.data_raw_dir / "Training_Data.csv")
     test  = pd.read_csv(paths.data_raw_dir / "Test.csv")
 
-    # Read target column name from SampleSubmission — source of truth
-    sample = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
-    target_col = [c for c in sample.columns if c.upper() != "ID"][0]
+    # Training target column (actual label column in Training_Data.csv)
+    target_col = "Occurrence Status"
 
-    return train, test, target_col
+    # Submission target column (column name Zindi expects in submission file)
+    sample = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
+    submission_col = [c for c in sample.columns if c.upper() != "ID"][0]
+
+    return train, test, target_col, submission_col
 
 
 def compute_oof_predictions(
@@ -162,7 +165,7 @@ def run(*, n_splits: int = 5, random_seed: int = 42) -> dict:
     print(f"Use probabilities: {config.use_probabilities}")
 
     # ── Load data ──────────────────────────────────────────────
-    train, test, target_col = load_data(paths)
+    train, test, target_col, submission_col = load_data(paths)
     print(f"\nData loaded:")
     print(f"  Train  : {train.shape}")
     print(f"  Test   : {test.shape}")
@@ -186,7 +189,7 @@ def run(*, n_splits: int = 5, random_seed: int = 42) -> dict:
 
     # ── Save submission ────────────────────────────────────────
     sub_path = paths.submissions_dir / "sub_001_anchor.csv"
-    save_submission(test["ID"].values, test_preds, target_col, sub_path)
+    save_submission(test["ID"].values, test_preds, submission_col, sub_path)
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()
