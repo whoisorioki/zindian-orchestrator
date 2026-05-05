@@ -515,20 +515,20 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     VARIANTS = {
         # Round 1
-        "variant-06": ["Latitude","Longitude"] + tc_all,
-        "variant-07": ["Latitude","Longitude"] + tc_temp,
-        "variant-08": ["Latitude","Longitude"] + tc_water,
-        "variant-09": ["Latitude","Longitude"] + tc_rad,
+        "variant-06": [tc_all,
+        "variant-07": [tc_temp,
+        "variant-08": [tc_water,
+        "variant-09": [tc_rad,
         # Round 2 — SHAP-driven
-        "variant-10": ["Latitude","Longitude"] + shap_top10,
-        "variant-11": ["Latitude","Longitude"] + tc_clean,
-        "variant-12": ["Latitude","Longitude"] + shap_top20,
-        "variant-13": ["Latitude","Longitude"] + tc_all,    # hyperparams differ
-        "variant-14": ["Latitude","Longitude"] + tc_all,    # RF ensemble
-        "variant-16": ["Latitude","Longitude"] + shap_top5,
+        "variant-10": [shap_top10,
+        "variant-11": [tc_clean,
+        "variant-12": [shap_top20,
+        "variant-13": [tc_all,    # hyperparams differ
+        "variant-14": [tc_all,    # RF ensemble
+        "variant-16": [shap_top5,
 
         # Round 3 — Science-driven (ecology: temp + moisture first)
-        "variant-15": ["Latitude","Longitude"] + [
+        "variant-15": [[
             # Temperature — primary frog habitat driver
             "tmin_mean","tmin_std","tmin_min","tmin_max",
             "tmax_mean","tmax_std","tmax_min","tmax_max",
@@ -537,7 +537,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
             "ppt_mean","ppt_std","ppt_min","ppt_max",
             "vap_mean","vap_std","vap_min","vap_max",
         ],
-        "variant-17": ["Latitude","Longitude"] + [
+        "variant-17": [[
             # All TC except swe (snow water = irrelevant for Australia)
             c for c in [
                 "aet_mean","aet_std","aet_min","aet_max",
@@ -555,17 +555,17 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
                 "ws_mean","ws_std","ws_min","ws_max",
             ]
         ],
-        "variant-18": ["Latitude","Longitude"] + tc_all,  # XGBoost
-        "variant-19": ["Latitude","Longitude"] + tc_all,  # LGB larger trees
-        "variant-20": ["Latitude","Longitude"] + [
+        "variant-18": [tc_all,  # XGBoost
+        "variant-19": [tc_all,  # LGB larger trees
+        "variant-20": [[
             # Top ecological predictors from SHAP + domain science
             "aet_min","tmin_mean","pet_mean","srad_mean",
             "soil_mean","ppt_mean","vap_mean","vpd_mean",
             "tmax_mean","aet_mean","def_mean","pdsi_mean",
         ],
         # Round 4 — Blend + threshold
-        "variant-25": ["Latitude","Longitude"] + tc_all,  # LGB+RF blend
-        "variant-26": ["Latitude","Longitude"] + tc_all,  # per-fold threshold
+        "variant-25": [tc_all,  # LGB+RF blend
+        "variant-26": [tc_all,  # per-fold threshold
     }
 
     if variant_name not in VARIANTS:

@@ -68,7 +68,10 @@ def compute_oof_predictions(
 
     np.random.seed(random_seed)
 
-    feature_cols = ["Latitude", "Longitude"]
+    # Lat/Lon BANNED as model features (discussion 32369)
+    # Use TerraClimate only — all columns except ID, coords, target
+    feature_cols = [c for c in train.columns
+                    if c not in ("ID", "Latitude", "Longitude", "Occurrence Status")]
 
     X      = train[feature_cols].values.astype(np.float32)
     y      = train[target_col].values.astype(np.int32)
