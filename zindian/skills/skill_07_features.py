@@ -252,19 +252,20 @@ def train_variant(
     feature_cols: list[str],
     variant_name: str,
     anchor_auc: float,
+    seed: int = SEED,
 ) -> dict:
     """
     Train one LightGBM variant and evaluate against anchor gate.
     Returns result dict with status, AUC, F1, threshold, delta.
     """
-    np.random.seed(SEED)
+    np.random.seed(seed)
 
     TARGET = "Occurrence Status"
     X      = train[feature_cols].values
     y      = train[TARGET].values
     X_test = test[feature_cols].values
 
-    skf        = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
+    skf        = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
     oof_probs  = np.zeros(len(y))
     test_probs = np.zeros(len(test))
 
@@ -295,6 +296,38 @@ def train_variant(
                 random_state=SEED, n_jobs=-1
             )
             model.fit(X[tr_idx], y[tr_idx])
+
+        # ── variant-18: XGBoost ──────────────────────────
+        elif variant_name == 'variant-18':
+            from xgboost import XGBClassifier
+            model = XGBClassifier(
+                n_estimators=500, learning_rate=0.05,
+                max_depth=6, subsample=0.8,
+                colsample_bytree=0.8, use_label_encoder=False,
+                eval_metric="logloss", random_state=seed,
+                verbosity=0, n_jobs=-1
+            )
+            model.fit(
+                X[tr_idx], y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                verbose=False
+            )
+
+        # ── variant-19: LightGBM larger trees ────────────
+        elif variant_name == 'variant-19':
+            model = lgb.LGBMClassifier(
+                n_estimators=1000, learning_rate=0.02,
+                num_leaves=127, max_depth=8,
+                min_child_samples=10,
+                subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.05, reg_lambda=0.05,
+                random_state=seed, verbose=-1
+            )
+            model.fit(
+                X[tr_idx], y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)]
+            )
 
         # ── default: standard LightGBM ────────────────────
         else:
@@ -494,9 +527,45 @@ def run(variant_name: str | None = None) -> dict:
 
     feature_cols = VARIANTS[variant_name]
 
-    # ── Phase C: Train ────────────────────────────────────────
-    print(f"\n[C] Training {variant_name}")
-    result = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_auc)
+    # ── Phase C: Train (multi-seed averaging) ────────────────
+    SEEDS = [42, 123, 7]
+    print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
+    seed_results = []
+    for s in SEEDS:
+        print(f"\n  -- Seed {s} --")
+        r = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_auc, seed=s)
+        seed_results.append(r)
+
+    # Average OOF AUC and test probabilities across seeds
+    mean_auc   = float(np.mean([r["oof_auc"]    for r in seed_results]))
+    std_auc    = float(np.std( [r["oof_auc"]    for r in seed_results]))
+    mean_f1    = float(np.mean([r["oof_f1"]     for r in seed_results]))
+    mean_thr   = float(np.mean([r["threshold"]  for r in seed_results]))
+    mean_delta = float(np.mean([r["delta"]      for r in seed_results]))
+    avg_test   = np.mean([r["test_probs"] for r in seed_results], axis=0)
+    avg_oof    = np.mean([r["oof_probs"]  for r in seed_results], axis=0)
+    gate       = "PASS" if mean_delta >= MIN_DELTA else "PRUNE"
+
+    print(f"\n  {'='*50}")
+    print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
+    print(f"  Mean OOF AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
+    print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
+    print(f"  Mean OOF F1  : {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
+    print(f"  Seed AUCs    : {[round(r['oof_auc'],5) for r in seed_results]}")
+
+    result = {
+        "variant":    variant_name,
+        "features":   len(feature_cols),
+        "oof_auc":    mean_auc,
+        "oof_f1":     mean_f1,
+        "threshold":  mean_thr,
+        "delta":      mean_delta,
+        "gate":       gate,
+        "oof_probs":  avg_oof,
+        "test_probs": avg_test,
+        "seed_aucs":  [r["oof_auc"] for r in seed_results],
+        "seed_std":   std_auc,
+    }
 
     # ── Phase D: Save submission if PASS ──────────────────────
     if result["gate"] == "PASS":
