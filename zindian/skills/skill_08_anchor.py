@@ -200,13 +200,13 @@ def validate_submission(
                 f"min={vals.min():.8f}, max={vals.max():.8f}"
             )
 
-        # Check 8 — Not thresholded (all values exactly 0 or 1)
+        # Check 8 — Format matches use_probabilities setting
         unique_vals = set(vals.round(8).unique())
-        if unique_vals.issubset({0, 1, 0.0, 1.0}):
+        is_binary = unique_vals.issubset({0, 1, 0.0, 1.0})
+        if config.use_probabilities and is_binary:
             errors.append(
-                f"Submission appears thresholded — all values are 0 or 1. "
-                f"use_probabilities=True requires raw float probabilities, "
-                f"not binary class labels."
+                f"use_probabilities=True but all values are 0 or 1. "
+                f"Submit raw float probabilities."
             )
 
     return errors
@@ -369,7 +369,7 @@ def save_submission(
 
     sub_df = pd.DataFrame({
         "ID":           np.asarray(test_ids),
-        submission_col: np.asarray(predictions, dtype=np.float64),
+        submission_col: np.asarray(predictions, dtype=np.int32),
     })
     sub_df.to_csv(output_path, index=False)
     print(f"✅ Submission CSV saved → {output_path}")
@@ -434,7 +434,16 @@ def run(
     # ── Save submission CSV ────────────────────────────────────
     sub_path    = next_submission_path(paths)
     sample_path = paths.data_raw_dir    / "SampleSubmission.csv"
-    save_submission(test["ID"].values, test_preds, submission_col, sub_path)
+    # Threshold probs → hard labels (F1 metric)
+    from sklearn.metrics import f1_score as _f1
+    _thresholds = np.arange(0.3, 0.7, 0.01)
+    best_t = float(_thresholds[np.argmax([
+        _f1(train[training_target_col].values, (oof_preds >= t).astype(int))
+        for t in _thresholds
+    ])])
+    print(f'\nOptimal threshold: {best_t:.2f}')
+    hard_preds = (test_preds >= best_t).astype(int)
+    save_submission(test["ID"].values, hard_preds, submission_col, sub_path)
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()
