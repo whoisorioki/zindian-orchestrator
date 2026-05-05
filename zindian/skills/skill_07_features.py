@@ -450,6 +450,43 @@ def run(variant_name: str | None = None) -> dict:
         "variant-13": ["Latitude","Longitude"] + tc_all,    # hyperparams differ
         "variant-14": ["Latitude","Longitude"] + tc_all,    # RF ensemble
         "variant-16": ["Latitude","Longitude"] + shap_top5,
+
+        # Round 3 — Science-driven (ecology: temp + moisture first)
+        "variant-15": ["Latitude","Longitude"] + [
+            # Temperature — primary frog habitat driver
+            "tmin_mean","tmin_std","tmin_min","tmin_max",
+            "tmax_mean","tmax_std","tmax_min","tmax_max",
+            # Moisture — critical for frog survival
+            "soil_mean","soil_std","soil_min","soil_max",
+            "ppt_mean","ppt_std","ppt_min","ppt_max",
+            "vap_mean","vap_std","vap_min","vap_max",
+        ],
+        "variant-17": ["Latitude","Longitude"] + [
+            # All TC except swe (snow water = irrelevant for Australia)
+            c for c in [
+                "aet_mean","aet_std","aet_min","aet_max",
+                "def_mean","def_std","def_min","def_max",
+                "pdsi_mean","pdsi_std","pdsi_min","pdsi_max",
+                "pet_mean","pet_std","pet_min","pet_max",
+                "ppt_mean","ppt_std","ppt_min","ppt_max",
+                "q_mean","q_std","q_min","q_max",
+                "soil_mean","soil_std","soil_min","soil_max",
+                "srad_mean","srad_std","srad_min","srad_max",
+                "tmax_mean","tmax_std","tmax_min","tmax_max",
+                "tmin_mean","tmin_std","tmin_min","tmin_max",
+                "vap_mean","vap_std","vap_min","vap_max",
+                "vpd_mean","vpd_std","vpd_min","vpd_max",
+                "ws_mean","ws_std","ws_min","ws_max",
+            ]
+        ],
+        "variant-18": ["Latitude","Longitude"] + tc_all,  # XGBoost
+        "variant-19": ["Latitude","Longitude"] + tc_all,  # LGB larger trees
+        "variant-20": ["Latitude","Longitude"] + [
+            # Top ecological predictors from SHAP + domain science
+            "aet_min","tmin_mean","pet_mean","srad_mean",
+            "soil_mean","ppt_mean","vap_mean","vpd_mean",
+            "tmax_mean","aet_mean","def_mean","pdsi_mean",
+        ],
     }
 
     if variant_name not in VARIANTS:
@@ -469,7 +506,7 @@ def run(variant_name: str | None = None) -> dict:
         preds   = (test_probs >= result["threshold"]).astype(int)
         sub     = pd.DataFrame({"ID": test_feat["ID"], sub_col: preds})
         sub     = sub.set_index("ID").reindex(sample["ID"]).reset_index()
-        out     = paths.competition_dir / f"data/processed/{variant_name}_submission.csv"
+        out     = paths.competition_dir / f"submissions/{variant_name}_submission.csv"
         sub.to_csv(out, index=False)
         print(f"  ✅ Submission saved → {out}")
 
