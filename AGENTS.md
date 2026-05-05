@@ -46,6 +46,7 @@ competition assumptions. The agent adapts to each challenge.
 10. Skills 13 and 14 require explicit human `YES` before execution.
 11. Select exactly 2 submissions for private judging — log rationale in `reports/`.
 12. Never apply physical domain constraints unless `challenge_config.domain` confirms it.
+15. Never use Latitude/Longitude as model features — banned per EY Biodiversity discussion 32369. Raw coords may only be used to extract TerraClimate values.
 13. Never threshold predictions if `challenge_config.use_probabilities` is true.
 14. Never use AutoML — almost always prohibited on Zindi.
 

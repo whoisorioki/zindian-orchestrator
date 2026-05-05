@@ -1,6 +1,7 @@
 """
 Skill 08 — Anchor Baseline
-Train LightGBM baseline on raw features (Latitude, Longitude).
+Train LightGBM baseline on TerraClimate features only.
+Lat/Lon BANNED as model features per organizer ruling (discussion 32369).
 Lock first confirmed anchor submission and create git branch.
 Must run after Skill 07 feature engineering completes.
 
@@ -37,8 +38,9 @@ def load_data(paths) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     Returns (train, test, training_target_col, submission_col).
     These are intentionally different — do not conflate them.
     """
-    train = pd.read_csv(paths.data_raw_dir / "Training_Data.csv")
-    test  = pd.read_csv(paths.data_raw_dir / "Test.csv")
+    # Load from processed features — TerraClimate columns live here
+    train = pd.read_csv(paths.competition_dir / "data/processed/features_train.csv")
+    test  = pd.read_csv(paths.competition_dir / "data/processed/features_test.csv")
 
     # Training target: actual label column in Training_Data.csv
     training_target_col = "Occurrence Status"
@@ -61,7 +63,7 @@ def compute_oof_predictions(
     random_seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, float, float]:
     """
-    Train LightGBM with KFold cross-validation on raw Lat/Lon features.
+    Train LightGBM with KFold cross-validation on TerraClimate features only.
     Returns (oof_preds, test_preds, oof_logloss, oof_auc).
     """
     from sklearn.metrics import log_loss, roc_auc_score
@@ -395,7 +397,7 @@ def run(
         submitted flag, and submission result if submitted.
     """
     print(f"\n{'='*60}")
-    print(f"SKILL 08 — Anchor Baseline (LightGBM · Lat/Lon only)")
+    print(f"SKILL 08 — Anchor Baseline (LightGBM · TerraClimate only — Lat/Lon banned)")
     print(f"{'='*60}\n")
 
     paths  = resolve_competition_paths()
@@ -442,7 +444,7 @@ def run(
         feature_count=2,
         calibration_method="none",
         gate_result="PASS",
-        gate_reason="Initial anchor baseline — Lat/Lon only, compliant",
+        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369)",
         dag_phase="phase_2_anchor_confirmed",
     )
     ledger.close()
