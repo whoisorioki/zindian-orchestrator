@@ -1,308 +1,299 @@
 # Zindian Orchestrator — Build Tasks & Checklist
-
-The agent executing this file works top to bottom. Each task has a status: `TODO` | `IN_PROGRESS` | `DONE` | `BLOCKED`
-
-Update this file at the start of each session after reading `SKILL_STATE.json` and `challenge_config.json`.
+# Source of truth for all agents. Update at every session start.
+# Status: TODO | IN_PROGRESS | DONE | BLOCKED
 
 ---
 
 ## Current Session Status
 
-**Date**: 2026-05-04  
-**Competition**: financial-inclusion-in-africa (MAE metric)  
-**Phase**: phase_0_foundation  
-**Submissions Used**: 0/10  
-**Current Progress**: Phase 0 infrastructure ~70% complete  
+**Date**: 2026-05-06
+**Competition**: EY Biodiversity Challenge — Frogs (ey-biodiversity-challenge)
+**Branch**: anchor-v3
+**DAG Phase**: phase_3_features — Round 4 running
+**Anchor LB F1**: 0.881642512 — rank 240 — submission WeXoXWi6
+**Submissions today**: check SKILL_STATE.json before any submit
+**Deadline**: May 24, 2026 — 18 days remaining
+**Final sub selection deadline**: May 19, 2026
 
 ---
 
-## PHASE 0 — Foundation (Wiring + Auth + Infrastructure)
+## COMPLIANCE CHECKPOINT — Read Before Any Code
 
-> Goal: Environment, credentials, state files, and DuckDB ledger ready. No ML yet.
+PERMITTED
+- Raw Latitude and Longitude as direct model inputs
+- All 14 TerraClimate variables (listed in competition requirements.txt)
+- Long-term climate statistics: mean, std, min, max
+- Open source packages only
+- Pretrained models if openly available to everyone
 
-- [x] Ubuntu WSL environment set up
-- [x] Python 3.12 venv at `.venv/` created
-- [x] Core ML packages installed (lightgbm, pandas, shap, duckdb, scikit-learn)
-- [x] OpenCode installed and connected to Gemini
-- [x] Zindi CLI installed
-- [x] Zindi authentication confirmed (logged in)
-- [x] `.env` file created with API keys (verify not in git)
-- [ ] Fix Zindi CLI `select_a_challenge()` JSONDecodeError (if it reoccurs)
-- [ ] Initialize DuckDB ledger: run `python scripts/init_ledger.py`
-- [ ] Verify `reports/experiments.db` exists with `experiments` and `submissions` tables
-- [ ] Create `specs/` directory with requirements.md, design.md, tasks.md
-- [ ] Create tool-agnostic spec structure (symlinks/copies to `.github/`, `.cursor/`, `.windsurf/`, `.kiro/`)
-- [ ] Verify all tool directories contain copies of AGENTS.md
-- [ ] Create `CLAUDE.md` (copy of AGENTS.md)
-
-**Phase 0 Gate**: ✅ All items done before proceeding to Phase 1
+BANNED
+- Derived spatial features — discussion 32369
+  No distance calculations, spatial clusters, bins, H3 hex bins,
+  admin region encodings, polynomial or interaction terms of Lat/Lon
+- External datasets — GBIF, Kaggle, WorldClim unless verified permitted
+- AutoML tools — H2O, AutoSklearn, TPOT etc.
+- Thresholding before submission — threshold search is internal OOF only
+- Latitude and Longitude in compliant submissions
+  Removed from anchor-v3 onward — TerraClimate only
 
 ---
 
-## PHASE 1 — Integrity + Intake (MD5 Lock + Challenge Config Population)
+## PHASE 0 — Foundation — DONE
 
-> Goal: Lock MD5 hash of target column. Populate challenge_config.json from Zindi API. Initialize reporter.
-
-### Skill 01 — Integrity Audit (MD5 Hash Lock)
-
-- [x] Write `zindian_orchestrator/skills/skill_01_integrity.py`
-  - [x] Compute MD5 hash of target column from raw data
-  - [x] Lock hash to `SKILL_STATE.json` as `md5_target_hash`
-  - [x] Raise `MD5MismatchError` if target column modified since last run
-  - [x] Log integrity report to `reports/integrity_audit.json`
-- [ ] Test: Run Skill 01 on fresh financial-inclusion dataset
-- [ ] Test: Verify `md5_target_hash` written to SKILL_STATE.json
-- [ ] Test: Verify hash verification works on subsequent runs
-
-### Skill 02 — Challenge Intake (Config Populator)
-
-- [x] Refactor `zindian_orchestrator/skills/skill_02_intake_new.py` (created with full API support)
-  - [x] Query Zindi API for competition metadata
-  - [x] Populate `challenge_config.json` from API response
-  - [x] Validate all required fields present (metric, domain, use_probabilities, etc.)
-  - [x] Raise `ConfigNotPopulated` if any required field is null
-  - [x] Update `SKILL_STATE.json`: `dag_phase` → "phase_1_intake"
-- [ ] Test: Run Skill 02, verify challenge_config fully populated
-- [ ] Test: Verify SKILL_STATE.json dag_phase updated
-
-### Skill 15 — Reporter (DuckDB Initialization)
-
-- [x] Write `zindian_orchestrator/skills/skill_15_reporter.py`
-  - [x] Initialize DuckDB ledger at `reports/experiments.db`
-  - [x] Verify schema: `experiments` table with (experiment_id, branch_name, oof_rmse, feature_count, calibration_method, gate_result, gate_reason, timestamp)
-  - [x] Verify schema: `submissions` table with (submission_id, experiment_id, branch_name, submission_rank, public_score, private_score, my_rank, selected_for_final, rationale, timestamp)
-  - [x] Write initial report metadata to `reports/phase_1_summary.json`
-- [ ] Test: Run Skill 15, verify `reports/experiments.db` initialized correctly
-
-**Phase 1 Gate**: ✅ MD5 locked + challenge_config verified + ledger ready before proceeding to Phase 2
+- [x] WSL Ubuntu environment + Python 3.12 venv at .venv/
+- [x] All packages installed: lightgbm, xarray, dask, rioxarray, rasterio,
+      shap, adlfs, pystac-client, planetary-computer, ipykernel, jupyter
+- [x] VS Code WSL Remote extension configured, kernel registered as Zindian (WSL)
+- [x] Zindi CLI installed and authenticated — user: whoisorioki
+- [x] .env file created with credentials — confirmed not in git
+- [x] tabula init ey-frogs executed — competition workspace scaffolded
+- [x] competitions/ey-frogs/ folder structure confirmed
 
 ---
 
-## PHASE 2 — Anchor Baseline (EDA + LightGBM Anchor + Submit)
+## PHASE 1 — Integrity + Intake — DONE
 
-> Goal: Establish ground-truth baseline. Submit anchor model. Determine OOF RMSE floor.
-
-### Skill 03 — EDA (Exploratory Data Analysis)
-
-- [ ] Write `zindian_orchestrator/skills/skill_03_eda.py`
-  - [ ] Load raw data, verify target column MD5 hash
-  - [ ] Profile: missing values, dtypes, cardinality, distributions
-  - [ ] Generate EDA report to `reports/eda_baseline.json`
-  - [ ] Identify feature engineering opportunities
-- [ ] Test: Run Skill 03, verify EDA report written
-
-### Skill 08 — Anchor Baseline (LightGBM + Cross-Validation)
-
-- [ ] Write `zindian_orchestrator/skills/skill_08_anchor.py`
-  - [ ] Load raw features (no engineered features)
-  - [ ] Stratified 5-fold CV with LightGBM
-  - [ ] Calculate OOF RMSE (or appropriate metric from config)
-  - [ ] Save OOF predictions to `submissions/sub_001_anchor.csv`
-  - [ ] Log experiment to DuckDB ledger
-  - [ ] Update `SKILL_STATE.json`: `anchor_oof_rmse` field
-  - [ ] Output submission-ready CSV (format: unique_id, prediction)
-- [ ] Test: Anchor trains without errors
-- [ ] Test: OOF RMSE persisted to SKILL_STATE.json and ledger
-
-### Skill 08b — Anchor Submit (Budget-Checked)
-
-- [ ] Extend `zindian_orchestrator/skills/skill_08_anchor.py` or create `skill_08b_anchor_submit.py`
-  - [ ] Check `remaining_submissions` via ZindiClient
-  - [ ] Submit `submissions/sub_001_anchor.csv` to Zindi
-  - [ ] Structure comment: `branch:anchor|oof_rmse:0.XXX|features:8|calib:none`
-  - [ ] Poll Zindi API for `public_score` and `my_rank`
-  - [ ] Update `SKILL_STATE.json`: `submissions_used_today`, `anchor_lb_score`
-  - [ ] Log submission to DuckDB `submissions` table
-- [ ] Test: Budget guard blocks if `remaining_submissions == 0`
-- [ ] Test: Submission comment matches format spec
-- [ ] Test: my_rank polled and logged
-
-**Phase 2 Gate**: ✅ Anchor submitted + leaderboard score visible before proceeding to Phase 3
+- [x] skill_01_integrity.py — MD5 hash locked
+      md5_train_file  : 0373cba783a545f95af48b206959ab9a
+      md5_test_file   : 429b1a8ec3868dc73dc94eaffe058d68
+      md5_sample_sub  : 6cea7a8efd61aaea9b4cf370c94f46c8
+      md5_target_hash : 358790892826d3197c30a577c893e29a
+- [x] skill_02_intake.py — challenge_config.json fully populated
+      metric: f1_score, use_probabilities: false, daily_limit: 10
+      banned_features: derived_spatial_features, external_spatial_data
+      code_review_tier: top_10, max_team_size: 3
+- [x] skill_15_reporter.py — DuckDB ledger initialized at reports/experiments.db
+- [x] SKILL_STATE.json dag_phase: phase_1_complete
+- [x] compliance_log.md — 3 flagged discussion threads reviewed and understood
 
 ---
 
-## PHASE 3 — Features + Calibration (Governed Feature Work + SHAP + Calibration)
+## PHASE 2 — Anchor Baseline — DONE
 
-> Goal: Engineer features, calibrate model, explain predictions.
-
-### Skill 04 — Feature Engineering
-
-- [ ] Write `zindian_orchestrator/skills/skill_04_features.py`
-  - [ ] Generate candidate features (domain-aware based on challenge_config.domain)
-  - [ ] Filter features by importance (SHAP or mutual information)
-  - [ ] Save feature list to `reports/feature_list.json`
-  - [ ] Create feature matrix for downstream skills
-- [ ] Test: Features generated and persisted
-
-### Skill 05 — Experiment Branches (Optional, can run in parallel with 09–10)
-
-- [ ] Write `zindian_orchestrator/skills/skill_05_branches.py`
-  - [ ] Create multiple branches (e.g., `feature_v1`, `feature_v2`)
-  - [ ] Train model per branch
-  - [ ] Compute OOF RMSE per branch
-  - [ ] Log to DuckDB `experiments` table
-- [ ] Test: Multiple branches logged
-
-### Skill 09 — Calibration
-
-- [ ] Write `zindian_orchestrator/skills/skill_09_calibration.py`
-  - [ ] Apply isotonic regression on validation fold
-  - [ ] Recalibrate OOF predictions
-  - [ ] Compute calibrated OOF RMSE
-  - [ ] Log to ledger with `calibration_method: "isotonic"`
-- [ ] Test: Calibration applied and OOF RMSE updated
-
-### Skill 10 — SHAP Analysis
-
-- [ ] Write `zindian_orchestrator/skills/skill_10_shap.py`
-  - [ ] Compute SHAP values for top 20 features
-  - [ ] Generate SHAP summary plot and save to `reports/shap_analysis.json`
-  - [ ] Document feature importance rationale
-- [ ] Test: SHAP analysis written
-
-**Phase 3 Gate**: ✅ Multiple calibrated branches tested + SHAP analysis complete before Phase 4
+- [x] skill_03_legality_check.py — legality verified manually and via script
+      Status: GO — TerraClimate permitted, f1_score metric confirmed,
+      use_probabilities=false confirmed, derived spatial banned confirmed
+      NOTE: script lives in competitions/ey-frogs/scripts/ not zindian/skills/
+      TODO: move to zindian/skills/skill_03_legality.py
+- [x] skill_08_anchor.py — anchor baseline trained and submitted
+      Model: LightGBM, KFold n=5, features: Latitude + Longitude only
+      OOF logloss: 0.4852 — OOF AUC: 0.8340
+      Branch: anchor-baseline created and locked
+- [x] Bug fixes applied to skill_08 this session (2026-05-06)
+      Bug 1: save_submission used float64 — fixed to int32 hard labels
+      Bug 2: validate_submission Check 8 inverted logic for use_probabilities=False
+      Bug 3: compute_oof_predictions used Booster.predict_proba — fixed to predict()
+      Bug 4: threshold search added before submission file creation
 
 ---
 
-## PHASE 4 — Branch + Gate (Branch Selection + OOF Gate + Submission Approval)
+## PHASE 3 — Feature Engineering — IN PROGRESS
 
-> Goal: Test multiple branches. Gate each against anchor OOF RMSE. Approve for submission.
+### TerraClimate Data Pipeline — DONE
 
-### Skill 11 — Gate Checker
+- [x] fetch_terraclimate_full.py — 13 variables x 4 stats = 52 bands
+      Time slice: 2011-2021 (10-year modern normal, 132 months)
+      Spatial extent: SE Australia — 100% training data coverage confirmed
+      Retry logic: per-band checkpointing survives Azure timeouts
+      Output: competitions/ey-frogs/data/processed/TerraClimate_14band.tiff
+- [x] extract_terraclimate_features.py — spiral NaN imputation
+      17 coastal training points fixed via nearest valid land pixel
+      4 test points fixed
+      0 NaNs remaining — integrity verified
+      Output: features_train.csv, features_test.csv
+- [x] SHAP analysis run on variant-06 full model
+      Top 5: aet_min, tmin_mean, Longitude, pet_mean, srad_mean
+      Dead (near-zero): swe_mean, swe_std, swe_min, swe_max, def_min, q_min
 
-- [ ] Write `zindian_orchestrator/skills/skill_11_gate.py`
-  - [ ] Query DuckDB `experiments` table
-  - [ ] For each branch: compute (anchor_oof - branch_oof) / anchor_oof
-  - [ ] Gate rule: ≥0.5% improvement required
-  - [ ] Log gate results to DuckDB with reason
-  - [ ] Return list of branches that PASS gate
-- [ ] Test: Gate correctly prunes branch with worse OOF RMSE
+### Skill 07 — Feature Engineering — IN PROGRESS
 
-### Skill 16 — Critique & Approval
+- [x] zindian/skills/skill_07_features.py written and operational
+      Governed: reads config, writes state, generates round reports
+      Variants 06-16 defined, model branching for LGB tuned and RF ensemble
+- [x] skill_11_gate.py — branch gate operational
+      Promotes best variant to new anchor, advances feature round
+- [x] skill_16_submit.py — submission governance operational
+      5-check validation, budget guard, human gate, structured comment
 
-- [ ] Write `zindian_orchestrator/skills/skill_16_critique.py`
-  - [ ] Summarize all passed branches
-  - [ ] Recommend ≥2 branches for final submission (based on diversity)
-  - [ ] Log rationale to `reports/critique.json`
-  - [ ] Prepare for Phase 5 submission
+### Round 1 Results — anchor: 0.83396 (Lat/Lon only) — DONE
 
-**Phase 4 Gate**: ✅ ≥2 branches pass gate + rationale documented before Phase 5
+- [x] variant-01  srad only (2 features)          AUC 0.6553  PRUNE  ad-hoc
+- [x] variant-02  vap only (2 features)           AUC 0.6119  PRUNE  ad-hoc
+- [x] variant-03  srad + vap (3 features)         AUC 0.6982  PRUNE  ad-hoc
+- [x] variant-04  LightGBM Lat/Lon (2 features)   AUC 0.8272  PRUNE  ad-hoc
+- [x] variant-05  LR optimal threshold (2 feat)   AUC 0.6790  PRUNE  ad-hoc
+- [x] variant-06  All 52 TC bands (54 features)   AUC 0.84387 PASS   WINNER
+- [x] variant-07  Temperature only (10 features)  AUC 0.83687 PRUNE
+- [x] variant-08  Water balance (26 features)     AUC 0.83887 PRUNE
+- [x] variant-09  Radiation+humidity (14 feat)    AUC 0.84266 PASS
+      Gate result: variant-06 promoted to anchor-v2 via skill_11_gate
 
----
+### Round 2 Results — anchor: 0.84387 (All 52 TC + Lat/Lon) — DONE
 
-## PHASE 5 — Fusion + Final Submit (Ensemble + Final Submission)
+- [x] variant-10  Top 10 SHAP (12 features)       AUC 0.84262 PRUNE
+- [x] variant-11  Drop dead features (48 feat)    AUC 0.84303 PRUNE
+- [x] variant-12  Top 20 SHAP (22 features)       AUC 0.84248 PRUNE
+- [x] variant-13  Tuned LGB (54 features)         AUC 0.84387 PRUNE  BUG — delta=0
+- [x] variant-14  RF ensemble (54 features)       AUC 0.84387 PRUNE  BUG — delta=0
+- [x] variant-16  Top 5 SHAP (7 features)         AUC 0.83736 PRUNE
+      Gate result: all pruned — no promotion
+      NOTE: variant-13 and variant-14 produced identical results to variant-06
+      Root cause: special model code not executing — bug unresolved
 
-> Goal: Fuse predictions from best branches. Submit final 2 selections. Complete competition.
+### Round 3 — Compliance Correction — DONE
 
-### Skill 13 — Fusion Ensemble
+- [x] Compliance audit: Lat/Lon confirmed BANNED in submission
+      Non-compliant submissions identified: LrU3Hg7g, FgpCxZ5e, yDnrXdKz, eWDKfyBV
+- [x] anchor-v3 established: TC only (52 bands, no Lat/Lon)
+      OOF AUC: 0.84291 — LB F1: 0.881642512 — rank 240
+      Submission: WeXoXWi6 — file: sub_011_anchor.csv — SELECTED
 
-- [ ] Write `zindian_orchestrator/skills/skill_13_fusion.py`
-  - [ ] Fuse ≥2 gated branches via stacking or weighted average
-  - [ ] Compute final OOF RMSE
-  - [ ] Apply physical domain constraints if applicable (check config.domain)
-  - [ ] Apply probability thresholding only if not use_probabilities (check config)
-  - [ ] Save fusion predictions to `submissions/sub_00X_fusion.csv`
-- [ ] Test: Fusion ensemble created
+### Round 4 — IN PROGRESS
 
-### Skill 14 — Inference Guard (Pre-Submit Validation)
-
-- [ ] Write `zindian_orchestrator/skills/skill_14_inference_guard.py`
-  - [ ] Validate submission CSV format (matches submission_format in config)
-  - [ ] Check for NaNs, infinities
-  - [ ] Verify row count matches test set
-  - [ ] Verify unique_id column present and unique
-- [ ] Test: Inference guard passes or fails appropriately
-
-### Skill 17 — Submission Governance (Final 2 Selections)
-
-- [ ] Write `zindian_orchestrator/skills/skill_17_sub_governance.py`
-  - [ ] Query `submissions` table for all submitted models
-  - [ ] Score each by diversity + public_score
-  - [ ] Select top 2 for final private judging
-  - [ ] Log selections to `reports/final_selections.md` with rationale
-  - [ ] Lock `SKILL_STATE.json`: `selected_submissions: [sub_id_1, sub_id_2]`
-- [ ] Test: Exactly 2 submissions selected + rationale logged
-
-**Phase 5 Gate**: ✅ Final 2 selections documented + competition completed
-
----
-
-## Cross-Cutting Infrastructure
-
-### zindian_orchestrator/state.py
-- [x] Reads `SKILL_STATE.json` (started)
-- [ ] **HARDEN**: Implement atomic write (write-then-rename)
-- [ ] **HARDEN**: Add `increment()` method for submission tracking
-- [ ] Test atomicity: concurrent read/write doesn't corrupt file
-
-### zindian_orchestrator/config.py
-- [ ] **CREATE**: Read `challenge_config.json`
-- [ ] **CREATE**: Raise `ConfigNotPopulated` if required fields null
-- [ ] **CREATE**: Provide `.get(key, default=None)` access
-- [ ] Test: Config reads correctly, null guard works
-
-### zindian_orchestrator/ledger.py
-- [ ] **CREATE**: DuckDB wrapper
-- [ ] **CREATE**: `log_experiment()` method
-- [ ] **CREATE**: `log_submission()` method
-- [ ] **CREATE**: Query interface
-- [ ] Test: Ledger initializes, reads/writes correctly
-
-### zindian_orchestrator/zindi_client.py
-- [ ] **HARDEN**: Verify budget guard before every submit
-- [ ] **HARDEN**: Structure submission comments correctly
-- [ ] **HARDEN**: Poll leaderboard after submit
-- [ ] Test: BudgetExhausted raised when budget is zero
+- [ ] variant-27  TC all 52 — LGB tuned (deeper, lower LR)
+- [ ] variant-28  TC all 52 — Random Forest
+- [ ] variant-29  TC all 52 — XGBoost
+- [ ] variant-30  TC temp 8 — LGB default — temperature only
+- [ ] variant-31  TC water 16 — LGB default — moisture only
+- [ ] variant-32  TC stress 12 — LGB default — drought stress only
+- [ ] variant-33  SHAP top 12 — LGB default — domain science features
+- [ ] variant-34  TC all 52 — LGB + RF blend — ensemble
+      Gate threshold: OOF AUC delta >= 0.005 vs anchor 0.84291
+      All variants: NO Latitude, NO Longitude
 
 ---
 
-## Testing & Validation
+## PHASE 4 — Gate + Promotion — TODO
 
-- [ ] **Unit tests**: Each skill testable independently
-- [ ] **Integration tests**: Phase transitions work end-to-end
-- [ ] **Budget tests**: Verify submission limit respected
-- [ ] **Data integrity tests**: MD5 hash verification works
-- [ ] **Reproducibility tests**: Notebook runs top-to-bottom on fresh data
+- [ ] Run skill_11_gate after Round 4 completes
+- [ ] If variant passes: promote to anchor-v4, create new branch
+- [ ] If all pruned: define Round 5 hypotheses (see below)
+- [ ] Submit any passing variant via skill_16_submit
 
----
+### Round 5 Hypotheses (if Round 4 all pruned)
 
-## Documentation & Reporting
-
-- [ ] `reports/phase_0_summary.json` — foundation setup summary
-- [ ] `reports/phase_1_summary.json` — integrity + intake summary
-- [ ] `reports/eda_baseline.json` — exploratory data analysis
-- [ ] `reports/shap_analysis.json` — feature importance analysis
-- [ ] `reports/experiments.db` — DuckDB ledger (all runs)
-- [ ] `reports/critique.json` — gate results + branch recommendations
-- [ ] `reports/final_selections.md` — rationale for 2 final submissions
-- [ ] `reports/submission_log.md` — all submission attempts + scores
+- [ ] XGBoost with dart booster on TC features
+- [ ] CatBoost on TC features
+- [ ] Per-fold threshold optimisation instead of global threshold
+- [ ] Stacking: LGB + RF + XGB with logistic meta-learner
+- [ ] WorldClim 19 bioclimatic variables — verify legality first
+- [ ] SRTM elevation data — verify legality first
 
 ---
 
-## Submission Budget Tracking
+## PHASE 5 — Fusion + Final Submission — TODO
 
-| Phase | Max/Phase | Notes |
-|-------|-----------|-------|
-| Anchor (Phase 2) | 1 | Establish baseline only |
-| Exploration (Phase 3–4) | 5 | Gated branches only |
-| Final (Phase 5) | 2 | Exact 2 selections for private |
-| Reserve | 2 | Never fully exhaust daily limit (10 max) |
-
-**Current**: 0/10 used today
+- [ ] skill_13_fusion.py — HUMAN GATED — write before May 17
+      Blend variant-06 (non-compliant, reference only) and anchor-v3
+      Or blend two compliant passing variants if Round 4 produces them
+- [ ] skill_14_inference.py — HUMAN GATED — post-processing
+- [ ] skill_17_governance.py — final 2 submission selection
+      Must lock selections by May 19 (5 days before deadline)
+      Current selected: WeXoXWi6 (sub_011_anchor.csv, LB 0.8816)
+      Second selection: TBD — best passing variant from Round 4+
 
 ---
 
-## Next Task (For Agent at Session Start)
+## KNOWN BUGS — Fix Before Next Feature Run
 
-Read this file and `SKILL_STATE.json`.
+- [ ] BUG: variant-13 and variant-14 special model code not executing
+      Both returned delta=0.0 (identical to variant-06)
+      Diagnosis: grep -n "variant-13\|elif variant\|RandomForest" zindian/skills/skill_07_features.py
+      Fix: verify variant_name parameter passes correctly into train_variant()
+      Rerun after fix: python3 -m zindian.skills.skill_07_features --variant=variant-13
 
-**Current phase**: phase_0_foundation
+- [ ] BUG: skill_08 cosmetic fields stale
+      git_branch hardcoded as anchor-baseline — should read from state
+      n_features hardcoded as 2 — should count feature_cols dynamically
 
-**Current task**: Initialize DuckDB ledger (Phase 0, item "Initialize DuckDB ledger")
+- [ ] TODO: Move skill_03_legality_check.py to zindian/skills/skill_03_legality.py
 
-**Proposed next step**: 
-1. Run `python scripts/init_ledger.py` to create `reports/experiments.db`
-2. Verify schema with `sqlite3 reports/experiments.db ".schema"`
-3. Proceed to Phase 1 (Skill 01 — MD5 hash lock)
+---
 
-**Approval needed**: Yes — confirm Phase 1 is ready to start before proceeding.
+## SKILLS STATUS
+
+| Skill | File | Status | Notes |
+|---|---|---|---|
+| 00 | skill_00_discussion_monitor.py | DONE | |
+| 01 | skill_01_integrity.py | DONE | |
+| 02 | skill_02_intake.py | DONE | |
+| 03 | skill_03_legality.py | PARTIAL | lives in competitions/scripts/ not zindian/skills/ |
+| 07 | skill_07_features.py | DONE | variant-13/14 bug unresolved |
+| 08 | skill_08_anchor.py | DONE | bugs fixed 2026-05-06 |
+| 11 | skill_11_gate.py | DONE | |
+| 15 | skill_15_reporter.py | DONE | |
+| 16 | skill_16_submit.py | DONE | |
+| 04 | skill_04_eda.py | TODO | |
+| 05 | skill_05_cv.py | TODO | |
+| 06 | skill_06_cleaning.py | TODO | |
+| 09 | skill_09_calibration.py | TODO | needed before Phase 5 |
+| 10 | skill_10_shap.py | TODO | SHAP run ad-hoc, not governed |
+| 12 | skill_12_metric.py | TODO | |
+| 13 | skill_13_fusion.py | TODO | HUMAN GATED — needed by May 17 |
+| 14 | skill_14_inference.py | TODO | HUMAN GATED — needed by May 17 |
+| 17 | skill_17_governance.py | TODO | needed by May 19 |
+
+---
+
+## NOTEBOOKS STATUS
+
+All notebooks have stale column names (occurrenceStatus vs actual Occurrence Status).
+None have been run and frozen. Not critical path — fix after Round 4.
+
+| Notebook | Status | Notes |
+|---|---|---|
+| 01_integrity_audit.ipynb | STALE | wrong column names |
+| 02_eda_anchor.ipynb | STALE | wrong column names |
+| 03_anchor_baseline.ipynb | STALE | wrong column names |
+| 04_baseline.ipynb | TODO | not created |
+| 05_features.ipynb | TODO | not created |
+| 06_calibration.ipynb | TODO | not needed yet |
+
+---
+
+## SUBMISSION LEDGER
+
+| Sub ID | File | LB F1 | Rank | Compliant | Selected |
+|---|---|---|---|---|---|
+| LrU3Hg7g | sub_001_anchor.csv | 0.0 | — | NO | NO |
+| XAU8mhWs | sub_003_anchor.csv | 0.0 | — | NO | NO |
+| FgpCxZ5e | sub_004_anchor_f1_fixed.csv | 0.8767 | 291 | NO | NO |
+| yDnrXdKz | variant-06_submission.csv | 0.8911 | 228 | NO | NO |
+| eWDKfyBV | variant-25_submission.csv | 0.8824 | — | NO | NO |
+| SVzenJsj | sub_009_anchor.csv | 0.0 | — | NO | NO |
+| Bw7woyXB | sub_010_anchor.csv | 0.0 | — | NO | NO |
+| WeXoXWi6 | sub_011_anchor.csv | 0.8816 | 240 | YES | YES |
+
+Total used: 11
+Must select 2 final by May 19
+Second selection: TBD
+
+---
+
+## COMPETITION STANDING
+
+Current rank  : 240
+Best LB F1    : 0.8816 (compliant)
+Top LB F1     : 0.9576
+Gap to close  : 0.0760
+Days remaining: 18
+
+---
+
+## SESSION START PROMPT FOR NEXT AGENT
+
+Read competitions/ey-frogs/SKILL_STATE.json and challenge_config.json.
+
+Tell me:
+- Current dag_phase and git branch
+- Anchor LB score and rank (should be 0.8816, rank 240)
+- Submissions remaining today
+- Which Round 4 variants have completed
+- Whether any variant passed the gate this round
+
+Then run: grep -n "variant-27\|variant-28\|variant-29\|variant-30" zindian/skills/skill_07_features.py
+Confirm all Round 4 variants are defined.
+
+Then fix variant-13/14 bug before running any Round 4 variants.
+
+Enter Plan mode. Do not write any code until I approve the plan.
