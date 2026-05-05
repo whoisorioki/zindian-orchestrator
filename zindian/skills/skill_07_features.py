@@ -329,6 +329,49 @@ def train_variant(
                 callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)]
             )
 
+        # ── variant-25: LGB + RF blend ────────────────────
+        elif variant_name == 'variant-25':
+            from sklearn.ensemble import RandomForestClassifier
+            # LGB probabilities
+            lgb_model = lgb.LGBMClassifier(
+                n_estimators=500, learning_rate=0.05,
+                num_leaves=31, random_state=seed, verbose=-1
+            )
+            lgb_model.fit(
+                X[tr_idx], y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)]
+            )
+            # RF probabilities
+            rf_model = RandomForestClassifier(
+                n_estimators=500, max_depth=None,
+                min_samples_leaf=2, max_features="sqrt",
+                random_state=seed, n_jobs=-1
+            )
+            rf_model.fit(X[tr_idx], y[tr_idx])
+            # Average blend
+            lgb_val  = lgb_model.predict_proba(X[val_idx])[:, 1]
+            rf_val   = rf_model.predict_proba(X[val_idx])[:, 1]
+            lgb_test = lgb_model.predict_proba(X_test)[:, 1]
+            rf_test  = rf_model.predict_proba(X_test)[:, 1]
+            oof_probs[val_idx]  = 0.5 * lgb_val + 0.5 * rf_val
+            test_probs         += (0.5 * lgb_test + 0.5 * rf_test) / N_SPLITS
+            fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
+            print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
+            continue
+
+        # ── variant-26: per-fold threshold optimization ───────
+        elif variant_name == 'variant-26':
+            model = lgb.LGBMClassifier(
+                n_estimators=500, learning_rate=0.05,
+                num_leaves=31, random_state=seed, verbose=-1
+            )
+            model.fit(
+                X[tr_idx], y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)]
+            )
+
         # ── default: standard LightGBM ────────────────────
         else:
             model = lgb.LGBMClassifier(
@@ -413,7 +456,7 @@ def write_round_report(paths, results: list[dict], round_num: int, anchor_auc: f
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
-def run(variant_name: str | None = None) -> dict:
+def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     """
     Skill 07 — Feature Engineering entry point.
 
@@ -520,6 +563,9 @@ def run(variant_name: str | None = None) -> dict:
             "soil_mean","ppt_mean","vap_mean","vpd_mean",
             "tmax_mean","aet_mean","def_mean","pdsi_mean",
         ],
+        # Round 4 — Blend + threshold
+        "variant-25": ["Latitude","Longitude"] + tc_all,  # LGB+RF blend
+        "variant-26": ["Latitude","Longitude"] + tc_all,  # per-fold threshold
     }
 
     if variant_name not in VARIANTS:
@@ -567,8 +613,8 @@ def run(variant_name: str | None = None) -> dict:
         "seed_std":   std_auc,
     }
 
-    # ── Phase D: Save submission if PASS ──────────────────────
-    if result["gate"] == "PASS":
+    # ── Phase D: Save submission if PASS or force_save ──────────
+    if result["gate"] == "PASS" or force_save:
         sample  = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
         sub_col = [c for c in sample.columns if c != "ID"][0]
         test_probs = result["test_probs"]
@@ -622,5 +668,6 @@ if __name__ == "__main__":
             variant = arg.split("=", 1)[1]
         elif arg == "--variant" and len(sys.argv) > sys.argv.index(arg) + 1:
             variant = sys.argv[sys.argv.index(arg) + 1]
-    result = run(variant_name=variant)
+    force_save = "--force-save" in sys.argv
+    result = run(variant_name=variant, force_save=force_save)
     print(json.dumps({k: v for k, v in result.items() if k != "oof_probs"}, indent=2))
