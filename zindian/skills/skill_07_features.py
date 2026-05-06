@@ -273,7 +273,7 @@ def train_variant(
     for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y)):
 
         # ── variant-13: tuned LightGBM ────────────────────
-        if variant_name == 'variant-13':
+        if variant_name in ('variant-13', 'variant-27'):
             model = lgb.LGBMClassifier(
                 n_estimators=1000, learning_rate=0.02,
                 num_leaves=63, min_child_samples=20,
@@ -288,7 +288,7 @@ def train_variant(
             )
 
         # ── variant-14: Random Forest ─────────────────────
-        elif variant_name == 'variant-14':
+        elif variant_name in ('variant-14', 'variant-28'):
             from sklearn.ensemble import RandomForestClassifier
             model = RandomForestClassifier(
                 n_estimators=500, max_depth=None,
@@ -298,7 +298,7 @@ def train_variant(
             model.fit(X[tr_idx], y[tr_idx])
 
         # ── variant-18: XGBoost ──────────────────────────
-        elif variant_name == 'variant-18':
+        elif variant_name in ('variant-18', 'variant-29'):
             from xgboost import XGBClassifier
             model = XGBClassifier(
                 n_estimators=500, learning_rate=0.05,
@@ -330,7 +330,7 @@ def train_variant(
             )
 
         # ── variant-25: LGB + RF blend ────────────────────
-        elif variant_name == 'variant-25':
+        elif variant_name in ('variant-25', 'variant-34'):
             from sklearn.ensemble import RandomForestClassifier
             # LGB probabilities
             lgb_model = lgb.LGBMClassifier(
@@ -504,6 +504,14 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     tc_water = [f"{v}_{s}" for v in ["aet","def","pet","ppt","soil","q"] for s in TC_STATS]
     tc_rad   = [f"{v}_{s}" for v in ["srad","vpd","vap"] for s in TC_STATS]
 
+    # Round 4 TC-only feature groups (no Lat/Lon — compliant)
+    tc_temp_only   = [f"{v}_{s}" for v in ["tmax","tmin"] for s in TC_STATS]
+    tc_water_only  = [f"{v}_{s}" for v in ["aet","def","pet","ppt","soil","q"] for s in TC_STATS]
+    tc_stress_only = [f"{v}_{s}" for v in ["pdsi","vpd","vap","srad"] for s in TC_STATS]
+    shap_top12_tc  = ["aet_min","tmin_mean","pet_mean","srad_mean","ppt_min",
+                      "vap_mean","pdsi_max","soil_max","srad_std","vpd_min",
+                      "vap_min","aet_mean"]
+
     # SHAP top features from variant-06
     shap_top5  = ["aet_min","tmin_mean","pet_mean","srad_mean","ppt_min"]
     shap_top10 = shap_top5 + ["vap_mean","pdsi_max","soil_max","srad_std","vpd_min"]
@@ -565,6 +573,15 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         # Round 4 — Blend + threshold
         "variant-25": tc_all,  # LGB+RF blend
         "variant-26": tc_all,  # per-fold threshold
+        # Round 4 — TC only compliant (no Lat/Lon)
+        "variant-27": tc_all,                  # LGB tuned — uses variant-13 handler
+        "variant-28": tc_all,                  # Random Forest — uses variant-14 handler
+        "variant-29": tc_all,                  # XGBoost — uses variant-18 handler
+        "variant-30": tc_temp_only,            # temperature only
+        "variant-31": tc_water_only,           # moisture only
+        "variant-32": tc_stress_only,          # drought stress only
+        "variant-33": shap_top12_tc,           # SHAP top 12 TC only
+        "variant-34": tc_all,                  # LGB + RF blend — uses variant-25 handler
     }
 
     if variant_name not in VARIANTS:
