@@ -281,6 +281,8 @@ Type YES to submit or NO to exit without submitting.
 def submit_to_zindi(
     sub_path:    Path,
     oof_logloss: float,
+    oof_auc:     float,
+    n_features:  int,
 ) -> dict:
     """
     Submit to Zindi via ZindiClient.
@@ -292,8 +294,10 @@ def submit_to_zindi(
     config  = ChallengeConfig.load()
     comment = (
         f"branch:anchor-baseline"
-        f"|oof_rmse:{oof_logloss:.4f}"
-        f"|features:2"
+        f"|metric:f1_score"
+        f"|oof_auc:{oof_auc:.4f}"
+        f"|oof_logloss:{oof_logloss:.4f}"
+        f"|features:{n_features}"
         f"|calib:none"
     )
 
@@ -359,12 +363,12 @@ def save_submission(
     submission_col: str,
     output_path:    Path,
 ) -> None:
-    """Save predictions in Zindi submission format (probabilities)."""
+    """Save predictions in Zindi submission format."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     sub_df = pd.DataFrame({
         "ID":           np.asarray(test_ids),
-        submission_col: np.asarray(predictions, dtype=np.float64),
+        submission_col: np.asarray(predictions),
     })
     sub_df.to_csv(output_path, index=False)
     print(f"✅ Submission CSV saved → {output_path}")
@@ -429,7 +433,13 @@ def run(
     # ── Save submission CSV ────────────────────────────────────
     sub_path    = next_submission_path(paths)
     sample_path = paths.data_raw_dir    / "SampleSubmission.csv"
-    save_submission(test["ID"].values, test_preds, submission_col, sub_path)
+    if config.use_probabilities:
+        final_preds = test_preds.astype(np.float64)
+        print("Saving raw probability predictions (use_probabilities=True)")
+    else:
+        final_preds = (test_preds >= 0.5).astype(int)
+        print("Saving hard-label predictions with threshold=0.5 (use_probabilities=False)")
+    save_submission(test["ID"].values, final_preds, submission_col, sub_path)
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()
@@ -485,6 +495,8 @@ def run(
             submission_result = submit_to_zindi(
                 sub_path=sub_path,
                 oof_logloss=oof_logloss,
+                oof_auc=oof_auc,
+                n_features=2,
             )
             state = state_store.read()
             state_store.update(
