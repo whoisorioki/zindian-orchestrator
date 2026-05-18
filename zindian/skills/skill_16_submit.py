@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 import pandas as pd
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
@@ -94,7 +95,7 @@ Type YES to submit or NO to abort.
     client.select_competition(config.slug)
 
     comment = (f"branch:{branch}"
-               f"|oof_rmse:{best_auc:.4f}"
+               f"|oof_f1:{best_f1:.4f}"
                f"|features:{state.get('best_variant_features','?')}"
                f"|calib:none")
 
@@ -153,12 +154,19 @@ def show_submission_board() -> None:
     _buf = io.StringIO()
     _old = sys.stdout
     sys.stdout = _buf
-    subs = client._user.submission_board()
+    subs = cast(list[dict[str, Any]], list(client._user.submission_board()))
     sys.stdout = _old
-    clean = [{"id": s["id"], "date": s["created_at"][:10],
-               "file": s["filename"], "lb_f1": s["public_score"],
-               "status": s["status"], "chosen": s["chosen"],
-               "comment": s["comment"]} for s in subs]
+    clean = []
+    for s in subs:
+        clean.append({
+            "id": s.get("id"),
+            "date": str(s.get("created_at", ""))[:10],
+            "file": s.get("filename"),
+            "lb_f1": s.get("public_score"),
+            "status": s.get("status"),
+            "chosen": s.get("chosen"),
+            "comment": s.get("comment"),
+        })
     col_id   = 12
     col_date = 12
     col_f1   = 13

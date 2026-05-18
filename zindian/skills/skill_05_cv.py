@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.model_selection import GroupKFold, StratifiedKFold
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score
 import lightgbm as lgb
 
 from zindian.config import ChallengeConfig
@@ -96,10 +96,11 @@ def evaluate_cv_strategy(
     y:        np.ndarray,
     splits:   list[tuple[np.ndarray, np.ndarray]],
     strategy: str,
+    metric_name: str,
 ) -> dict:
     """
     Train a lightweight LightGBM on the given splits.
-    Returns OOF AUC — used to compare strategies.
+    Returns the primary OOF metric — used to compare strategies.
     LGB params are intentionally light (fast eval only, not anchor quality).
     """
     oof_probs = np.zeros(len(y), dtype=np.float64)
@@ -113,7 +114,7 @@ def evaluate_cv_strategy(
         "seed":          SEED,
     }
 
-    fold_aucs = []
+    fold_scores = []
     for fold_idx, (tr_idx, val_idx) in enumerate(splits):
         train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
         val_set   = lgb.Dataset(X[val_idx], label=y[val_idx], reference=train_set)
@@ -126,20 +127,28 @@ def evaluate_cv_strategy(
             callbacks=[lgb.early_stopping(50), lgb.log_evaluation(period=-1)],
         )
 
-        oof_probs[val_idx] = model.predict(X[val_idx])
-        fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-        fold_aucs.append(fold_auc)
-        print(f"    [{strategy}] Fold {fold_idx+1}: AUC={fold_auc:.5f}")
+        oof_probs[val_idx] = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
+        if metric_name == "f1_score":
+            fold_score = f1_score(y[val_idx], (oof_probs[val_idx] >= 0.5).astype(int))
+        else:
+            fold_score = roc_auc_score(y[val_idx], oof_probs[val_idx])
+        fold_scores.append(float(fold_score))
+        print(f"    [{strategy}] Fold {fold_idx+1}: {metric_name.upper()}={fold_score:.5f}")
 
-    oof_auc = float(roc_auc_score(y, oof_probs))
-    print(f"  [{strategy}] OOF AUC: {oof_auc:.5f}  "
-          f"(std={np.std(fold_aucs):.5f})")
+    if metric_name == "f1_score":
+        oof_primary = float(f1_score(y, (oof_probs >= 0.5).astype(int)))
+    else:
+        oof_primary = float(roc_auc_score(y, oof_probs))
+    print(f"  [{strategy}] OOF {metric_name.upper()}: {oof_primary:.5f}  "
+          f"(std={np.std(fold_scores):.5f})")
 
     return {
         "strategy":  strategy,
-        "oof_auc":   oof_auc,
-        "fold_aucs": [float(a) for a in fold_aucs],
-        "fold_std":  float(np.std(fold_aucs)),
+        "metric_name": metric_name,
+        "oof_primary": oof_primary,
+        "fold_scores": fold_scores,
+        "fold_std":  float(np.std(fold_scores)),
+        "oof_auc":   float(roc_auc_score(y, oof_probs)),
     }
 
 
@@ -159,14 +168,19 @@ def run(strategy: str = "compare") -> dict:
     print(f"SKILL 05 — CV Architect")
     print(f"{'='*60}\n")
 
-    paths  = resolve_competition_paths()
+    paths  = resolve_competition_paths(require_competition=True)
     config = ChallengeConfig.load()
+    metric_name = config.get("metric", "auc")
+    competition_dir = paths.competition_dir
+    if competition_dir is None:
+        raise RuntimeError("Competition directory could not be resolved")
 
     print(f"Competition : {config.slug}")
     print(f"Strategy    : {strategy}")
+    print(f"Metric      : {metric_name}")
 
     # ── Load features ──────────────────────────────────────────
-    ft_path = paths.competition_dir / "data" / "processed" / "features_train.csv"
+    ft_path = competition_dir / "data" / "processed" / "features_train.csv"
     if not ft_path.exists():
         raise FileNotFoundError(
             f"features_train.csv not found at {ft_path}. "
@@ -176,14 +190,14 @@ def run(strategy: str = "compare") -> dict:
     ft = pd.read_csv(ft_path)
     print(f"\nFeatures loaded: {ft.shape}")
 
-    target_col   = "Occurrence Status"
+    target_col   = config.get("target_column", "Occurrence Status")
     feature_cols = [c for c in ft.columns
                     if c not in ("ID", target_col)]
-    coord_cols   = ["Latitude", "Longitude"]
+    coord_cols   = [c for c in (config.get("latitude_column", "Latitude"), config.get("longitude_column", "Longitude")) if c in ft.columns]
 
     X      = ft[feature_cols].values.astype(np.float32)
     y      = ft[target_col].values.astype(np.int32)
-    coords = ft[coord_cols].values.astype(np.float64)
+    coords = ft[coord_cols].values.astype(np.float64) if len(coord_cols) == 2 else None
 
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
@@ -196,15 +210,17 @@ def run(strategy: str = "compare") -> dict:
         print(f"\n── Strategy A: StratifiedKFold ──")
         strat_splits = build_stratified_splits(X, y)
         results["stratified"] = evaluate_cv_strategy(
-            X, y, strat_splits, "stratified"
+            X, y, strat_splits, "stratified", metric_name
         )
 
     # ── Strategy B — Spatial Block ─────────────────────────────
     if strategy in ("compare", "spatial"):
         print(f"\n── Strategy B: Spatial Block CV ──")
+        if coords is None:
+            raise RuntimeError("Spatial CV requested but latitude/longitude columns are not available in features_train.csv")
         spatial_splits, geo_groups = build_spatial_splits(X, y, coords)
         results["spatial"] = evaluate_cv_strategy(
-            X, y, spatial_splits, "spatial"
+            X, y, spatial_splits, "spatial", metric_name
         )
 
     # ── Compare and recommend ──────────────────────────────────
@@ -213,13 +229,13 @@ def run(strategy: str = "compare") -> dict:
     print(f"{'='*60}")
 
     for name, res in results.items():
-        print(f"  {name:12s}: OOF AUC={res['oof_auc']:.5f}  "
+        print(f"  {name:12s}: OOF {metric_name.upper()}={res['oof_primary']:.5f}  "
               f"std={res['fold_std']:.5f}")
 
     if strategy == "compare" and len(results) == 2:
-        strat_auc   = results["stratified"]["oof_auc"]
-        spatial_auc = results["spatial"]["oof_auc"]
-        gap         = strat_auc - spatial_auc
+        strat_score   = results["stratified"]["oof_primary"]
+        spatial_score = results["spatial"]["oof_primary"]
+        gap           = strat_score - spatial_score
 
         print(f"\n  Gap (stratified - spatial): {gap:+.5f}")
 
@@ -241,17 +257,22 @@ def run(strategy: str = "compare") -> dict:
 
     # ── Write to SKILL_STATE.json ──────────────────────────────
     state_store = SkillStateStore(paths.state_path)
-    state_store.update(
-        cv_strategy=recommendation,
-        cv_stratified_oof_auc=results.get("stratified", {}).get("oof_auc"),
-        cv_spatial_oof_auc=results.get("spatial", {}).get("oof_auc"),
-        cv_gap=round(
-            (results.get("stratified", {}).get("oof_auc", 0) or 0) -
-            (results.get("spatial", {}).get("oof_auc", 0) or 0), 6
+    state = state_store.read()
+    state_update = {
+        "cv_strategy": recommendation,
+        "cv_primary_metric": metric_name,
+        "cv_stratified_oof_auc": results.get("stratified", {}).get("oof_auc"),
+        "cv_spatial_oof_auc": results.get("spatial", {}).get("oof_auc"),
+        "cv_gap": round(
+            (results.get("stratified", {}).get("oof_primary", 0) or 0) -
+            (results.get("spatial", {}).get("oof_primary", 0) or 0), 6
         ) if strategy == "compare" else None,
-        dag_phase="phase_3_features",
-        last_updated=datetime.now(timezone.utc).isoformat(),
-    )
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+    current_phase = state.get("dag_phase")
+    if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete", "phase_2_legality_checked"):
+        state_update["dag_phase"] = "phase_3_features"
+    state_store.update(**state_update)
     print(f"\n✅ SKILL_STATE.json updated: cv_strategy={recommendation}")
 
     return {

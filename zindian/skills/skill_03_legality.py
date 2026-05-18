@@ -1,282 +1,241 @@
 """
-Skill 03 — Deep Research / Legality Check
-Reads challenge_config.json and compliance_log.md.
-Hard gate before Skill 08 — must return GO before anchor runs.
+Skill 03 — Legality Gate
+
+Two functions:
+  - synthesise_feature_policy(monitor_data, config)
+  - check_planned_features(policy, planned_features)
+
+Entry point `run(slug, planned_features=None)` runs both steps, writes
+`reports/feature_policy.json` and `reports/legality_report.md`, and updates
+`SKILL_STATE.json` only when not downgrading the DAG phase.
+
+Generalisable: reads from `zindi_monitor.json`, `challenge_config.json`, and
+`SKILL_STATE.json`. Does not hardcode specific data sources.
 """
 
+from __future__ import annotations
+
 import json
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional
+
+from zindian.paths import resolve_competition_paths
+from zindian.config import ChallengeConfig
+from zindian.state import SkillStateStore
 
 
-def load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
+def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]) -> Dict[str, Any]:
+    """Derive a generic feature policy from monitor output and config.
+
+    The policy is intentionally generic and avoids naming specific datasets.
+    """
+    comp = monitor_data.get("competition_intel", {}) if isinstance(monitor_data, dict) else {}
+
+    # Allowed external sources (from data page hints) — keep as advisory
+    allowed_sources = comp.get("allowed_data_sources", ["competition_provided_only"])
+
+    # Banned transformations and features: combine monitor and config
+    banned_from_monitor = monitor_data.get("banned_features", []) if isinstance(monitor_data, dict) else []
+    banned_from_config = config.get("banned_features", []) if config else []
+    banned_transformations = list(set(banned_from_monitor + banned_from_config))
+
+    # Lat/Lon permitted if no spatial bans mention 'derived_spatial' or 'spatial'
+    lat_lon_permitted = True
+    low = [b.lower() for b in banned_transformations]
+    if any("spatial" in s for s in low) or any("latitude" in s or "longitude" in s for s in low):
+        lat_lon_permitted = False
+
+    external_data_permitted = not comp.get("external_banned", True)
+    automl_permitted = not comp.get("automl_banned", False)
+    use_probabilities = comp.get("use_probabilities") if comp.get("use_probabilities") is not None else config.get("use_probabilities")
+    metric = comp.get("metric") or config.get("metric")
+
+    policy = {
+        "allowed_sources": allowed_sources,
+        "banned_transformations": banned_transformations,
+        "lat_lon_permitted_as_feature": lat_lon_permitted,
+        "external_data_permitted": external_data_permitted,
+        "automl_permitted": automl_permitted,
+        "use_probabilities": use_probabilities,
+        "metric": metric,
+        "output_format": "probabilities" if use_probabilities else "hard_labels_0_1",
+        "synthesised_at": datetime.now(timezone.utc).isoformat(),
+        "source_flags": flagged_titles,
+    }
+
+    return policy
 
 
-def write_state(state: dict, path: Path) -> None:
-    with tempfile.NamedTemporaryFile(
-        mode="w", delete=False, suffix=".json"
-    ) as tmp:
-        json.dump(state, tmp, indent=2)
-        tmp_path = tmp.name
-    os.replace(tmp_path, path)
+def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Check each planned feature against the policy.
 
+    planned_features: list of dicts with keys: `name`, `source` (optional),
+    `transforms` (list), `uses_lat_lon` (bool).
+    Returns list of results: {name, status: PASS|WARN|BLOCK, reason, blocks}
+    """
+    results: List[Dict[str, Any]] = []
 
-def load_compliance_flags(compliance_path: Path) -> list:
-    if not compliance_path.exists():
-        return []
-    flags = []
-    for line in compliance_path.read_text().splitlines():
-        if line.startswith("### 🚨"):
-            flags.append(line.replace("### 🚨", "").strip())
-    return flags
+    allowed_sources = set([s.lower() for s in policy.get("allowed_sources", [])])
+    external_ok = policy.get("external_data_permitted", True)
+    banned_trans = set([s.lower() for s in policy.get("banned_transformations", [])])
+    lat_ok = policy.get("lat_lon_permitted_as_feature", True)
 
+    for f in planned_features:
+        name = f.get("name")
+        source = (f.get("source") or "").lower()
+        transforms = [t.lower() for t in f.get("transforms", [])]
+        uses_lat_lon = bool(f.get("uses_lat_lon", False))
 
-def run_checks(config: dict, flags: list) -> list:
-    checks = []
+        status = "PASS"
+        reason = ""
+        blocks = False
 
-    # Check 1: External data
-    allowed_external = config.get("allowed_external_data", False)
-    checks.append({
-        "name": "External Data",
-        "status": "PASS",
-        "finding": (
-            "PROHIBITED — use only competition-provided files."
-            if not allowed_external
-            else "PERMITTED — document any external source."
-        ),
-        "action": (
-            "Do not use GBIF, Kaggle, or any non-provided dataset."
-            if not allowed_external
-            else "Permitted — document sources."
-        ),
-        "blocks": False,
-    })
+        # External source check
+        if source and not external_ok and source not in allowed_sources:
+            status = "BLOCK"
+            reason = f"External data source '{source}' is not permitted by policy"
+            blocks = True
 
-    # Check 2: TerraClimate via Planetary Computer
-    checks.append({
-        "name": "TerraClimate / Planetary Computer",
-        "status": "PASS",
-        "finding": (
-            "PERMITTED — listed in competition requirements.txt. "
-            "This is the intended feature source, not external data."
-        ),
-        "action": "Fetch all 14 TerraClimate variables freely.",
-        "blocks": False,
-    })
+        # Transformation check
+        if not blocks:
+            offending = [t for t in transforms if any(bt in t for bt in banned_trans)]
+            if offending:
+                status = "BLOCK"
+                reason = f"Banned transformation(s) detected: {offending}"
+                blocks = True
 
-    # Check 3: AutoML
-    automl_ok = config.get("automl_permitted", False)
-    checks.append({
-        "name": "AutoML Tools",
-        "status": "PASS",
-        "finding": "PROHIBITED — H2O, AutoSklearn, TPOT etc. not allowed.",
-        "action": "Use manually configured sklearn/LightGBM/XGBoost pipelines.",
-        "blocks": False,
-    })
+        # Lat/Lon usage
+        if not blocks and uses_lat_lon and not lat_ok:
+            status = "BLOCK"
+            reason = "Use of latitude/longitude as features is prohibited by policy"
+            blocks = True
 
-    # Check 4: Spatial features
-    banned = config.get("banned_features", [])
-    spatial_banned = any("spatial" in b.lower() for b in banned)
-    checks.append({
-        "name": "Spatial Features",
-        "status": "WARN" if spatial_banned else "PASS",
-        "finding": (
-            "Derived spatial features BANNED (discussion 32369). "
-            "Raw Lat/Lon as direct inputs is permitted. "
-            "BANNED: distance calcs, H3 bins, spatial clusters, "
-            "admin region encodings, Lat/Lon polynomial terms."
-            if spatial_banned
-            else "No spatial bans detected."
-        ),
-        "action": (
-            "Use raw Lat/Lon only. No spatial aggregations."
-            if spatial_banned
-            else "No restriction."
-        ),
-        "blocks": False,
-    })
+        # Warnings: using unknown sources when external allowed but not listed
+        if not blocks and source and external_ok and allowed_sources and source not in allowed_sources:
+            status = "WARN"
+            reason = f"Source '{source}' not explicitly listed in allowed sources (advisory)"
 
-    # Check 5: Output format
-    use_probs = config.get("use_probabilities", False)
-    metric = config.get("metric", "unknown")
-    checks.append({
-        "name": "Output Format",
-        "status": "PASS",
-        "finding": (
-            f"Metric: {metric}. "
-            + ("Submit raw float probabilities [0,1]."
-               if use_probs
-               else "Submit hard integer labels 0 or 1. "
-                    "Threshold search is internal — never submit probabilities.")
-        ),
-        "action": (
-            "predict_proba()[:, 1] → Target"
-            if use_probs
-            else "predict() or threshold(predict_proba()) → Target as int"
-        ),
-        "blocks": False,
-    })
-
-    # Check 6: Submission budget
-    daily = config.get("daily_limit", 10)
-    total = config.get("total_limit", 300)
-    checks.append({
-        "name": "Submission Budget",
-        "status": "PASS",
-        "finding": f"Max {daily}/day, {total} total.",
-        "action": (
-            "Anchor phase: max 2/day. Exploration: max 5/day. "
-            "Always reserve 2/day buffer. Gate must pass before submit."
-        ),
-        "blocks": False,
-    })
-
-    # Check 7: Code review
-    tier = config.get("code_review_tier", "top_10")
-    hours = config.get("code_review_hours", 48)
-    checks.append({
-        "name": "Code Review",
-        "status": "WARN",
-        "finding": (
-            f"{tier} on private leaderboard must submit reproducible code "
-            f"within {hours} hours. All notebooks must run top-to-bottom "
-            f"on data/raw/ only."
-        ),
-        "action": (
-            "Set random seeds everywhere. No hardcoded paths. "
-            "No manual intermediate files. Test full pipeline before submit."
-        ),
-        "blocks": False,
-    })
-
-    # Check 8: Compliance flags
-    if flags:
-        checks.append({
-            "name": "Discussion Compliance Flags",
-            "status": "WARN",
-            "finding": f"{len(flags)} flags: " + " | ".join(flags[:3]),
-            "action": "Read reports/compliance_log.md before proceeding.",
-            "blocks": False,
+        results.append({
+            "name": name,
+            "source": source,
+            "transforms": transforms,
+            "uses_lat_lon": uses_lat_lon,
+            "status": status,
+            "reason": reason,
+            "blocks": blocks,
         })
 
-    return checks
+    return results
 
 
-def write_legality_report(checks: list, config: dict,
-                          report_path: Path) -> None:
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    blocked = [c for c in checks if c["status"] == "BLOCKED"]
-    warnings = [c for c in checks if c["status"] == "WARN"]
-    passed = [c for c in checks if c["status"] == "PASS"]
-
-    lines = [
-        "# Legality Report — Skill 03",
-        f"**Competition**: {config.get('name', config.get('slug'))}",
-        f"**Generated**: {now}",
-        f"**Checks**: {len(checks)} | "
-        f"Blocked: {len(blocked)} | "
-        f"Warnings: {len(warnings)} | "
-        f"Passed: {len(passed)}",
-        "", "---", "",
-        "## ⚠️ Warnings", "",
-    ]
-
-    for c in warnings:
-        lines += [
-            f"### {c['name']}",
-            f"**Finding**: {c['finding']}",
-            f"**Action**: {c['action']}", "",
-        ]
-
-    lines += ["## ✅ Passed", ""]
-    for c in passed:
-        lines.append(f"- **{c['name']}**: {c['finding']}")
-
-    lines += [
-        "", "---", "",
-        "## Feature Engineering Constraints",
-        "",
-        f"- Allowed: Raw Lat/Lon + all 14 TerraClimate variables",
-        f"- Banned features: {config.get('banned_features', [])}",
-        f"- External data: {'PROHIBITED' if not config.get('allowed_external_data') else 'PERMITTED'}",
-        f"- AutoML: PROHIBITED",
-        f"- Output: {'Hard labels 0/1' if not config.get('use_probabilities') else 'Raw probabilities'}",
-        f"- Metric: {config.get('metric', 'unknown')}",
-    ]
-
-    report_path.write_text("\n".join(lines))
+def _write_feature_policy(paths, policy: Dict[str, Any]) -> None:
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    p = paths.reports_dir / "feature_policy.json"
+    p.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+    print(f"  ✅ feature_policy.json written -> {p}")
 
 
-def main(slug: str = "ey-frogs") -> dict:
-    base = Path(f"competitions/{slug}")
-    config_path     = base / "challenge_config.json"
-    state_path      = base / "SKILL_STATE.json"
-    compliance_path = base / "reports/compliance_log.md"
-    report_path     = base / "reports/legality_report.md"
-    log_path        = base / "reports/submission_log.md"
-
-    print("=" * 60)
-    print("SKILL 03 — Deep Research / Legality Check")
-    print("=" * 60)
-
-    config = load_json(config_path)
-    state  = load_json(state_path)
-    flags  = load_compliance_flags(compliance_path)
-
-    print(f"Competition  : {config.get('name')}")
-    print(f"Current phase: {state.get('dag_phase')}")
-    print(f"Compliance flags: {len(flags)}")
-    print("\nRunning checks...")
-
-    checks = run_checks(config, flags)
-    hard_blocks = [c for c in checks if c.get("blocks")]
-    status = "BLOCKED" if hard_blocks else "GO"
-
-    print(f"\n{'='*60}")
-    print(f"RESULT: {status}")
-    print(f"{'='*60}")
+def _write_legality_report(paths, checks: List[Dict[str, Any]], policy: Dict[str, Any]) -> None:
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    p = paths.reports_dir / "legality_report.md"
+    lines = ["# Legality Report", "", f"Generated: {datetime.now(timezone.utc).isoformat()}", "", "## Policy", "", json.dumps(policy, indent=2), "", "## Feature Checks", ""]
     for c in checks:
-        icon = {"PASS": "✅", "WARN": "⚠️ ", "BLOCKED": "❌"}.get(
-            c["status"], "?"
-        )
-        print(f"{icon} {c['name']}: {c['status']}")
-        if c["status"] != "PASS":
-            print(f"   → {c['action']}")
+        lines += [f"- **{c['name']}**: {c['status']}  ", f"  - reason: {c['reason']}", f"  - blocks: {c['blocks']}", ""]
 
-    write_legality_report(checks, config, report_path)
-    print(f"\n✅ Report → {report_path}")
+    p.write_text("\n".join(lines), encoding="utf-8")
+    print(f"  ✅ legality_report.md written -> {p}")
 
-    # Append to submission log
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    with open(log_path, "a") as f:
-        f.write(
-            f"\n## Skill 03 — Legality Check [{now}]\n"
-            f"**Status**: {status}\n"
-            f"**Warnings**: {[c['name'] for c in checks if c['status']=='WARN']}\n"
-        )
 
-    # Update state
-    state["dag_phase"] = "phase_2_legality_checked"
-    state["legality_status"] = status
-    state["last_updated"] = datetime.now(timezone.utc).isoformat()
-    write_state(state, state_path)
-    print(f"✅ SKILL_STATE.json → dag_phase: phase_2_legality_checked")
+def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    print(f"\n{'='*60}")
+    print("SKILL 03 — Legality Gate")
+    print(f"{'='*60}\n")
 
-    if status == "GO":
-        print(f"\n✅ SKILL 03 PASSED — proceed to Skill 08")
+    paths = resolve_competition_paths(slug=slug)
+    # Load monitor output if available
+    monitor_path = paths.reports_dir / "zindi_monitor.json"
+    monitor_data = {}
+    flagged_titles = []
+    if monitor_path.exists():
+        monitor_data = json.loads(monitor_path.read_text(encoding="utf-8"))
+        flagged_titles = monitor_data.get("compliance", {}).get("flagged_titles", [])
+        print(f"  Loaded monitor data from {monitor_path}")
     else:
-        print(f"\n❌ SKILL 03 BLOCKED — resolve before Skill 08")
+        print(f"  ⚠️  zindi_monitor.json not found at {monitor_path} — proceeding with config only")
 
-    return {"status": status, "checks": len(checks)}
+    # Load config
+    try:
+        cfg = ChallengeConfig.load()
+        print(f"  Loaded challenge_config for {cfg.slug}")
+    except Exception:
+        cfg = None
+        print("  ⚠️  challenge_config.json not available or invalid")
+
+    # Synthesise feature policy
+    policy = synthesise_feature_policy(monitor_data, cfg._data if cfg is not None else {}, flagged_titles)
+    _write_feature_policy(paths, policy)
+
+    # Decide planned_features source
+    if planned_features is None:
+        store = SkillStateStore(paths.state_path)
+        state = store.read()
+        # Try to read explicit planned_features from state
+        planned_features = state.get("planned_features")
+        if not planned_features:
+            # Fallback: use anchor feature summary if available
+            af = state.get("anchor_features")
+            if af:
+                planned_features = [{"name": af, "transforms": [], "uses_lat_lon": False}]
+            else:
+                planned_features = []
+
+    # Normalize planned_features into the expected structure
+    normalized = []
+    for p in planned_features:
+        if isinstance(p, str):
+            normalized.append({"name": p, "transforms": [], "uses_lat_lon": False})
+        else:
+            normalized.append({
+                "name": p.get("name") or p.get("feature") or str(p),
+                "source": p.get("source", ""),
+                "transforms": p.get("transforms", []),
+                "uses_lat_lon": p.get("uses_lat_lon", False),
+            })
+
+    checks = check_planned_features(policy, normalized)
+    _write_legality_report(paths, checks, policy)
+
+    # Determine overall status
+    blocked_reasons = [c for c in checks if c.get("blocks")]
+    status = "GO" if not blocked_reasons else "BLOCKED"
+
+    # Update SKILL_STATE.json but do not downgrade dag_phase
+    store = SkillStateStore(paths.state_path)
+    state = store.read()
+    patch = {
+        "legality_status": status,
+        "feature_policy_written": str(paths.reports_dir / "feature_policy.json"),
+        "last_legality_checked": datetime.now(timezone.utc).isoformat(),
+    }
+    # Only advance dag_phase if current is before phase_2_legality_checked
+    current_phase = state.get("dag_phase")
+    if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete") and status == "GO":
+        patch["dag_phase"] = "phase_2_legality_checked"
+
+    store.update(**patch)
+    print(f"  ✅ SKILL_STATE.json updated with legality_status={status}")
+
+    result = {
+        "status": status,
+        "blocked_reasons": [c for c in checks if c.get("blocks")],
+        "checks": checks,
+        "policy": policy,
+    }
+
+    return result
 
 
 if __name__ == "__main__":
-    import sys
-    slug = sys.argv[1] if len(sys.argv) > 1 else "ey-frogs"
-    result = main(slug)
-    print(f"\nResult: {result}")
+    out = run()
+    print(json.dumps(out, indent=2))

@@ -32,7 +32,7 @@ from zindian.ledger import Ledger
 
 # ── Data ───────────────────────────────────────────────────────────────────────
 
-def load_data(paths) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
+def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     """
     Load training and test data.
     Returns (train, test, training_target_col, submission_col).
@@ -42,8 +42,8 @@ def load_data(paths) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     train = pd.read_csv(paths.competition_dir / "data/processed/features_train.csv")
     test  = pd.read_csv(paths.competition_dir / "data/processed/features_test.csv")
 
-    # Training target: actual label column in Training_Data.csv
-    training_target_col = "Occurrence Status"
+    # Training target: prefer the configured column, with the EY Frogs label as fallback.
+    training_target_col = config.get("target_column", "Occurrence Status")
 
     # Submission column: what Zindi expects in the CSV header
     sample = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
@@ -74,11 +74,11 @@ def compute_oof_predictions(
     # Lat/Lon BANNED as model features (discussion 32369)
     # Use TerraClimate only — all columns except ID, coords, target
     feature_cols = [c for c in train.columns
-                    if c not in ("ID", "Latitude", "Longitude", "Occurrence Status")]
+                    if c not in ("ID", "Latitude", "Longitude", target_col)]
 
-    X      = train[feature_cols].values.astype(np.float32)
-    y      = train[target_col].values.astype(np.int32)
-    X_test = test[feature_cols].values.astype(np.float32)
+    X      = np.asarray(train[feature_cols].values, dtype=np.float32)
+    y      = np.asarray(train[target_col].values, dtype=np.int32)
+    X_test = np.asarray(test[feature_cols].values, dtype=np.float32)
 
     scaler = StandardScaler()
     X      = scaler.fit_transform(X)
@@ -113,14 +113,15 @@ def compute_oof_predictions(
             callbacks=[lgb.early_stopping(50), lgb.log_evaluation(period=-1)],
         )
 
-        val_pred           = model.predict(X_val)
+        val_pred           = np.asarray(model.predict(X_val), dtype=np.float64)
         oof_preds[val_idx] = val_pred
-        test_preds        += model.predict(X_test) / n_splits
+        test_preds        += np.asarray(model.predict(X_test), dtype=np.float64) / n_splits
 
         fold_ll  = log_loss(y_val, val_pred)
         fold_auc = roc_auc_score(y_val, val_pred)
         print(f"  Fold {fold_idx + 1}/{n_splits}: logloss={fold_ll:.6f}  auc={fold_auc:.6f}")
 
+    y = np.asarray(y, dtype=np.int32)
     oof_logloss = float(log_loss(y, oof_preds))
     oof_auc     = float(roc_auc_score(y, oof_preds))
     
@@ -418,7 +419,7 @@ def run(
     print(f"Use probabilities: {config.use_probabilities}")
 
     # ── Load data ──────────────────────────────────────────────
-    train, test, training_target_col, submission_col = load_data(paths)
+    train, test, training_target_col, submission_col = load_data(paths, config)
     print(f"\nData loaded:")
     print(f"  Train          : {train.shape}")
     print(f"  Test           : {test.shape}")
@@ -435,9 +436,9 @@ def run(
     # ── Save OOF predictions ───────────────────────────────────
     oof_path = paths.data_raw_dir / "oof_anchor.csv"
     pd.DataFrame({
-        "ID":                train["ID"],
+        "ID":                np.asarray(train["ID"].values),
         "Predicted":         oof_preds,
-        training_target_col: train[training_target_col],
+        training_target_col: np.asarray(train[training_target_col].values),
     }).to_csv(oof_path, index=False)
     print(f"✅ OOF predictions saved → {oof_path}")
 
@@ -447,7 +448,7 @@ def run(
     # Use best_t computed above (optimal F1 threshold)
     print(f'\nApplying optimal F1 threshold: {best_t:.2f}')
     hard_preds = (test_preds >= best_t).astype(int)
-    save_submission(test["ID"].values, hard_preds, submission_col, sub_path)
+    save_submission(np.asarray(test["ID"].values), hard_preds, submission_col, sub_path)
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()

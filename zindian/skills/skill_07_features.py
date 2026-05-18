@@ -131,6 +131,7 @@ def fetch_terraclimate(paths) -> Path:
                   "std":  lambda a: a.std(dim="time"),
                   "min":  lambda a: a.min(dim="time"),
                   "max":  lambda a: a.max(dim="time")}[stat]
+            result = None
 
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
@@ -146,6 +147,8 @@ def fetch_terraclimate(paths) -> Path:
                     except Exception:
                         pass
 
+            if result is None:
+                raise RuntimeError(f"Failed to compute {key}")
             np.save(cache_file, result)
             bands.append(result)
             band_names.append(key)
@@ -262,9 +265,9 @@ def train_variant(
     np.random.seed(seed)
 
     TARGET = "Occurrence Status"
-    X      = train[feature_cols].values
-    y      = train[TARGET].values
-    X_test = test[feature_cols].values
+    X      = np.asarray(train[feature_cols].values, dtype=np.float64)
+    y      = np.asarray(train[TARGET].values, dtype=np.int32)
+    X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
     skf        = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
     oof_probs  = np.zeros(len(y))
@@ -351,10 +354,10 @@ def train_variant(
             )
             rf_model.fit(X[tr_idx], y[tr_idx])
             # Average blend
-            lgb_val  = lgb_model.predict_proba(X[val_idx])[:, 1]
-            rf_val   = rf_model.predict_proba(X[val_idx])[:, 1]
-            lgb_test = lgb_model.predict_proba(X_test)[:, 1]
-            rf_test  = rf_model.predict_proba(X_test)[:, 1]
+            lgb_val  = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
+            rf_val   = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
+            lgb_test = np.asarray(lgb_model.predict_proba(X_test))[:, 1]
+            rf_test  = np.asarray(rf_model.predict_proba(X_test))[:, 1]
             oof_probs[val_idx]  = 0.5 * lgb_val + 0.5 * rf_val
             test_probs         += (0.5 * lgb_test + 0.5 * rf_test) / N_SPLITS
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
@@ -385,8 +388,8 @@ def train_variant(
                 callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)]
             )
 
-        oof_probs[val_idx]  = model.predict_proba(X[val_idx])[:, 1]
-        test_probs         += model.predict_proba(X_test)[:, 1] / N_SPLITS
+        oof_probs[val_idx]  = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
+        test_probs         += np.asarray(model.predict_proba(X_test))[:, 1] / N_SPLITS
         fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
         print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
 
@@ -444,9 +447,9 @@ def write_round_report(paths, results: list[dict], round_num: int, anchor_auc: f
         )
 
     if passed:
-        best = max(passed, key=lambda r: r["oof_auc"])
+        best = max(passed, key=lambda r: r["oof_f1"])
         lines += ["", "## Best Variant This Round", "",
-                  f"**{best['variant']}** — AUC {best['oof_auc']:.5f} "
+                  f"**{best['variant']}** — F1 {best['oof_f1']:.5f} "
                   f"(Δ {best['delta']:+.5f})"]
 
     report_path = paths.reports_dir / f"feature_round_{round_num:02d}.md"
@@ -475,9 +478,14 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     print(f"{'='*60}\n")
 
     paths  = resolve_competition_paths()
+    competition_dir = paths.competition_dir
+    if competition_dir is None:
+        raise RuntimeError("Competition directory could not be resolved")
     config = ChallengeConfig.load()
     store  = SkillStateStore(paths.state_path)
     state  = store.read()
+    metric_name = config.get("metric", "f1_score")
+    primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
 
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
@@ -576,20 +584,35 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variant-25": tc_all,  # LGB+RF blend
         "variant-26": tc_all,  # per-fold threshold
         # Round 4 — TC only compliant (no Lat/Lon)
-        "variant-27": tc_all,                  # LGB tuned — uses variant-13 handler
-        "variant-28": tc_all,                  # Random Forest — uses variant-14 handler
-        "variant-29": tc_all,                  # XGBoost — uses variant-18 handler
-        "variant-30": tc_temp_only,            # temperature only
-        "variant-31": tc_water_only,           # moisture only
-        "variant-32": tc_stress_only,          # drought stress only
-        "variant-33": shap_top12_tc,           # SHAP top 12 TC only
-        "variant-34": tc_all,                  # LGB + RF blend — uses variant-25 handler
+        "variant-27": tc_all,
+        "variant-28": tc_all,
+        "variant-29": tc_all,
+        "variant-30": tc_temp_only,
+        "variant-31": tc_water_only,
+        "variant-32": tc_stress_only,
+        "variant-33": shap_top12_tc,
+        "variant-34": tc_all,
+        # Round 5 — 2017-2019 window + extended features
+        "variant-35": tc_all,                  # 52 TC bands, 2017-2019 window
+        "variant-36": None,                    # 91 features (full merge)
     }
 
     if variant_name not in VARIANTS:
         raise ValueError(f"Unknown variant '{variant_name}'. Choose from: {list(VARIANTS)}")
 
-    feature_cols = VARIANTS[variant_name]
+    # variant-36 uses the full merged feature set
+    if variant_name == "variant-36":
+        full_train = competition_dir / "data/processed/features_full_train.csv"
+        full_test  = competition_dir / "data/processed/features_full_test.csv"
+        if not full_train.exists():
+            raise FileNotFoundError("features_full_train.csv not found — run merge_features.py first")
+        train_feat = pd.read_csv(full_train)
+        test_feat  = pd.read_csv(full_test)
+        DROP       = ["ID", "Occurrence Status", "Latitude", "Longitude"]
+        feature_cols = [c for c in train_feat.columns if c not in DROP]
+        print(f"  variant-36: loaded {len(feature_cols)} features from features_full_*.csv")
+    else:
+        feature_cols = VARIANTS[variant_name]
 
     # ── Phase C: Train (multi-seed averaging) ────────────────
     SEEDS = [42, 123, 7]
@@ -639,14 +662,14 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         preds   = (test_probs >= result["threshold"]).astype(int)
         sub     = pd.DataFrame({"ID": test_feat["ID"], sub_col: preds})
         sub     = sub.set_index("ID").reindex(sample["ID"]).reset_index()
-        out     = paths.competition_dir / f"submissions/{variant_name}_submission.csv"
+        out     = competition_dir / f"submissions/{variant_name}_submission.csv"
         sub.to_csv(out, index=False)
         print(f"  ✅ Submission saved → {out}")
 
     # ── Phase D: Update state ─────────────────────────────────
     variants_tested = int(state.get("variants_tested") or 0) + 1
     variants_passed = int(state.get("variants_passed") or 0) + (1 if result["gate"] == "PASS" else 0)
-    best_auc = float(state.get("best_variant_oof_auc") or 0.0)
+    best_score = float(state.get(f"best_variant_{primary_key}") or 0.0)
 
     update = {
         "dag_phase":              "phase_3_features",
@@ -654,7 +677,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variants_passed":        variants_passed,
         "last_updated":           datetime.now(timezone.utc).isoformat(),
     }
-    if result["gate"] == "PASS" and result["oof_auc"] > best_auc:
+    if result["gate"] == "PASS" and result[primary_key] > best_score:
         update["best_variant_this_round"] = variant_name
         update["best_variant_oof_auc"]    = result["oof_auc"]
         update["best_variant_oof_f1"]     = result["oof_f1"]

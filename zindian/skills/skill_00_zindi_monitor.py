@@ -21,6 +21,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import requests
 from zindian.config import ChallengeConfig
@@ -264,14 +265,15 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
     # challenge_config.json is populated by Skill 02 from the actual competition
     # page and discussion board — it is the authoritative source.
     if config:
+        scraped.setdefault("competition_intel", {})
         if config.get("metric"):
             scraped["metric"] = config.get("metric")
         if config.get("use_probabilities") is not None:
             scraped["use_probabilities"] = config.get("use_probabilities")
         if config.get("allowed_external_data") is not None:
-            scraped["external_banned"] = not config.get("allowed_external_data")
+            scraped["competition_intel"]["external_banned"] = not config.get("allowed_external_data")
         if config.get("automl_permitted") is not None:
-            scraped["automl_banned"] = not config.get("automl_permitted")
+            scraped["competition_intel"]["automl_banned"] = not config.get("automl_permitted")
         if config.get("code_review_tier"):
             scraped["code_review_tier"] = config.get("code_review_tier")
         if config.get("daily_limit"):
@@ -407,12 +409,22 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
     _buf = io.StringIO()
     _old = sys.stdout
     sys.stdout = _buf
-    subs = client._user.submission_board()
+    subs: list[Any] = list(client._user.submission_board())
     sys.stdout = _old
 
     clean = []
     best_compliant = 0.0
-    for s in subs:
+    for raw in subs:
+        if isinstance(raw, dict):
+            s: dict[str, Any] = raw
+        elif isinstance(raw, tuple):
+            try:
+                s = dict(raw)
+            except Exception:
+                s = {}
+        else:
+            s = {}
+
         score = s.get("public_score", 0.0) or 0.0
         clean.append({
             "id":      s["id"],
@@ -650,6 +662,7 @@ def run() -> dict:
 
     # ── 3. Leaderboard ────────────────────────────────────────
     print("\n[3/4] Fetching leaderboard status...")
+    client: ZindiClient | None = None
     try:
         client = ZindiClient()
         client.select_competition(slug)
@@ -663,6 +676,8 @@ def run() -> dict:
     # ── 4. Submission board ───────────────────────────────────
     print("\n[4/4] Fetching submission board...")
     try:
+        if client is None:
+            raise RuntimeError("Zindi client not available")
         sub_intel = fetch_submission_intel(client)
         print(f"  Total submissions   : {sub_intel['total']}")
         print(f"  Best LB score       : {sub_intel['best_score']:.9f}")
