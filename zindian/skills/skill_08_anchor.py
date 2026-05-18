@@ -61,12 +61,13 @@ def compute_oof_predictions(
     target_col:  str,
     n_splits:    int = 5,
     random_seed: int = 42,
-) -> tuple[np.ndarray, np.ndarray, float, float]:
+) -> tuple[np.ndarray, np.ndarray, float, float, float, float]:
     """
     Train LightGBM with KFold cross-validation on TerraClimate features only.
-    Returns (oof_preds, test_preds, oof_logloss, oof_auc).
+    Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
+    Computes F1 using optimal threshold (challenge metric).
     """
-    from sklearn.metrics import log_loss, roc_auc_score
+    from sklearn.metrics import log_loss, roc_auc_score, f1_score
 
     np.random.seed(random_seed)
 
@@ -122,10 +123,17 @@ def compute_oof_predictions(
 
     oof_logloss = float(log_loss(y, oof_preds))
     oof_auc     = float(roc_auc_score(y, oof_preds))
+    
+    # Compute OOF F1 with optimal threshold (challenge metric = F1 score)
+    thresholds = np.arange(0.3, 0.7, 0.01)
+    best_t = float(max(thresholds, key=lambda t: f1_score(y, (oof_preds >= t).astype(int))))
+    oof_f1 = float(f1_score(y, (oof_preds >= best_t).astype(int)))
+    
     print(f"\nOOF Log Loss : {oof_logloss:.6f}")
     print(f"OOF AUC      : {oof_auc:.6f}")
+    print(f"OOF F1       : {oof_f1:.6f} (threshold={best_t:.2f})")
 
-    return oof_preds, test_preds, oof_logloss, oof_auc
+    return oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t
 
 
 # ── Submission Validation ──────────────────────────────────────────────────────
@@ -284,22 +292,24 @@ Type YES to submit or NO to exit without submitting.
 # ── Zindi Submit ───────────────────────────────────────────────────────────────
 
 def submit_to_zindi(
-    sub_path:    Path,
-    oof_logloss: float,
+    sub_path:  Path,
+    oof_f1:    float,
+    best_t:    float,
 ) -> dict:
     """
     Submit to Zindi via ZindiClient.
     Budget guard is enforced inside ZindiClient.submit().
     Comment format follows AGENTS.md Rule 6.
+    Reports F1 (challenge metric) instead of logloss.
     """
     from zindian.zindi_client import ZindiClient
 
     config  = ChallengeConfig.load()
     comment = (
         f"branch:anchor-baseline"
-        f"|oof_rmse:{oof_logloss:.4f}"
-        f"|features:2"
-        f"|calib:none"
+        f"|oof_f1:{oof_f1:.4f}"
+        f"|features:52"
+        f"|calib:none|threshold:{best_t:.2f}"
     )
 
     client = ZindiClient()
@@ -417,7 +427,7 @@ def run(
 
     # ── Train ──────────────────────────────────────────────────
     print(f"\nTraining LightGBM anchor baseline…")
-    oof_preds, test_preds, oof_logloss, oof_auc = compute_oof_predictions(
+    oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compute_oof_predictions(
         train, test, config, training_target_col,
         n_splits=n_splits, random_seed=random_seed,
     )
@@ -434,14 +444,8 @@ def run(
     # ── Save submission CSV ────────────────────────────────────
     sub_path    = next_submission_path(paths)
     sample_path = paths.data_raw_dir    / "SampleSubmission.csv"
-    # Threshold probs → hard labels (F1 metric)
-    from sklearn.metrics import f1_score as _f1
-    _thresholds = np.arange(0.3, 0.7, 0.01)
-    best_t = float(_thresholds[np.argmax([
-        _f1(train[training_target_col].values, (oof_preds >= t).astype(int))
-        for t in _thresholds
-    ])])
-    print(f'\nOptimal threshold: {best_t:.2f}')
+    # Use best_t computed above (optimal F1 threshold)
+    print(f'\nApplying optimal F1 threshold: {best_t:.2f}')
     hard_preds = (test_preds >= best_t).astype(int)
     save_submission(test["ID"].values, hard_preds, submission_col, sub_path)
 
@@ -449,11 +453,11 @@ def run(
     ledger = Ledger()
     exp_id = ledger.log_experiment(
         branch_name="anchor-baseline",
-        oof_rmse=oof_logloss,
-        feature_count=2,
+        oof_rmse=oof_f1,  # Log F1 (challenge metric)
+        feature_count=52,  # TerraClimate: 13 vars × 4 stats
         calibration_method="none",
         gate_result="PASS",
-        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369)",
+        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369). Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(best_t, oof_auc),
         dag_phase="phase_2_anchor_confirmed",
     )
     ledger.close()
@@ -462,13 +466,14 @@ def run(
     # ── Update SKILL_STATE.json ────────────────────────────────
     state_store = SkillStateStore(paths.state_path)
     state_store.update(
-        anchor_oof_rmse=oof_logloss,
-        anchor_oof_auc=oof_auc,
+        anchor_oof_rmse=oof_f1,  # Store F1 (challenge metric) as primary anchor
+        anchor_oof_f1=oof_f1,    # Explicit F1 field for clarity
+        anchor_oof_auc=oof_auc,  # Keep AUC for reference
         anchor_git_branch="anchor-baseline",
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print(f"✅ SKILL_STATE.json updated: logloss={oof_logloss:.6f}  auc={oof_auc:.6f}")
+    print(f"✅ SKILL_STATE.json updated: f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}")
 
     # ── Create git branch ──────────────────────────────────────
     create_git_branch("anchor-baseline")
@@ -498,7 +503,8 @@ def run(
         if approved:
             submission_result = submit_to_zindi(
                 sub_path=sub_path,
-                oof_logloss=oof_logloss,
+                oof_f1=oof_f1,
+                best_t=best_t,
             )
             state = state_store.read()
             state_store.update(

@@ -251,12 +251,13 @@ def train_variant(
     test: pd.DataFrame,
     feature_cols: list[str],
     variant_name: str,
-    anchor_auc: float,
+    anchor_f1: float,
+    anchor_auc: float | None = None,
     seed: int = SEED,
 ) -> dict:
     """
     Train one LightGBM variant and evaluate against anchor gate.
-    Returns result dict with status, AUC, F1, threshold, delta.
+    Returns result dict with status, F1, AUC, threshold, delta (F1 delta for gating).
     """
     np.random.seed(seed)
 
@@ -393,14 +394,14 @@ def train_variant(
     thresholds = np.arange(0.3, 0.7, 0.01)
     best_t    = max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
     oof_f1    = f1_score(y, (oof_probs >= best_t).astype(int))
-    delta     = oof_auc - anchor_auc
+    delta     = oof_f1 - anchor_f1  # Gate on F1 delta, not AUC delta (challenge metric)
     gate      = "PASS" if delta >= MIN_DELTA else "PRUNE"
 
     print(f"\n  {'='*50}")
     print(f"  {variant_name}")
-    print(f"  OOF AUC  : {oof_auc:.5f}  (anchor: {anchor_auc:.5f})")
+    print(f"  OOF F1   : {oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
     print(f"  Delta    : {delta:+.5f}  → {gate}")
-    print(f"  OOF F1   : {oof_f1:.5f}  (threshold: {best_t:.2f})")
+    print(f"  OOF AUC  : {oof_auc:.5f}  (threshold: {best_t:.2f})")
 
     return {
         "variant":    variant_name,
@@ -480,11 +481,12 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
-    print(f"Anchor AUC  : {state.get('anchor_oof_auc')}")
+    print(f"Anchor F1   : {state.get('anchor_oof_rmse')}  (also in anchor_oof_auc: {state.get('anchor_oof_auc')})")
 
-    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
-    if anchor_auc == 0.0:
-        raise RuntimeError("anchor_oof_auc not set in SKILL_STATE.json — run Skill 08 first")
+    anchor_f1 = float(state.get("anchor_oof_rmse") or 0.0)  # F1 is stored as anchor_oof_rmse (challenge metric)
+    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)   # Keep AUC for reference
+    if anchor_f1 == 0.0:
+        raise RuntimeError("anchor_oof_rmse not set in SKILL_STATE.json — run Skill 08 first")
 
     # ── Phase A: Fetch ────────────────────────────────────────
     print("\n[A] TerraClimate Fetch")
@@ -595,7 +597,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     seed_results = []
     for s in SEEDS:
         print(f"\n  -- Seed {s} --")
-        r = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_auc, seed=s)
+        r = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_f1, anchor_auc, seed=s)
         seed_results.append(r)
 
     # Average OOF AUC and test probabilities across seeds

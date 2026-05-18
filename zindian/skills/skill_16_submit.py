@@ -94,8 +94,7 @@ Type YES to submit or NO to abort.
     client.select_competition(config.slug)
 
     comment = (f"branch:{branch}"
-               f"|oof_auc:{best_auc:.4f}"
-               f"|oof_f1:{best_f1:.4f}"
+               f"|oof_rmse:{best_auc:.4f}"
                f"|features:{state.get('best_variant_features','?')}"
                f"|calib:none")
 
