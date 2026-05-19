@@ -223,11 +223,13 @@ def query_gemini(
     except json.JSONDecodeError as e:
         entry["status"]      = "parse_error"
         entry["raw_summary"] = raw_text[:500] if raw_text else None
-        entry["warnings"]    = [f"JSON parse failed: {e}"]
-        print(f"  ⚠️  Parse error on '{query_label}': {e}")
-
+        entry["warnings"]    = [f"JSON parse failed (treat as empty result): {e}"]
+        entry["tricks"]      = []
+        entry["validation_strategies"] = []
+        entry["feature_ideas"] = []
+        entry["ensemble_patterns"] = []
+        print(f"  ⚠️  Parse error on '{query_label}': {e} — continuing with empty result")
     except Exception as e:
-        entry["status"]   = "api_error"
         entry["warnings"] = [f"API error: {e}"]
         print(f"  ❌ API error on '{query_label}': {e}")
 
@@ -332,6 +334,85 @@ def synthesize_results(
 
     except Exception as e:
         return {"error": f"Synthesis failed: {e}"}
+
+
+def _confidence_from_impact(impact: str) -> float:
+    mapping = {
+        "high": 0.9,
+        "medium": 0.75,
+        "low": 0.6,
+    }
+    return mapping.get(str(impact).strip().lower(), 0.5)
+
+
+def _build_code_miner_cache(entries: list[dict], queries: list[tuple[str, str, str]], domain: str, synthesis: dict) -> dict:
+    query_texts = [query for query, _, _ in queries]
+    successful = sum(1 for entry in entries if entry.get("status") == "success")
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "OK" if successful else "EMPTY",
+        "model": MODEL_NAME,
+        "source_types": ["kaggle", "github", "huggingface"],
+        "domain": domain,
+        "query_count": len(query_texts),
+        "queries": query_texts,
+        "raw_count": len(entries),
+        "successful_count": successful,
+        "synthesis_summary": {
+            "top_tricks": len(synthesis.get("top_3_actionable_tricks", [])),
+            "feature_hypotheses": len(synthesis.get("feature_hypotheses", [])),
+        },
+    }
+
+
+def _build_code_miner_patterns(entries: list[dict], synthesis: dict, domain: str) -> dict:
+    patterns = []
+
+    for index, trick in enumerate(synthesis.get("top_3_actionable_tricks", []), 1):
+        impact = trick.get("expected_impact", "unknown")
+        pattern = {
+            "pattern_id": f"cm_{index:03d}",
+            "source_type": "synthesized",
+            "source_ref": "gemini_synthesis",
+            "category": "strategy",
+            "technique_name": trick.get("trick", "unknown"),
+            "problem_shape": f"{domain.title()} binary classification",
+            "implementation_steps": [
+                trick.get("trick", "Implement the synthesized trick"),
+                f"Focus on {domain}-appropriate feature engineering and validation",
+            ],
+            "leakage_risk": "unknown",
+            "expected_gain": impact,
+            "confidence": _confidence_from_impact(impact),
+        }
+        patterns.append(pattern)
+
+    base_index = len(patterns)
+    for offset, hypothesis in enumerate(synthesis.get("feature_hypotheses", []), 1):
+        variables = hypothesis.get("variables_needed", [])
+        pattern = {
+            "pattern_id": f"cm_{base_index + offset:03d}",
+            "source_type": "synthesized",
+            "source_ref": "gemini_synthesis",
+            "category": "feature_engineering",
+            "technique_name": hypothesis.get("hypothesis", "unknown"),
+            "problem_shape": f"{domain.title()} binary classification",
+            "implementation_steps": [
+                hypothesis.get("ecological_basis", "Use the synthesized basis to shape features"),
+                f"Construct features from: {', '.join(variables) if variables else 'available TC variables'}",
+            ],
+            "leakage_risk": "low",
+            "expected_gain": hypothesis.get("complexity", "unknown"),
+            "confidence": 0.7,
+        }
+        patterns.append(pattern)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "OK" if patterns else "EMPTY",
+        "patterns_count": len(patterns),
+        "patterns": patterns,
+    }
 
 
 def write_markdown_report(
@@ -496,6 +577,15 @@ def run(
     json_path = reports_dir / "ml_priorart.json"
     json_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(f"✅ JSON saved → {json_path}")
+
+    legacy_cache_path = reports_dir / "code_miner_cache.json"
+    legacy_patterns_path = reports_dir / "code_miner_patterns.json"
+    legacy_cache = _build_code_miner_cache(entries, queries, domain, synthesis)
+    legacy_patterns = _build_code_miner_patterns(entries, synthesis, domain)
+    legacy_cache_path.write_text(json.dumps(legacy_cache, indent=2), encoding="utf-8")
+    legacy_patterns_path.write_text(json.dumps(legacy_patterns, indent=2), encoding="utf-8")
+    print(f"✅ Legacy cache saved → {legacy_cache_path}")
+    print(f"✅ Legacy patterns saved → {legacy_patterns_path}")
 
     report_path = reports_dir / "code_miner_report.md"
     write_markdown_report(entries, synthesis, report_path, domain)

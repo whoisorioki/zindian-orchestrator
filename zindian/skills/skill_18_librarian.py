@@ -91,6 +91,79 @@ def extract_abstract(paper: dict) -> str | None:
         return paper["tldr"]["text"]
     return paper.get("abstract")
 
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen = set()
+    ordered = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
+def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
+    hypotheses = []
+    seen_signatures = set()
+    fallback_variables = ["ppt", "tmax", "tmin", "aet", "def", "pdsi", "pet", "q", "soil", "srad", "vap", "vpd"]
+
+    keyword_map = [
+        ("precipitation", ["precip", "rain", "rainfall", "wet"], ["ppt"]),
+        ("temperature", ["temp", "thermal", "heat", "cold"], ["tmax", "tmin", "pet"]),
+        ("moisture stress", ["moisture", "soil", "drought", "arid", "dry"], ["soil", "aet", "def", "pdsi", "q"]),
+        ("radiation", ["radiation", "solar", "insolation", "sun"], ["srad"]),
+        ("atmospheric demand", ["vapour", "vapor", "vpd", "evap", "evapotranspiration"], ["vap", "vpd", "aet", "pet"]),
+        ("seasonality", ["season", "monthly", "temporal", "lag"], ["ppt", "tmax", "tmin", "srad"]),
+        ("habitat suitability", ["habitat", "occurrence", "distribution", "suitability", "species"], ["ppt", "tmax", "tmin", "srad", "vap", "vpd"]),
+    ]
+
+    for paper in entries:
+        text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+        signals = []
+        variables = []
+        for signal_name, keywords, tc_variables in keyword_map:
+            if any(keyword in text for keyword in keywords):
+                signals.append(signal_name)
+                variables.extend(tc_variables)
+
+        variables = [variable for variable in _dedupe_preserve_order(variables) if variable in TC_VARIABLES]
+        if not variables:
+            variables = fallback_variables[:4]
+
+        if not signals:
+            signals = ["climate variability"]
+
+        signal = ", ".join(_dedupe_preserve_order(signals))
+        signature = (signal, tuple(variables))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        abstract = paper.get("abstract") or paper.get("title") or "Domain evidence"
+        hypotheses.append({
+            "signal": signal,
+            "rationale": abstract[:240],
+            "variables_needed": variables,
+            "paper_title": paper.get("title"),
+            "year": paper.get("year"),
+        })
+
+        if len(hypotheses) >= 16:
+            break
+
+    if not hypotheses:
+        hypotheses = [
+            {
+                "signal": "climate variability",
+                "rationale": "Fallback domain signal derived from TerraClimate-only competition constraints.",
+                "variables_needed": ["ppt", "tmax", "tmin", "aet"],
+                "paper_title": None,
+                "year": None,
+            }
+        ]
+
+    return hypotheses
+
 def run_librarian(config_path: str, cache_path: str) -> dict:
     queries = build_queries(TC_VARIABLES)
     seen_ids = set()
@@ -126,6 +199,12 @@ def run_librarian(config_path: str, cache_path: str) -> dict:
     }
     Path(cache_path).write_text(json.dumps(cache, indent=2))
     print(f"[Librarian] Cached {len(entries)} unique abstracts → {cache_path}")
+
+    domain_hypotheses_path = Path(cache_path).with_name("domain_hypotheses.json")
+    domain_hypotheses = _build_domain_hypotheses(entries)
+    domain_hypotheses_path.write_text(json.dumps(domain_hypotheses, indent=2), encoding="utf-8")
+    print(f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses → {domain_hypotheses_path}")
+
     return cache
 
 

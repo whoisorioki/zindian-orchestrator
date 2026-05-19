@@ -71,8 +71,10 @@ BANNED
 - [x] skill_18_librarian.py — domain literature retrieval (Semantic Scholar)
 - [x] skill_20_scientist.py — bounded hypothesis generation (Gemini free-tier)
 - [x] skill_19_code_miner.py — machine-learning prior-art mining (Gemini + fallback)
-- [ ] Orchestrator wiring: run 02.4 and 02.6 before 02.5 synthesis
-- [ ] Add schema tests for code_miner_cache.json and code_miner_patterns.json
+- [x] Orchestrator wiring: run 02.4 and 02.6 before 02.5 synthesis
+      Implemented via `zindian.orchestrator.run_deep_research()` and the updated skill outputs
+- [x] Add schema tests for code_miner_cache.json and code_miner_patterns.json
+      Covered in `tests/test_deep_research_scaffolds.py`
 
 ---
 

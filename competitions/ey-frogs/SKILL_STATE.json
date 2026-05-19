@@ -20,7 +20,7 @@
     "tfcawL75",
     "WeXoXWi6"
   ],
-  "last_updated": "2026-05-19T02:36:27+03:00",
+  "last_updated": "2026-05-19T09:42:58+03:00",
   "md5_train_file": "0373cba783a545f95af48b206959ab9a",
   "md5_test_file": "429b1a8ec3868dc73dc94eaffe058d68",
   "md5_sample_sub_file": "6cea7a8efd61aaea9b4cf370c94f46c8",
@@ -114,7 +114,7 @@
   "anchor_features": "TC_only_52",
   "feature_policy_written": "/home/adrian/projects/zindian_orchestrator/competitions/ey-frogs/reports/feature_policy.json",
   "last_legality_checked": "2026-05-18T17:50:48.737569+00:00",
-  "code_miner_last_run": "2026-05-18T21:31:11.708474+00:00",
+  "code_miner_last_run": "2026-05-19T06:42:26.401705+00:00",
   "code_miner_domain": "geospatial",
   "code_miner_queries": 5,
   "eda_completed_at": "2026-05-18T22:13:53.830665+00:00",
@@ -146,5 +146,6 @@
   ],
   "pruning_delta_f1": 0.0019136424545121988,
   "pruning_pass": false,
-  "governance_locked_at": "2026-05-18T22:53:48.756036+00:00"
+  "governance_locked_at": "2026-05-18T22:53:48.756036+00:00",
+  "scientist_last_run": "{\"status\": \"OK\", \"validated\": 17, \"failed\": 6}"
 }

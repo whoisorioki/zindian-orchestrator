@@ -223,8 +223,11 @@ def run_scientist(
     hypothesis_path: str,
     failed_hypotheses_path: str | None = None,
 ) -> list[dict]:
-    paths = resolve_competition_paths()
+    paths = resolve_competition_paths(require_competition=True)
     state_store = SkillStateStore(paths.state_path)
+    competition_dir = paths.competition_dir
+    if competition_dir is None:
+        raise RuntimeError("Competition directory is not available")
 
     domain_hypotheses = load_json(Path(hypotheses_path))
     prior_art = load_json(Path(priorart_path))
@@ -262,9 +265,9 @@ Generate feature engineering hypotheses as a raw JSON array now.
     if not isinstance(hypotheses, list):
         raise ValueError("Scientist model did not return a JSON array")
 
-    reports_dir = paths.competition_dir / "reports"
+    reports_dir = competition_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    feature_frame_path = paths.competition_dir / "data/processed/features_train.csv"
+    feature_frame_path = competition_dir / "data/processed/features_train.csv"
     if not feature_frame_path.exists():
         raise FileNotFoundError(f"Missing feature matrix: {feature_frame_path}")
     feature_frame = pd.read_csv(feature_frame_path)

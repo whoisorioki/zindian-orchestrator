@@ -29,6 +29,8 @@ class SemanticScholarClient:
         self._lock = threading.Lock()
         self._min_interval = 1.0 / float(rate_limit_per_sec) if rate_limit_per_sec > 0 else 0.0
         self._last_call = 0.0
+        self.max_retries = 3
+        self.backoff_factor = 2.0
 
     def _throttle(self) -> None:
         with self._lock:
@@ -40,11 +42,25 @@ class SemanticScholarClient:
             self._last_call = time.time()
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        self._throttle()
         url = f"https://api.semanticscholar.org{path}"
-        resp = self.session.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        for attempt in range(self.max_retries):
+            self._throttle()
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                if resp.status_code == 429:
+                    wait_time = (self.backoff_factor ** attempt) + (attempt * 5)
+                    print(f"  [SS] Rate limited (429). Backing off {wait_time:.0f}s...")
+                    time.sleep(wait_time)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except requests.RequestException as e:
+                if attempt == self.max_retries - 1:
+                    raise
+                wait_time = (self.backoff_factor ** attempt) + (attempt * 5)
+                print(f"  [SS] Request error: {e}. Backing off {wait_time:.0f}s...")
+                time.sleep(wait_time)
+        raise RuntimeError(f"Failed after {self.max_retries} retries to {url}")
 
     def get_paper(self, paper_id: str, fields: str = "title,abstract,authors,year") -> Dict[str, Any]:
         """Fetch a paper by Semantic Scholar paper id (Graph API).

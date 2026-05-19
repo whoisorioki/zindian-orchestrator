@@ -17,6 +17,10 @@ def test_code_miner_imports():
     from zindian.skills.skill_19_code_miner import run_code_miner
     assert callable(run_code_miner)
 
+def test_deep_research_orchestrator_imports():
+    from zindian.orchestrator import run_deep_research
+    assert callable(run_deep_research)
+
 def test_governance_imports():
     from zindian.skills.skill_17_governance import run_governance
     assert callable(run_governance)
@@ -48,4 +52,25 @@ def test_legality_report_exists():
     assert p.exists(), "legality_report.md not found"
     content = p.read_text()
     assert "PASS" in content or "BLOCK" in content, "Report missing status"
+
+def test_code_miner_cache_exists_and_has_schema():
+    p = REPORTS / "code_miner_cache.json"
+    assert p.exists(), "code_miner_cache.json not found"
+    cache = json.loads(p.read_text())
+    for key in ("generated_at", "status", "model", "query_count", "queries", "raw_count"):
+        assert key in cache, f"Missing key: {key}"
+    assert isinstance(cache["queries"], list)
+    assert isinstance(cache["raw_count"], int)
+
+def test_code_miner_patterns_exists_and_has_schema():
+    p = REPORTS / "code_miner_patterns.json"
+    assert p.exists(), "code_miner_patterns.json not found"
+    patterns = json.loads(p.read_text())
+    for key in ("generated_at", "status", "patterns_count", "patterns"):
+        assert key in patterns, f"Missing key: {key}"
+    assert isinstance(patterns["patterns"], list)
+    if patterns["patterns"]:
+        first = patterns["patterns"][0]
+        for key in ("pattern_id", "source_type", "technique_name", "implementation_steps", "confidence"):
+            assert key in first, f"Missing pattern key: {key}"
 
