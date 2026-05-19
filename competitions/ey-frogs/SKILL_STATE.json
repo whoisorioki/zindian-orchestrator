@@ -10,8 +10,8 @@
   "variants_passed": 0,
   "best_variant_this_round": null,
   "best_variant_oof_rmse": null,
-  "submissions_used_today": 15,
-  "submissions_used_total": 20,
+  "submissions_used_today": 16,
+  "submissions_used_total": 21,
   "remaining_submissions": 4,
   "dag_phase": "phase_5_governance_complete",
   "human_gate_13_approved": false,
@@ -20,7 +20,7 @@
     "tfcawL75",
     "X2LLeBts"
   ],
-  "last_updated": "2026-05-19T19:09:49+03:00",
+  "last_updated": "2026-05-19T19:35:03+03:00",
   "md5_train_file": "0373cba783a545f95af48b206959ab9a",
   "md5_test_file": "429b1a8ec3868dc73dc94eaffe058d68",
   "md5_sample_sub_file": "6cea7a8efd61aaea9b4cf370c94f46c8",
@@ -39,7 +39,7 @@
   "anchor_oof_auc": 0.84006,
   "anchor_oof_logloss": 0.48522754,
   "anchor_submission_file": "sub_004_anchor_f1_fixed.csv",
-  "anchor_rank": 329,
+  "anchor_rank": 331,
   "terraclimate_bands": [
     "aet_mean",
     "aet_std",
@@ -156,5 +156,9 @@
     "oof_variant-43",
     "oof_variant-40",
     "oof_variant-37"
-  ]
+  ],
+  "pseudo_label_oof_f1": 0.8411,
+  "pseudo_label_iteration": 0,
+  "pseudo_label_submission_file": "variant-pseudo_iter0.csv",
+  "pseudo_label_positive_count": 1348
 }
