@@ -248,6 +248,34 @@ def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame
     return train_feat, test_feat
 
 
+def build_hypothesis_features(train_feat: pd.DataFrame, test_feat: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Build derived features from validated hypotheses.
+    All are climate algebra on existing TC bands — compliant, no external data.
+    These features encode domain knowledge from validated_hypotheses.json.
+    """
+    for df in [train_feat, test_feat]:
+        # hyp_001_2: polynomial heat stress (tmax nonlinearity)
+        df["tmax_mean_sq"]         = df["tmax_mean"] ** 2
+
+        # hyp_003_2: water use efficiency (actual/potential ET ratio)
+        df["aet_pet_ratio"]        = df["aet_mean"] / (df["pet_mean"] + 1e-9)
+
+        # hyp_006_2: heat × dryness stress index (compound environmental stress)
+        df["tmax_vpd_stress"]      = df["tmax_mean"] * df["vpd_mean"]
+
+        # hyp_007_1: freeze event binary (tmin_min below 5°C = frost risk for amphibians)
+        df["frost_risk"]           = (df["tmin_min"] < 5).astype(int)
+
+        # hyp_011_1: aridity index (precipitation / potential ET — dryness measure)
+        df["aridity_index"]        = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
+
+        # hyp_012_1: warm wet conditions index (interaction of heat + moisture)
+        df["warm_wet_index"]       = df["ppt_mean"] * df["tmin_mean"]
+
+    return train_feat, test_feat
+
+
 # ── Phase C: Variant Training ─────────────────────────────────────────────────
 
 def train_variant(
@@ -604,13 +632,19 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     print("\n[B] Feature Extraction")
     train_feat, test_feat = extract_features(paths, tiff_path)
 
+    # ── Phase B₂: Build hypothesis-derived features ────────────
+    print("\n[B₂] Building hypothesis-derived features")
+    train_feat, test_feat = build_hypothesis_features(train_feat, test_feat)
+    print(f"  ✓ Derived features added: tmax_mean_sq, aet_pet_ratio, tmax_vpd_stress, frost_risk, aridity_index, warm_wet_index")
+
     if variant_name is None:
         print("\n✅ Fetch + extraction complete. Pass --variant <name> to run a variant.")
         return {"status": "extracted", "tiff": str(tiff_path)}
 
     # ── Phase C: Define variant feature sets ──────────────────
     tc_all   = TC_BAND_NAMES
-    tc_51    = [c for c in tc_all if c != "swe_min"]
+    tc_51    = [c for c in tc_all if c != "swe_min"]  # alias: tc_all_51
+    tc_all_51 = tc_51  # explicit alias for hypothesis variants
     tc_temp  = [f"{v}_{s}" for v in ["tmax","tmin"] for s in TC_STATS]
     tc_water = [f"{v}_{s}" for v in ["aet","def","pet","ppt","soil","q"] for s in TC_STATS]
     tc_rad   = [f"{v}_{s}" for v in ["srad","vpd","vap"] for s in TC_STATS]
@@ -701,6 +735,14 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variant-37": tc_51,   # 51 features, swe_min dropped, standard LGB
         "variant-38": tc_51,   # 51 features, 3-way blend LGB+RF+XGB
         "variant-39": tc_51,   # 51 features, dart booster LGB
+        # Round 6 — hypothesis-derived features (climate algebra, validated hypotheses)
+        "variant-40": tc_all_51 + ["tmax_mean_sq", "aet_pet_ratio", "tmax_vpd_stress",
+                                    "frost_risk", "aridity_index", "warm_wet_index"],  # all 6 derived
+        "variant-41": tc_all_51 + ["aridity_index", "aet_pet_ratio"],           # water indices only (hyp-011, hyp-003)
+        "variant-42": tc_all_51 + ["tmax_vpd_stress", "frost_risk"],            # stress indices only (hyp-006, hyp-007)
+        "variant-43": tc_all_51 + ["warm_wet_index", "aridity_index", "aet_pet_ratio"],  # ecology trio (warm/wet + water efficiency)
+        "variant-44": tc_all_51 + ["tmax_mean_sq", "frost_risk"],               # temperature stress (hyp-001, hyp-007)
+        "variant-45": tc_all_51 + ["aridity_index", "warm_wet_index"],         # moisture interaction (hyp-011, hyp-012)
     }
 
     if variant_name not in VARIANTS:
