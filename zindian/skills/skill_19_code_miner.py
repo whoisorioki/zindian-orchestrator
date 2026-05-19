@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -143,38 +144,62 @@ EXTRACTION_PROMPT = """
 You are a competitive data science research assistant.
 Search the web for: "{query}"
 
-Extract and return a JSON object with exactly these fields:
+Return ONLY a valid JSON object with these exact fields. No markdown, no fences, no preamble.
+Start directly with {{ and end with }}.
 
-{\
-  "tricks": [
-    "One concrete ML trick found (e.g. target-encoded stratified k-fold)"
-  ],
-  "validation_strategies": [
-    "One validation strategy found (e.g. geographic block CV with KMeans clusters)"
-  ],
-  "feature_ideas": [
-    "One feature engineering idea found (e.g. 3-month lagged precipitation sum)"
-  ],
-  "ensemble_patterns": [
-    "One ensembling pattern found (e.g. OOF stacking with LGB+RF+XGB)"
-  ],
-  "warnings": [
-    "One known pitfall or failure mode found"
-  ],
-  "sources": [
-    "URL or reference where this was found"
-  ],
-  "confidence": "high|medium|low",
-  "relevance_to_geospatial_species": "high|medium|low|not_applicable"
-}\
+{{
+  "tricks": ["Trick 1", "Trick 2", "Trick 3"],
+  "validation_strategies": ["Strategy 1", "Strategy 2"],
+  "feature_ideas": ["Feature 1", "Feature 2", "Feature 3"],
+  "ensemble_patterns": ["Pattern 1", "Pattern 2"],
+  "warnings": ["Warning 1", "Warning 2"],
+  "sources": ["source 1", "source 2"],
+  "confidence": "high",
+  "relevance_to_geospatial_species": "high"
+}}
 
 Rules:
-- Only include items actually found in search results
-- Do not invent or hallucinate tricks
-- If nothing relevant found, return empty arrays
-- Keep each item to one sentence maximum
-- Return ONLY valid JSON, no preamble, no markdown fences
+- Return ONLY valid JSON starting with {{ and ending with }}
+- No markdown fences (```), no backticks, no preamble or explanation
+- Empty arrays if nothing relevant found
+- Each array element is a string, max 1 sentence
+- confidence: "high" | "medium" | "low"
+- relevance_to_geospatial_species: "high" | "medium" | "low" | "not_applicable"
 """
+
+
+def _extract_json_from_response(raw_text: str) -> dict | None:
+    """Extract valid JSON from Gemini response, handling markdown fences."""
+    if not raw_text:
+        return None
+    
+    raw_text = raw_text.strip()
+    
+    # Try 1: If wrapped in markdown fences, strip them
+    if raw_text.startswith("```"):
+        # Split by backticks and try to find JSON
+        parts = raw_text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                raw_text = part
+                break
+    
+    # Try 2: Find JSON object via regex (from { to matching })
+    if not raw_text.startswith("{"):
+        match = re.search(r'\{[\s\S]*\}', raw_text)
+        if match:
+            raw_text = match.group(0)
+    
+    # Try 3: Parse the JSON
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        print(f"    Failed to parse JSON: {e}")
+        print(f"    Raw text (first 200 chars): {raw_text[:200]}")
+        return None
 
 
 def query_gemini(
@@ -201,12 +226,19 @@ def query_gemini(
         )
         raw_text = response.text.strip()
 
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-
-        parsed = json.loads(raw_text)
+        # Use robust JSON extraction
+        parsed = _extract_json_from_response(raw_text)
+        
+        if parsed is None:
+            entry["status"]      = "parse_error"
+            entry["raw_summary"] = raw_text[:500] if raw_text else None
+            entry["warnings"]    = ["Failed to extract JSON from response"]
+            entry["tricks"]      = []
+            entry["validation_strategies"] = []
+            entry["feature_ideas"] = []
+            entry["ensemble_patterns"] = []
+            print(f"  ⚠️  JSON extraction failed on '{query_label}' — using empty result")
+            return entry
 
         entry["tricks"]                = parsed.get("tricks", [])
         entry["validation_strategies"] = parsed.get("validation_strategies", [])
@@ -219,17 +251,10 @@ def query_gemini(
         entry["relevance"]             = parsed.get(
             "relevance_to_geospatial_species", "unknown"
         )
+        print(f"  ✓ {query_label}: {len(entry['tricks'])} tricks found")
 
-    except json.JSONDecodeError as e:
-        entry["status"]      = "parse_error"
-        entry["raw_summary"] = raw_text[:500] if raw_text else None
-        entry["warnings"]    = [f"JSON parse failed (treat as empty result): {e}"]
-        entry["tricks"]      = []
-        entry["validation_strategies"] = []
-        entry["feature_ideas"] = []
-        entry["ensemble_patterns"] = []
-        print(f"  ⚠️  Parse error on '{query_label}': {e} — continuing with empty result")
     except Exception as e:
+        entry["status"]   = "error"
         entry["warnings"] = [f"API error: {e}"]
         print(f"  ❌ API error on '{query_label}': {e}")
 
