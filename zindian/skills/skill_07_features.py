@@ -472,7 +472,7 @@ def train_variant(
             )
 
         # ── variant-39: dart booster LGB ─────────────────
-        elif variant_name == 'variant-39':
+        elif variant_name in ("variant-39", "variant-40", "variant-41", "variant-42", "variant-43"):
             model = lgb.LGBMClassifier(
                 boosting_type='dart',
                 n_estimators=500, learning_rate=0.05,

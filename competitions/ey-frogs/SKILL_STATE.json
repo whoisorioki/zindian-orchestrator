@@ -6,26 +6,26 @@
   "anchor_oof_rmse": 0.8338014409573818,
   "anchor_lb_score": 0.884568651,
   "feature_round": 5,
-  "variants_tested": 13,
+  "variants_tested": 18,
   "variants_passed": 0,
   "best_variant_this_round": null,
   "best_variant_oof_rmse": null,
-  "submissions_used_today": 9,
-  "submissions_used_total": 14,
-  "remaining_submissions": 6,
-  "dag_phase": "phase_5_governance_complete",
+  "submissions_used_today": 14,
+  "submissions_used_total": 19,
+  "remaining_submissions": 9,
+  "dag_phase": "phase_3_features",
   "human_gate_13_approved": false,
   "human_gate_14_approved": false,
   "selected_submissions": [
     "tfcawL75",
     "WeXoXWi6"
   ],
-  "last_updated": "2026-05-19T09:42:58+03:00",
+  "last_updated": "2026-05-19T10:54:53+03:00",
   "md5_train_file": "0373cba783a545f95af48b206959ab9a",
   "md5_test_file": "429b1a8ec3868dc73dc94eaffe058d68",
   "md5_sample_sub_file": "6cea7a8efd61aaea9b4cf370c94f46c8",
   "compliance": {
-    "last_checked": "2026-05-19T00:38:42+03:00",
+    "last_checked": "2026-05-19T07:26:42.016766+00:00",
     "total_discussions": 10,
     "flagged_count": 3,
     "flagged_titles": [
@@ -39,7 +39,7 @@
   "anchor_oof_auc": 0.84006,
   "anchor_oof_logloss": 0.48522754,
   "anchor_submission_file": "sub_004_anchor_f1_fixed.csv",
-  "anchor_rank": 327,
+  "anchor_rank": 329,
   "terraclimate_bands": [
     "aet_mean",
     "aet_std",
@@ -147,5 +147,14 @@
   "pruning_delta_f1": 0.0019136424545121988,
   "pruning_pass": false,
   "governance_locked_at": "2026-05-18T22:53:48.756036+00:00",
-  "scientist_last_run": "{\"status\": \"OK\", \"validated\": 17, \"failed\": 6}"
+  "scientist_last_run": "{\"status\": \"OK\", \"validated\": 17, \"failed\": 6}",
+  "last_ensemble_path": "/home/adrian/projects/zindian_orchestrator/competitions/ey-frogs/submissions/sub_ensemble_v1_20260519_072319.csv",
+  "last_ensemble_oof_f1": 0.8393074859790295,
+  "last_ensemble_oof_auc": 0.8468452799544572,
+  "last_ensemble_threshold": 0.44,
+  "last_ensemble_variants": [
+    "oof_variant-43",
+    "oof_variant-40",
+    "oof_variant-37"
+  ]
 }

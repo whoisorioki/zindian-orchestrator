@@ -371,6 +371,8 @@ def extract_compliance_flags(discussions: list, slug: str, headers: dict) -> lis
         all_external = list(set(external_hits + comment_external))
 
         if title_flagged or body_flagged or flagged_comments:
+            # Build a concise flag text for downstream logic: prefer the title, else a preview
+            flag_text = title if title_flagged else (body[:300] if body_flagged else "")
             flagged.append({
                 "id":               did,
                 "title":            title,
@@ -379,6 +381,11 @@ def extract_compliance_flags(discussions: list, slug: str, headers: dict) -> lis
                 "flagged_comments": flagged_comments,
                 "external_sources": all_external,
                 "url": f"https://zindi.africa/competitions/{slug}/discussions/{did}",
+                # New metadata for staleness tracking and provenance
+                "flag":             flag_text,
+                "source":           f"https://zindi.africa/competitions/{slug}/discussions/{did}",
+                "scraped_at":       datetime.now(timezone.utc).isoformat(),
+                "superseded":       False,
             })
 
     return flagged
@@ -659,6 +666,20 @@ def run() -> dict:
     except Exception as e:
         print(f"  ⚠️  Discussion fetch failed: {e}")
         all_discussions, flagged = [], []
+
+    # Derive an authoritative external_banned flag from explicit ban language in flags
+    def _flag_unambiguous_ban(f: dict) -> bool:
+        txt = (f.get("flag") or "").lower()
+        # Look for explicit ban/rule language only
+        return any(k in txt for k in ("banned", "not allowed", "no external data", "external data is banned"))
+
+    external_banned_from_flags = any(_flag_unambiguous_ban(f) for f in flagged)
+    # If explicit bans are present in discussion flags, prefer that over scraped heuristics
+    if external_banned_from_flags:
+        comp_intel["external_banned"] = True
+    else:
+        # Leave scraped value as-is (False/True) when no explicit ban found in flags
+        comp_intel.setdefault("external_banned", False)
 
     # ── 3. Leaderboard ────────────────────────────────────────
     print("\n[3/4] Fetching leaderboard status...")
