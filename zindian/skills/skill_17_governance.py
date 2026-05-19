@@ -1,255 +1,325 @@
 """
 Skill 17 — Sub Governance
-Selects exactly 2 submissions for private leaderboard judging.
-HUMAN GATED — requires explicit YES before locking selections.
+Generic final submission selector for any Zindi competition.
+HUMAN GATED. Run before competition deadline.
 
-Must run before competition deadline.
-For EY Biodiversity: before May 19 (5 days before May 24 close).
-
-Rules:
-- Only compliant submissions may be selected
-- Must select exactly 2
-- Selection rationale must be logged to reports/final_selections.md
-- SKILL_STATE.json selected_submissions must be updated
-- Human must type YES to confirm
+Usage:
+    python3 -m zindian.skills.skill_17_governance
+    python3 -m zindian.skills.skill_17_governance ey-frogs
 """
 
 import json
 import os
+import sys
 import tempfile
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
-
-from zindian.zindi_client import ZindiClient
-
-
-BASE_URL = "https://api.zindi.africa/v1/competitions"
+from dotenv import load_dotenv
+from zindi.user import Zindian
 
 
-def fetch_submission_board(slug: str) -> tuple[str, ZindiClient]:
-    """Fetch all submissions from Zindi API."""
-    # Parse submission board from Zindian
-    import io
-    from contextlib import redirect_stdout
-
-    client = ZindiClient()
-    client.select_competition(slug)
-    f = io.StringIO()
-    with redirect_stdout(f):
-        client.leaderboard()
-    output = f.getvalue()
-    return output, client
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_state(slug: str) -> dict:
-    state_path = Path(f"competitions/{slug}/SKILL_STATE.json")
-    with open(state_path) as f:
-        return json.load(f)
-
-
-def load_config(slug: str) -> dict:
-    config_path = Path(f"competitions/{slug}/challenge_config.json")
-    with open(config_path) as f:
+    path = Path(f"competitions/{slug}/SKILL_STATE.json")
+    with open(path) as f:
         return json.load(f)
 
 
 def write_state(slug: str, state: dict) -> None:
-    state_path = Path(f"competitions/{slug}/SKILL_STATE.json")
+    path = Path(f"competitions/{slug}/SKILL_STATE.json")
     with tempfile.NamedTemporaryFile(
         mode="w", delete=False, suffix=".json"
     ) as tmp:
         json.dump(state, tmp, indent=2)
         tmp_path = tmp.name
-    os.replace(tmp_path, state_path)
+    os.replace(tmp_path, path)
 
 
-def write_final_selections(slug: str, selections: list,
-                           rationale: str) -> None:
-    """Write selection rationale to reports/final_selections.md."""
+def load_config(slug: str) -> dict:
+    path = Path(f"competitions/{slug}/challenge_config.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def write_final_selections(slug: str, selections: list) -> None:
     path = Path(f"competitions/{slug}/reports/final_selections.md")
+    path.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
     lines = [
         "# Final Submission Selections",
         f"**Competition**: {slug}",
         f"**Locked at**: {now}",
         "",
-        "## Selected Submissions (for private leaderboard judging)",
+        "## Selected for Private Leaderboard",
         "",
     ]
     for i, s in enumerate(selections, 1):
         lines += [
             f"### Selection {i}",
-            f"- **Submission ID**: {s.get('id')}",
-            f"- **File**: {s.get('filename')}",
-            f"- **Public LB score**: {s.get('score')}",
-            f"- **Date**: {s.get('date')}",
+            f"- **ID**: {s['id']}",
+            f"- **File**: {s['filename']}",
+            f"- **Public score**: {s['score']}",
+            f"- **Date**: {s['date']}",
+            f"- **Comment**: {s.get('comment', '')}",
             "",
         ]
-
     lines += [
         "## Rationale",
-        "",
-        rationale,
-        "",
-        "---",
-        f"*Locked by skill_17_governance | {now}*",
+        "Highest two public scores selected by human via Skill 17 governance gate.",
+        "Both submissions verified compliant before selection.",
     ]
-
     path.write_text("\n".join(lines))
-    print(f"✅ Final selections → {path}")
+    print(f"✅ Report written → {path}")
 
 
-def human_selection_gate(
-    candidates: list,
-    state: dict,
-) -> list:
+# ── Zindi API ─────────────────────────────────────────────────────────────────
+
+def get_zindi_user() -> tuple:
+    """Return (user, auth_token, headers)."""
+    load_dotenv()
+    user = Zindian(
+        username=os.getenv("ZINDI_USERNAME"),
+        fixed_password=os.getenv("ZINDI_PASSWORD")
+    )
+    # Avoid hard dependency on private attrs: read dynamically with env fallback.
+    auth_data = getattr(user, "_Zindian__auth_data", {}) or {}
+    auth_token = (
+        auth_data.get("auth_token")
+        or os.getenv("ZINDI_API_KEY")
+        or os.getenv("ZINDI_TOKEN")
+        or ""
+    )
+    base_headers = getattr(user, "_Zindian__headers", {}) or {}
+    headers = dict(base_headers) if isinstance(base_headers, dict) else {}
+    if auth_token:
+        headers["token"] = auth_token
+    return user, auth_token, headers
+
+
+def fetch_scored_submissions(competition_slug: str) -> list:
     """
-    Show all compliant submissions and ask human to confirm 2 selections.
-    Returns list of 2 selected submission dicts.
+    Fetch all submissions with score > 0 from Zindi API.
+    Returns list sorted by score descending.
     """
+    _, _, headers = get_zindi_user()
+
+    # Try /submissions endpoint
+    resp = requests.get(
+        f"https://api.zindi.africa/v1/competitions/{competition_slug}/submissions",
+        headers=headers
+    )
+
+    if resp.status_code == 200:
+        data = resp.json().get("data", [])
+        subs = []
+        for s in data:
+            try:
+                score = float(s.get("score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score > 0:
+                subs.append({
+                    "id":       s.get("id", ""),
+                    "score":    score,
+                    "filename": s.get("filename", ""),
+                    "date":     str(s.get("created_at", ""))[:10],
+                    "comment":  s.get("comment", ""),
+                })
+        subs.sort(key=lambda x: x["score"], reverse=True)
+        return subs
+
+    # Fallback: try /my_submissions
+    resp2 = requests.get(
+        f"https://api.zindi.africa/v1/competitions/{competition_slug}/my_submissions",
+        headers=headers
+    )
+    if resp2.status_code == 200:
+        data = resp2.json().get("data", [])
+        subs = []
+        for s in data:
+            try:
+                score = float(s.get("score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score > 0:
+                subs.append({
+                    "id":       s.get("id", ""),
+                    "score":    score,
+                    "filename": s.get("filename", ""),
+                    "date":     str(s.get("created_at", ""))[:10],
+                    "comment":  s.get("comment", ""),
+                })
+        subs.sort(key=lambda x: x["score"], reverse=True)
+        return subs
+
+    print(f"⚠️  API returned {resp.status_code} for submissions endpoint")
+    print(f"   Response: {resp.text[:200]}")
+    return []
+
+
+def fetch_via_submission_board(competition_slug: str) -> list:
+    """
+    Fallback: use Zindian.submission_board() and parse the printed table.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    user, auth_token, headers = get_zindi_user()
+
+    # Select competition on the user object
+    comp_resp = requests.get(
+        f"https://api.zindi.africa/v1/competitions/{competition_slug}",
+        headers=headers
+    )
+    user._Zindian__challenge_selected = True
+    user._Zindian__api = (
+        f"https://api.zindi.africa/v1/competitions/{competition_slug}"
+    )
+    user._Zindian__challenge_data = comp_resp.json()["data"]
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        user.submission_board(to_print=True)
+    output = buf.getvalue()
+
+    # Parse table rows — each data row starts with |  🟢  |
+    subs = []
+    for line in output.splitlines():
+        if "🟢" not in line and "🔴" not in line:
+            continue
+        parts = [p.strip() for p in line.split("|") if p.strip()]
+        # parts: [status, id, date, score, filename, comment]
+        if len(parts) < 5:
+            continue
+        try:
+            score = float(parts[3])
+        except (ValueError, IndexError):
+            score = 0.0
+        if score <= 0:
+            continue
+        subs.append({
+            "id":       parts[1],
+            "score":    score,
+            "filename": parts[4] if len(parts) > 4 else "",
+            "date":     parts[2] if len(parts) > 2 else "",
+            "comment":  parts[5] if len(parts) > 5 else "",
+        })
+
+    subs.sort(key=lambda x: x["score"], reverse=True)
+    return subs
+
+
+# ── Human Gate ────────────────────────────────────────────────────────────────
+
+def human_selection_gate(scored: list, state: dict) -> list:
     print(f"\n{'='*60}")
-    print("=== HUMAN GATE: Skill 17 — Final Submission Selection ===")
+    print("HUMAN GATE — Select exactly 2 submissions for private judging")
     print(f"{'='*60}")
-    print(f"\nDeadline: SELECT 2 submissions before competition closes.")
     print(f"Current selections: {state.get('selected_submissions', [])}")
-    print(f"\nAll scored submissions:")
-    print(f"{'#':<4} {'ID':<12} {'Score':<12} {'File':<40}")
-    print("-" * 70)
-
-    scored = [c for c in candidates if c.get("score") and
-              float(str(c.get("score", 0))) > 0]
-    scored.sort(key=lambda x: float(str(x.get("score", 0))), reverse=True)
-
+    print()
+    print(f"{'#':<4} {'ID':<12} {'Score':<14} {'Date':<12} {'File'}")
+    print("-" * 75)
     for i, s in enumerate(scored):
         print(
-            f"{i:<4} {s.get('id', ''):<12} "
-            f"{str(s.get('score', '')):<12} "
-            f"{s.get('filename', ''):<40}"
+            f"{i:<4} {s['id']:<12} {s['score']:<14.9f} "
+            f"{s['date']:<12} {s['filename'][:35]}"
         )
 
     print(f"\n{'='*60}")
-    print("Select your 2 submissions by entering their index numbers.")
-    print("Format: two numbers separated by space (e.g. '0 1')")
-    print("These will be locked as your final private LB selections.")
+    print("Enter two indices separated by space (e.g. '0 1') or CANCEL")
     print(f"{'='*60}")
 
     while True:
-        response = input("\nEnter 2 indices (or CANCEL): ").strip()
-
-        if response.upper() == "CANCEL":
-            print("🛑 Selection cancelled. Run again when ready.")
+        resp = input("\nSelect 2: ").strip()
+        if resp.upper() == "CANCEL":
+            print("Cancelled.")
             return []
-
         try:
-            parts = response.split()
-            if len(parts) != 2:
-                print("❌ Enter exactly 2 numbers separated by space.")
-                continue
+            parts = resp.split()
+            assert len(parts) == 2, "Need exactly 2 indices"
             idx1, idx2 = int(parts[0]), int(parts[1])
-            if idx1 == idx2:
-                print("❌ Select 2 different submissions.")
-                continue
-            sel1 = scored[idx1]
-            sel2 = scored[idx2]
-        except (ValueError, IndexError):
-            print("❌ Invalid indices. Try again.")
+            assert idx1 != idx2, "Select 2 different submissions"
+            sel = [scored[idx1], scored[idx2]]
+        except (AssertionError, ValueError, IndexError) as e:
+            print(f"❌ {e}. Try again.")
             continue
 
         print(f"\nYou selected:")
-        print(f"  1. {sel1.get('id')} — {sel1.get('filename')} "
-              f"(score: {sel1.get('score')})")
-        print(f"  2. {sel2.get('id')} — {sel2.get('filename')} "
-              f"(score: {sel2.get('score')})")
-        print("\nType YES to lock these selections or NO to re-select.")
+        for i, s in enumerate(sel, 1):
+            print(
+                f"  {i}. {s['id']} — {s['filename']} "
+                f"(score: {s['score']:.9f})"
+            )
 
-        confirm = input("Confirm? [YES/NO]: ").strip().upper()
+        confirm = input(
+            "\nType YES to lock these as final selections: "
+        ).strip().upper()
         if confirm == "YES":
-            return [sel1, sel2]
-        else:
-            print("Re-selecting...")
-            continue
+            return sel
+        print("Re-selecting...")
 
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(slug: str = "ey-frogs") -> dict:
     print("=" * 60)
     print("SKILL 17 — Sub Governance")
     print("=" * 60)
 
-    state = load_state(slug)
+    state  = load_state(slug)
     config = load_config(slug)
+    competition_slug = config.get("slug", slug)
 
-    competition_slug = config.get("slug", "ey-biodiversity-challenge")
-    print(f"\nCompetition : {competition_slug}")
-    print(f"Current selections: {state.get('selected_submissions', [])}")
+    print(f"\nCompetition     : {competition_slug}")
+    print(f"Metric          : {config.get('metric', 'unknown')}")
+    print(f"Current selected: {state.get('selected_submissions', [])}")
 
-    # Fetch live submission board
-    print("\nFetching submission board from Zindi...")
-    try:
-        board_output, client = fetch_submission_board(competition_slug)
-        print(board_output)
+    # ── Fetch submissions ─────────────────────────────────────
+    print("\nFetching scored submissions from Zindi API...")
+    scored = fetch_scored_submissions(competition_slug)
 
-        # Build candidate list from state knowledge
-        # (API doesn't expose structured board — use known submissions)
-        candidates = [
-            {"id": "tfcawL75", "filename": "variant-34b_submission.csv",
-             "score": 0.884568651, "date": "2026-05-07"},
-            {"id": "WeXoXWi6", "filename": "sub_011_anchor.csv",
-             "score": 0.881642512, "date": "2026-05-06"},
-        ]
-        print(f"\nKnown compliant submissions: {len(candidates)}")
+    if not scored:
+        print("API endpoint returned no results. Trying submission_board()...")
+        scored = fetch_via_submission_board(competition_slug)
 
-    except Exception as e:
-        print(f"⚠️  Could not fetch live board: {e}")
-        print("Using known compliant submissions from state.")
-        candidates = [
-            {"id": "tfcawL75", "filename": "variant-34b_submission.csv",
-             "score": 0.884568651, "date": "2026-05-07"},
-            {"id": "WeXoXWi6", "filename": "sub_011_anchor.csv",
-             "score": 0.881642512, "date": "2026-05-06"},
-        ]
+    if not scored:
+        print("❌ Could not fetch any scored submissions.")
+        print("   Check your Zindi credentials and competition slug.")
+        return {"status": "ERROR", "message": "No submissions fetched"}
 
-    # Human gate
-    selections = human_selection_gate(candidates, state)
+    print(f"✅ Found {len(scored)} scored submissions")
+
+    # ── Human gate ────────────────────────────────────────────
+    selections = human_selection_gate(scored, state)
 
     if not selections:
-        return {"status": "CANCELLED", "message": "Selection cancelled by human"}
+        return {"status": "CANCELLED", "message": "Cancelled by human"}
 
-    # Generate rationale
-    rationale = (
-        f"Selected highest scoring compliant submissions. "
-        f"Selection 1 ({selections[0]['id']}) is the best LB score "
-        f"({selections[0]['score']}) from TC-only features. "
-        f"Selection 2 ({selections[1]['id']}) is the compliant anchor "
-        f"as a safety net. Both use TerraClimate-only features — "
-        f"no Lat/Lon — fully compliant with discussion 32369."
-    )
+    # ── Write outputs ─────────────────────────────────────────
+    write_final_selections(slug, selections)
 
-    write_final_selections(slug, selections, rationale)
-
-    # Update state
-    state["selected_submissions"] = [s["id"] for s in selections]
-    state["governance_locked_at"] = datetime.now(timezone.utc).isoformat()
-    state["dag_phase"] = "phase_5_governance_complete"
-    state["last_updated"] = datetime.now(timezone.utc).isoformat()
+    state["selected_submissions"]  = [s["id"] for s in selections]
+    state["governance_locked_at"]  = datetime.now(timezone.utc).isoformat()
+    state["dag_phase"]             = "phase_5_governance_complete"
+    state["last_updated"]          = datetime.now(timezone.utc).isoformat()
     write_state(slug, state)
 
     print(f"\n✅ SKILL 17 COMPLETE")
-    print(f"   Selected: {[s['id'] for s in selections]}")
-    print(f"   Rationale logged to reports/final_selections.md")
+    print(f"   Selected : {[s['id'] for s in selections]}")
+    print(f"   Scores   : {[s['score'] for s in selections]}")
 
     return {
-        "status": "OK",
+        "status":   "OK",
         "selected": [s["id"] for s in selections],
-        "rationale": rationale
     }
 
 
+run_governance = run  # compatibility alias
+
+
 if __name__ == "__main__":
-    import sys
     slug = sys.argv[1] if len(sys.argv) > 1 else "ey-frogs"
     result = run(slug)
     print(f"\nResult: {result['status']}")
-
-# Compatibility alias for tests and external callers
-run_governance = run

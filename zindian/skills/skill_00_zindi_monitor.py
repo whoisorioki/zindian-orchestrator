@@ -342,7 +342,36 @@ def scan_external_data_mentions(text: str) -> list[str]:
     return [src for src in EXTERNAL_DATA_SOURCES if src in t]
 
 
-def extract_compliance_flags(discussions: list, slug: str, headers: dict) -> list:
+def load_superseded_flags(paths) -> dict[str, bool]:
+    """
+    Preserve manual superseded overrides from the previous monitor run.
+    Returns a mapping: {source_url: superseded_bool}.
+    """
+    monitor_path = paths.reports_dir / "zindi_monitor.json"
+    if not monitor_path.exists():
+        return {}
+
+    try:
+        payload = json.loads(monitor_path.read_text(encoding="utf-8"))
+        old_flags = payload.get("compliance", {}).get("flags", [])
+        mapping: dict[str, bool] = {}
+        for f in old_flags:
+            source = f.get("source")
+            superseded = bool(f.get("superseded", False))
+            if source:
+                mapping[source] = superseded
+        return mapping
+    except Exception:
+        return {}
+
+
+def extract_compliance_flags(
+    discussions: list,
+    slug: str,
+    headers: dict,
+    superseded_map: dict[str, bool] | None = None,
+) -> list:
+    superseded_map = superseded_map or {}
     flagged = []
     for d in discussions:
         title    = d.get("title", "")
@@ -373,6 +402,7 @@ def extract_compliance_flags(discussions: list, slug: str, headers: dict) -> lis
         if title_flagged or body_flagged or flagged_comments:
             # Build a concise flag text for downstream logic: prefer the title, else a preview
             flag_text = title if title_flagged else (body[:300] if body_flagged else "")
+            source_url = f"https://zindi.africa/competitions/{slug}/discussions/{did}"
             flagged.append({
                 "id":               did,
                 "title":            title,
@@ -380,12 +410,12 @@ def extract_compliance_flags(discussions: list, slug: str, headers: dict) -> lis
                 "body_preview":     body[:500],
                 "flagged_comments": flagged_comments,
                 "external_sources": all_external,
-                "url": f"https://zindi.africa/competitions/{slug}/discussions/{did}",
+                "url": source_url,
                 # New metadata for staleness tracking and provenance
                 "flag":             flag_text,
-                "source":           f"https://zindi.africa/competitions/{slug}/discussions/{did}",
+                "source":           source_url,
                 "scraped_at":       datetime.now(timezone.utc).isoformat(),
-                "superseded":       False,
+                "superseded":       superseded_map.get(source_url, False),
             })
 
     return flagged
@@ -572,6 +602,7 @@ def write_monitor_json(
         "compliance": {
             "flagged_count":  len(flagged),
             "flagged_titles": [f["title"] for f in flagged],
+            "flags": flagged,
             "external_sources_mentioned": list(set(
                 src for f in flagged for src in f.get("external_sources", [])
             )),
@@ -654,7 +685,10 @@ def run() -> dict:
     print("\n[2/4] Scanning discussion board...")
     try:
         all_discussions = fetch_discussions(slug, hdrs)
-        flagged         = extract_compliance_flags(all_discussions, slug, hdrs)
+        superseded_map  = load_superseded_flags(paths)
+        flagged         = extract_compliance_flags(
+            all_discussions, slug, hdrs, superseded_map=superseded_map
+        )
         print(f"  Total discussions   : {len(all_discussions)}")
         print(f"  Compliance flags    : {len(flagged)}")
         if flagged:
@@ -669,6 +703,8 @@ def run() -> dict:
 
     # Derive an authoritative external_banned flag from explicit ban language in flags
     def _flag_unambiguous_ban(f: dict) -> bool:
+        if f.get("superseded", False):
+            return False
         txt = (f.get("flag") or "").lower()
         # Look for explicit ban/rule language only
         return any(k in txt for k in ("banned", "not allowed", "no external data", "external data is banned"))
