@@ -29,7 +29,7 @@ Commands
 
 Notes
 -----
-- The previous `skill_00_discussion_monitor.py` was removed — its discussion-only functionality is included in the canonical monitor.
+- `skill_00_discussion_monitor.py` remains as a compatibility shim for older references, but `skill_00_zindi_monitor.py` is the canonical implementation.
 - Use this reference file as the canonical pointer when auditing Skill 00.
 
 Checklist (audit)

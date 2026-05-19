@@ -10,6 +10,13 @@ Primary implementation
 ----------------------
 - `zindian/skills/skill_01_integrity.py`
 
+Current implementation notes
+----------------------------
+- Reads `target_column` and `submission_target_column` from `challenge_config.json` when available, with fallbacks for older workspaces.
+- Treats `Latitude`/`Longitude` as optional and warns when they are absent instead of hard-failing.
+- Uses a canonical string-concatenation MD5 for the target column and file-level MD5 for raw inputs.
+- Preserves `dag_phase` when `SKILL_STATE.json` is already beyond `phase_1_complete`.
+
 Commands
 --------
 - Initial lock:
@@ -22,19 +29,13 @@ Commands
 
 Audit findings (issues / misalignments)
 ------------------------------------
-- Hardcoded target column name: `TARGET_COL = "Occurrence Status"`. Prefer reading from `challenge_config.json` when present.
-- Submission target column hardcoded as `Target` — may differ across competitions.
-- Strict assertions expect `Latitude` and `Longitude` in `Training_Data.csv`. This will fail for competitions without geolocation and is unnecessary for an integrity check; replace with a warning.
-- The code asserts target values equal `[0,1]` exactly. Some datasets use strings (e.g., "Present"). The integrity skill should accept any type and only record values and counts; converting to a stable canonical form before hashing is safer.
-- MD5 method mismatch: `compute_md5()` uses `pandas.util.hash_pandas_object` -> bytes -> MD5, while other scripts (in instructions) computed MD5 by concatenating stringified values. These two methods produce different hashes; standardize to a single approach to avoid false mismatches.
-- `update_skill_state` sets `dag_phase` to `phase_1_complete` unconditionally; this is acceptable for first lock but should check current phase before downgrading on re-verify.
+- Remaining cleanup: `counts` should consistently use the resolved `target_col` variable instead of a fixed literal.
+- Remaining cleanup: the `hash_pandas_object` import should be removed if it is no longer used by the implementation.
 
 Recommendations
 ---------------
-- Read `TARGET_COL` and `submission_target_col` from `ChallengeConfig` when available.
-- Relax Latitude/Longitude assertions to warnings; only assert required files exist.
-- Standardize target MD5 computation method across the repo (choose either row-concatenation or pandas hash) and update `SKILL_STATE.json` accordingly.
-- On `re_verify`, do not downgrade `dag_phase` if it is already beyond `phase_1_complete`.
+- Keep the current config-aware and warning-based behavior.
+- Finish the last cleanup items noted above if the skill is revised again.
 
 Outputs
 -------

@@ -39,7 +39,7 @@ Current behavior notes
 - Reads the active metric from `challenge_config.json` and uses it to score strategy quality.
 - Uses processed `features_train.csv` from Skill 07.
 - Falls back to `Occurrence Status` as the target name when no config override is present.
-- Spatial CV requires latitude and longitude columns in the feature table.
+- Spatial CV requires latitude and longitude columns for splitting logic when that strategy is selected; they should not be treated as model features.
 
 Findings
 --------

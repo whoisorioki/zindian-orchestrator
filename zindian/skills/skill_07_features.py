@@ -34,6 +34,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
+from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 warnings.filterwarnings("ignore")
 
@@ -269,12 +270,78 @@ def train_variant(
     y      = np.asarray(train[TARGET].values, dtype=np.int32)
     X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
+    shared_lgb_variants = {
+        "variant-00",
+        "variant-06",
+        "variant-07",
+        "variant-08",
+        "variant-09",
+        "variant-10",
+        "variant-11",
+        "variant-12",
+        "variant-15",
+        "variant-16",
+        "variant-17",
+        "variant-20",
+        "variant-30",
+        "variant-31",
+        "variant-32",
+        "variant-33",
+        "variant-35",
+        "variant-37",
+    }
+    tuned_lgb_variants = {
+        "variant-13": {"learning_rate": 0.02, "num_leaves": 63, "min_child_samples": 20, "subsample": 0.8, "colsample_bytree": 0.8, "reg_alpha": 0.1, "reg_lambda": 0.1},
+        "variant-19": {"learning_rate": 0.02, "num_leaves": 127, "max_depth": 8, "min_child_samples": 10, "subsample": 0.8, "colsample_bytree": 0.8, "reg_alpha": 0.05, "reg_lambda": 0.05},
+        "variant-27": {"learning_rate": 0.02, "num_leaves": 63, "min_child_samples": 20, "subsample": 0.8, "colsample_bytree": 0.8, "reg_alpha": 0.1, "reg_lambda": 0.1},
+    }
+
+    if variant_name in shared_lgb_variants | tuned_lgb_variants.keys():
+        print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
+        params = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
+        if variant_name in tuned_lgb_variants:
+            params.update(tuned_lgb_variants[variant_name])
+
+        lgb_result = train_lightgbm_cv(
+            train=train,
+            test=test,
+            feature_cols=feature_cols,
+            target_col=TARGET,
+            n_splits=N_SPLITS,
+            random_seed=seed,
+            params=params,
+            num_boost_round=1000 if variant_name in tuned_lgb_variants else 500,
+            early_stopping_rounds=100 if variant_name in tuned_lgb_variants else 50,
+            scale=True,
+        )
+        delta = lgb_result.oof_f1 - anchor_f1
+        gate = "PASS" if delta >= MIN_DELTA else "PRUNE"
+
+        print(f"\n  {'='*50}")
+        print(f"  {variant_name}")
+        print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
+        print(f"  Delta    : {delta:+.5f}  → {gate}")
+        print(f"  OOF AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
+
+        return {
+            "variant":    variant_name,
+            "features":   len(feature_cols),
+            "oof_auc":    float(lgb_result.oof_auc),
+            "oof_f1":     float(lgb_result.oof_f1),
+            "threshold":  float(lgb_result.threshold),
+            "delta":      float(delta),
+            "gate":       gate,
+            "oof_probs":  lgb_result.oof_probs,
+            "test_probs": lgb_result.test_probs,
+        }
+
     skf        = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
     oof_probs  = np.zeros(len(y))
     test_probs = np.zeros(len(test))
 
     print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
     for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y)):
+        model = None
 
         # ── variant-13: tuned LightGBM ────────────────────
         if variant_name in ('variant-13', 'variant-27'):
@@ -376,17 +443,50 @@ def train_variant(
                 callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)]
             )
 
-        # ── default: standard LightGBM ────────────────────
-        else:
+        # ── variant-39: dart booster LGB ─────────────────
+        elif variant_name == 'variant-39':
             model = lgb.LGBMClassifier(
+                boosting_type='dart',
                 n_estimators=500, learning_rate=0.05,
                 num_leaves=31, random_state=SEED, verbose=-1
             )
-            model.fit(
-                X[tr_idx], y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)]
+            model.fit(X[tr_idx], y[tr_idx])
+
+        # ── variant-38: 3-way blend LGB+RF+XGB ───────────────
+        elif variant_name == 'variant-38':
+            from sklearn.ensemble import RandomForestClassifier
+            from xgboost import XGBClassifier
+            _lgb = lgb.LGBMClassifier(
+                n_estimators=500, learning_rate=0.05,
+                num_leaves=31, random_state=SEED, verbose=-1
             )
+            _rf = RandomForestClassifier(
+                n_estimators=300, min_samples_leaf=2,
+                max_features='sqrt', random_state=SEED, n_jobs=-1
+            )
+            _xgb = XGBClassifier(
+                n_estimators=300, learning_rate=0.05,
+                max_depth=6, random_state=SEED, verbosity=0,
+                eval_metric='logloss'
+            )
+            _lgb.fit(X[tr_idx], y[tr_idx])
+            _rf.fit(X[tr_idx], y[tr_idx])
+            _xgb.fit(X[tr_idx], y[tr_idx])
+            # blend probabilities for validation and test
+            lgb_val  = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
+            rf_val   = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
+            xgb_val  = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
+            lgb_test = np.asarray(_lgb.predict_proba(X_test))[:, 1]
+            rf_test  = np.asarray(_rf.predict_proba(X_test))[:, 1]
+            xgb_test = np.asarray(_xgb.predict_proba(X_test))[:, 1]
+            oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
+            test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / N_SPLITS
+            fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
+            print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
+            continue
+
+        if model is None:
+            raise RuntimeError(f"Model was not initialized for {variant_name}")
 
         oof_probs[val_idx]  = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
         test_probs         += np.asarray(model.predict_proba(X_test))[:, 1] / N_SPLITS
@@ -510,6 +610,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     # ── Phase C: Define variant feature sets ──────────────────
     tc_all   = TC_BAND_NAMES
+    tc_51    = [c for c in tc_all if c != "swe_min"]
     tc_temp  = [f"{v}_{s}" for v in ["tmax","tmin"] for s in TC_STATS]
     tc_water = [f"{v}_{s}" for v in ["aet","def","pet","ppt","soil","q"] for s in TC_STATS]
     tc_rad   = [f"{v}_{s}" for v in ["srad","vpd","vap"] for s in TC_STATS]
@@ -528,10 +629,12 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     shap_top20 = shap_top10 + ["vap_min","aet_mean","q_max","pet_min","pet_max",
                                 "tmin_max","pdsi_min","pet_std","def_std","aet_max"]
     # Dead features by SHAP (near-zero importance)
-    dead = ["swe_mean","swe_std","swe_min","swe_max","def_min","q_min"]
-    tc_clean = [f for f in tc_all if f not in dead]  # 46 features
+    # Updated: only `swe_min` is confirmed constant-zero and should be dropped.
+    dead = ["swe_min"]  # only confirmed constant-zero feature
+    tc_clean = [f for f in tc_all if f not in dead]  # 51 features (52 TC bands - swe_min)
 
     VARIANTS = {
+        "variant-00": tc_all,  # anchor baseline — same model core as Skill 08
         # Round 1
         "variant-06": tc_all,
         "variant-07": tc_temp,
@@ -594,7 +697,10 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variant-34": tc_all,
         # Round 5 — 2017-2019 window + extended features
         "variant-35": tc_all,                  # 52 TC bands, 2017-2019 window
-        "variant-36": None,                    # 91 features (full merge)
+        "variant-36": None,                    # 91 features (full merge),
+        "variant-37": tc_51,   # 51 features, swe_min dropped, standard LGB
+        "variant-38": tc_51,   # 51 features, 3-way blend LGB+RF+XGB
+        "variant-39": tc_51,   # 51 features, dart booster LGB
     }
 
     if variant_name not in VARIANTS:
@@ -653,6 +759,30 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "seed_aucs":  [r["oof_auc"] for r in seed_results],
         "seed_std":   std_auc,
     }
+
+    # Persist averaged OOF and test probabilities for ensembling/stacking
+    try:
+        proc_dir = competition_dir / "data/processed"
+        proc_dir.mkdir(parents=True, exist_ok=True)
+
+        oof_df = pd.DataFrame({
+            "ID": train_feat["ID"],
+            "oof_prob": np.asarray(result["oof_probs"])
+        })
+        oof_path = proc_dir / f"oof_{variant_name}.csv"
+        oof_df.to_csv(oof_path, index=False)
+
+        test_df = pd.DataFrame({
+            "ID": test_feat["ID"],
+            "test_prob": np.asarray(result["test_probs"])
+        })
+        test_path = proc_dir / f"test_probs_{variant_name}.csv"
+        test_df.to_csv(test_path, index=False)
+
+        print(f"  ✅ Saved OOF → {oof_path}")
+        print(f"  ✅ Saved test probs → {test_path}")
+    except Exception as e:
+        print(f"  ⚠️ Failed to save OOF/test probs: {e}")
 
     # ── Phase D: Save submission if PASS or force_save ──────────
     if result["gate"] == "PASS" or force_save:

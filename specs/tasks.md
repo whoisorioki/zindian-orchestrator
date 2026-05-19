@@ -66,6 +66,14 @@ BANNED
 - [x] SKILL_STATE.json dag_phase: phase_1_complete
 - [x] compliance_log.md — 3 flagged discussion threads reviewed and understood
 
+### Deep Research Loop (new)
+
+- [x] skill_18_librarian.py — domain literature retrieval (Semantic Scholar)
+- [x] skill_20_scientist.py — bounded hypothesis generation (Gemini free-tier)
+- [x] skill_19_code_miner.py — machine-learning prior-art mining (Gemini + fallback)
+- [ ] Orchestrator wiring: run 02.4 and 02.6 before 02.5 synthesis
+- [ ] Add schema tests for code_miner_cache.json and code_miner_patterns.json
+
 ---
 
 ## PHASE 2 — Anchor Baseline — DONE
@@ -214,7 +222,7 @@ BANNED
 
 | Skill | File | Status | Notes |
 |---|---|---|---|
-| 00 | skill_00_discussion_monitor.py | DONE | |
+| 00 | skill_00_zindi_monitor.py | DONE | legacy alias: skill_00_discussion_monitor.py |
 | 01 | skill_01_integrity.py | DONE | |
 | 02 | skill_02_intake.py | DONE | |
 | 03 | skill_03_legality.py | PARTIAL | lives in competitions/scripts/ not zindian/skills/ |

@@ -28,6 +28,7 @@ from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.ledger import Ledger
+from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
 # ── Data ───────────────────────────────────────────────────────────────────────
@@ -67,74 +68,29 @@ def compute_oof_predictions(
     Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
     Computes F1 using optimal threshold (challenge metric).
     """
-    from sklearn.metrics import log_loss, roc_auc_score, f1_score
+    feature_cols = [c for c in train.columns if c not in ("ID", "Latitude", "Longitude", target_col)]
+    result = train_lightgbm_cv(
+        train=train,
+        test=test,
+        feature_cols=feature_cols,
+        target_col=target_col,
+        n_splits=n_splits,
+        random_seed=random_seed,
+        params={"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed},
+        num_boost_round=500,
+        early_stopping_rounds=50,
+        scale=True,
+    )
 
-    np.random.seed(random_seed)
+    from sklearn.metrics import log_loss
 
-    # Lat/Lon BANNED as model features (discussion 32369)
-    # Use TerraClimate only — all columns except ID, coords, target
-    feature_cols = [c for c in train.columns
-                    if c not in ("ID", "Latitude", "Longitude", target_col)]
-
-    X      = np.asarray(train[feature_cols].values, dtype=np.float32)
-    y      = np.asarray(train[target_col].values, dtype=np.int32)
-    X_test = np.asarray(test[feature_cols].values, dtype=np.float32)
-
-    scaler = StandardScaler()
-    X      = scaler.fit_transform(X)
-    X_test = scaler.transform(X_test)
-
-    oof_preds  = np.zeros(len(train), dtype=np.float64)
-    test_preds = np.zeros(len(test),  dtype=np.float64)
-
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
-
-    for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X)):
-        X_tr, X_val = X[train_idx], X[val_idx]
-        y_tr, y_val = y[train_idx], y[val_idx]
-
-        params = {
-            "objective":     "binary",
-            "metric":        "binary_logloss",
-            "learning_rate": 0.05,
-            "num_leaves":    31,
-            "verbose":       -1,
-            "seed":          random_seed + fold_idx,
-        }
-
-        train_set = lgb.Dataset(X_tr, label=y_tr)
-        val_set   = lgb.Dataset(X_val, label=y_val, reference=train_set)
-
-        model = lgb.train(
-            params,
-            train_set,
-            num_boost_round=500,
-            valid_sets=[val_set],
-            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(period=-1)],
-        )
-
-        val_pred           = np.asarray(model.predict(X_val), dtype=np.float64)
-        oof_preds[val_idx] = val_pred
-        test_preds        += np.asarray(model.predict(X_test), dtype=np.float64) / n_splits
-
-        fold_ll  = log_loss(y_val, val_pred)
-        fold_auc = roc_auc_score(y_val, val_pred)
-        print(f"  Fold {fold_idx + 1}/{n_splits}: logloss={fold_ll:.6f}  auc={fold_auc:.6f}")
-
-    y = np.asarray(y, dtype=np.int32)
-    oof_logloss = float(log_loss(y, oof_preds))
-    oof_auc     = float(roc_auc_score(y, oof_preds))
-    
-    # Compute OOF F1 with optimal threshold (challenge metric = F1 score)
-    thresholds = np.arange(0.3, 0.7, 0.01)
-    best_t = float(max(thresholds, key=lambda t: f1_score(y, (oof_preds >= t).astype(int))))
-    oof_f1 = float(f1_score(y, (oof_preds >= best_t).astype(int)))
-    
+    y = np.asarray(train[target_col].values, dtype=np.int32)
+    oof_logloss = float(log_loss(y, result.oof_probs))
     print(f"\nOOF Log Loss : {oof_logloss:.6f}")
-    print(f"OOF AUC      : {oof_auc:.6f}")
-    print(f"OOF F1       : {oof_f1:.6f} (threshold={best_t:.2f})")
+    print(f"OOF AUC      : {result.oof_auc:.6f}")
+    print(f"OOF F1       : {result.oof_f1:.6f} (threshold={result.threshold:.2f})")
 
-    return oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t
+    return result.oof_probs, result.test_probs, oof_logloss, result.oof_auc, result.oof_f1, result.threshold
 
 
 # ── Submission Validation ──────────────────────────────────────────────────────

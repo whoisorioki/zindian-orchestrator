@@ -71,7 +71,7 @@ def run():
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     # Prefer processed features file, fall back to raw training file
-    proc_train = (paths.competition_dir / "data" / "processed" / "features_train.csv")
+    proc_train = competition_dir / "data" / "processed" / "features_train.csv"
     raw_train = paths.data_raw_dir / "Training_Data.csv"
 
     if proc_train.exists():
@@ -122,14 +122,16 @@ def run():
     # Correlations
     numeric_feats = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     corr = df[numeric_feats].corr().abs()
-    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+    corr_values = corr.to_numpy(dtype=float, copy=False)
+    upper_mask = np.triu(np.ones(corr_values.shape, dtype=bool), k=1)
     high_corr_pairs = []
     thresh = 0.95
-    for i in upper.columns:
-        for j in upper.index:
-            v = upper.loc[j, i]
-            if pd.notna(v) and v > thresh:
-                high_corr_pairs.append((j, i, float(v)))
+    for row_idx, row_name in enumerate(corr.index):
+        for col_idx, col_name in enumerate(corr.columns):
+            if upper_mask[row_idx, col_idx]:
+                value = corr_values[row_idx, col_idx]
+                if value > thresh:
+                    high_corr_pairs.append((row_name, col_name, float(value)))
 
     pii_keywords = {"email", "phone", "name", "id_number", "ssn"}
     pii_risk = [c for c in df.columns if any(k in c.lower() for k in pii_keywords)]
@@ -168,17 +170,17 @@ def run():
     # Outlier via IQR
     outlier_flags = {}
     for c in numeric_feats:
-        series = pd.to_numeric(df[c], errors="coerce").dropna()
-        if series.empty:
+        numeric_values = pd.to_numeric(df[c], errors="coerce").dropna().astype(float).to_numpy()
+        if numeric_values.size == 0:
             outlier_flags[c] = {"outlier_pct": 0.0, "flag": False}
             continue
-        q1 = series.quantile(0.25)
-        q3 = series.quantile(0.75)
+        q1 = float(np.quantile(numeric_values, 0.25))
+        q3 = float(np.quantile(numeric_values, 0.75))
         iqr = q3 - q1
         low = q1 - 1.5 * iqr
         high = q3 + 1.5 * iqr
-        outliers = ((series < low) | (series > high)).sum()
-        pct = float(outliers / len(df))
+        outliers = int(np.logical_or(numeric_values < low, numeric_values > high).sum())
+        pct = float(outliers / float(len(df)))
         outlier_flags[c] = {"outlier_pct": pct, "flag": pct > 0.05}
 
     # Standardisation verdict

@@ -33,7 +33,7 @@ def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str,
     comp = monitor_data.get("competition_intel", {}) if isinstance(monitor_data, dict) else {}
 
     # Allowed external sources (from data page hints) — keep as advisory
-    allowed_sources = comp.get("allowed_data_sources", ["competition_provided_only"])
+    allowed_data_sources = comp.get("allowed_data_sources", ["competition_provided_only"])
 
     # Banned transformations and features: combine monitor and config
     banned_from_monitor = monitor_data.get("banned_features", []) if isinstance(monitor_data, dict) else []
@@ -52,9 +52,11 @@ def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str,
     metric = comp.get("metric") or config.get("metric")
 
     policy = {
-        "allowed_sources": allowed_sources,
+        "allowed_data_sources": allowed_data_sources,
+        "allowed_sources": allowed_data_sources,
         "banned_transformations": banned_transformations,
         "lat_lon_permitted_as_feature": lat_lon_permitted,
+        "coordinate_features_permitted": lat_lon_permitted,
         "external_data_permitted": external_data_permitted,
         "automl_permitted": automl_permitted,
         "use_probabilities": use_probabilities,
@@ -76,10 +78,12 @@ def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[s
     """
     results: List[Dict[str, Any]] = []
 
-    allowed_sources = set([s.lower() for s in policy.get("allowed_sources", [])])
+    allowed_sources = set([
+        s.lower() for s in policy.get("allowed_data_sources", policy.get("allowed_sources", []))
+    ])
     external_ok = policy.get("external_data_permitted", True)
     banned_trans = set([s.lower() for s in policy.get("banned_transformations", [])])
-    lat_ok = policy.get("lat_lon_permitted_as_feature", True)
+    lat_ok = policy.get("coordinate_features_permitted", policy.get("lat_lon_permitted_as_feature", True))
 
     for f in planned_features:
         name = f.get("name")
