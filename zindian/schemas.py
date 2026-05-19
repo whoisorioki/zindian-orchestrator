@@ -26,6 +26,7 @@ def _is_jsonable_scalar(x: Any) -> bool:
 SKILL_STATE_KEYS: Tuple[str, ...] = (
     "competition",
     "md5_target_hash",
+    "anchor_oof_f1",
     "anchor_oof_rmse",
     "anchor_lb_score",
     "submissions_used_today",
@@ -98,6 +99,8 @@ def skill_state_skeleton() -> Dict[str, Any]:
     return {
         "competition": None,
         "md5_target_hash": None,
+        "anchor_oof_f1": None,
+        # Legacy compatibility field; downstream logic should prefer anchor_oof_f1.
         "anchor_oof_rmse": None,
         "anchor_lb_score": None,
         "submissions_used_today": 0,

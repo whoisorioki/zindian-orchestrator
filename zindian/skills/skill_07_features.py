@@ -2,6 +2,7 @@
 Skill 07 — Feature Engineering
 Competition-aware, config-driven feature engineering.
 Runs 1 anchor + 9 isolated variants per round.
+Primary gate metric: F1-Score. ROC-AUC is retained as a reference signal only.
 
 Governed by:
   - competitions/<slug>/challenge_config.json
@@ -41,7 +42,7 @@ warnings.filterwarnings("ignore")
 # ── Constants ─────────────────────────────────────────────────────────────────
 SEED        = 42
 N_SPLITS    = 5
-MIN_DELTA   = 0.005          # gate: variant must beat anchor by ≥ 0.5% AUC
+MIN_DELTA   = 0.005          # gate: variant must beat anchor by ≥ 0.5% F1
 MAX_RETRIES = 5
 RETRY_WAIT  = 15
 
@@ -288,8 +289,8 @@ def train_variant(
     seed: int = SEED,
 ) -> dict:
     """
-    Train one LightGBM variant and evaluate against anchor gate.
-    Returns result dict with status, F1, AUC, threshold, delta (F1 delta for gating).
+    Train one LightGBM variant and evaluate against the anchor gate.
+    Returns result dict with status, F1-Score, ROC-AUC, threshold, and delta.
     """
     np.random.seed(seed)
 
@@ -312,6 +313,7 @@ def train_variant(
         "variant-17",
         "variant-20",
         "variant-30",
+        "variant-36",
         "variant-31",
         "variant-32",
         "variant-33",
@@ -349,7 +351,7 @@ def train_variant(
         print(f"  {variant_name}")
         print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
         print(f"  Delta    : {delta:+.5f}  → {gate}")
-        print(f"  OOF AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
+        print(f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
 
         return {
             "variant":    variant_name,
@@ -456,7 +458,7 @@ def train_variant(
             oof_probs[val_idx]  = 0.5 * lgb_val + 0.5 * rf_val
             test_probs         += (0.5 * lgb_test + 0.5 * rf_test) / N_SPLITS
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-            print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
+            print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
             continue
 
         # ── variant-26: per-fold threshold optimization ───────
@@ -510,7 +512,7 @@ def train_variant(
             oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
             test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / N_SPLITS
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-            print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
+            print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
             continue
 
         if model is None:
@@ -519,20 +521,20 @@ def train_variant(
         oof_probs[val_idx]  = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
         test_probs         += np.asarray(model.predict_proba(X_test))[:, 1] / N_SPLITS
         fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-        print(f"    Fold {fold+1}: AUC={fold_auc:.5f}")
+        print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
 
     oof_auc   = roc_auc_score(y, oof_probs)
     thresholds = np.arange(0.3, 0.7, 0.01)
     best_t    = max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
     oof_f1    = f1_score(y, (oof_probs >= best_t).astype(int))
-    delta     = oof_f1 - anchor_f1  # Gate on F1 delta, not AUC delta (challenge metric)
+    delta     = oof_f1 - anchor_f1  # Gate on F1 delta, not ROC-AUC delta (challenge metric)
     gate      = "PASS" if delta >= MIN_DELTA else "PRUNE"
 
     print(f"\n  {'='*50}")
     print(f"  {variant_name}")
     print(f"  OOF F1   : {oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
     print(f"  Delta    : {delta:+.5f}  → {gate}")
-    print(f"  OOF AUC  : {oof_auc:.5f}  (threshold: {best_t:.2f})")
+    print(f"  ROC-AUC  : {oof_auc:.5f}  (threshold: {best_t:.2f})")
 
     return {
         "variant":    variant_name,
@@ -549,7 +551,7 @@ def train_variant(
 
 # ── Phase D: Report Writer ────────────────────────────────────────────────────
 
-def write_round_report(paths, results: list[dict], round_num: int, anchor_auc: float) -> None:
+def write_round_report(paths, results: list[dict], round_num: int, anchor_f1: float) -> None:
     passed  = [r for r in results if r["gate"] == "PASS"]
     pruned  = [r for r in results if r["gate"] == "PRUNE"]
     now     = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -557,14 +559,15 @@ def write_round_report(paths, results: list[dict], round_num: int, anchor_auc: f
     lines = [
         f"# Feature Round {round_num} Report",
         f"**Generated**: {now}",
-        f"**Anchor AUC**: {anchor_auc:.5f}",
-        f"**Gate threshold**: anchor + {MIN_DELTA} = {anchor_auc + MIN_DELTA:.5f}",
+        f"**Primary gate metric**: F1-Score",
+        f"**Anchor F1-Score**: {anchor_f1:.5f}",
+        f"**Gate threshold**: anchor + {MIN_DELTA} = {anchor_f1 + MIN_DELTA:.5f}",
         f"**Variants tested**: {len(results)}",
         f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
         "", "---", "",
         "## Results",
         "",
-        f"| Variant | Features | OOF AUC | Delta | F1 | Gate |",
+        f"| Variant | Features | ROC-AUC | Delta | F1-Score | Gate |",
         f"|---|---|---|---|---|---|",
     ]
     for r in results:
@@ -617,12 +620,12 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
-    print(f"Anchor F1   : {state.get('anchor_oof_rmse')}  (also in anchor_oof_auc: {state.get('anchor_oof_auc')})")
+    print(f"Anchor F1   : {state.get('anchor_oof_f1') or state.get('anchor_oof_rmse')}  (reference ROC-AUC: {state.get('anchor_oof_auc')})")
 
-    anchor_f1 = float(state.get("anchor_oof_rmse") or 0.0)  # F1 is stored as anchor_oof_rmse (challenge metric)
-    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)   # Keep AUC for reference
+    anchor_f1 = float(state.get("anchor_oof_f1") or state.get("anchor_oof_rmse") or 0.0)
+    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)   # Keep ROC-AUC for reference
     if anchor_f1 == 0.0:
-        raise RuntimeError("anchor_oof_rmse not set in SKILL_STATE.json — run Skill 08 first")
+        raise RuntimeError("anchor_oof_f1 not set in SKILL_STATE.json — run Skill 08 first")
 
     # ── Phase A: Fetch ────────────────────────────────────────
     print("\n[A] TerraClimate Fetch")
@@ -771,7 +774,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         r = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_f1, anchor_auc, seed=s)
         seed_results.append(r)
 
-    # Average OOF AUC and test probabilities across seeds
+    # Average ROC-AUC and test probabilities across seeds
     mean_auc   = float(np.mean([r["oof_auc"]    for r in seed_results]))
     std_auc    = float(np.std( [r["oof_auc"]    for r in seed_results]))
     mean_f1    = float(np.mean([r["oof_f1"]     for r in seed_results]))
@@ -783,10 +786,10 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     print(f"\n  {'='*50}")
     print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
-    print(f"  Mean OOF AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
+    print(f"  Mean ROC-AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
     print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
-    print(f"  Mean OOF F1  : {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
-    print(f"  Seed AUCs    : {[round(r['oof_auc'],5) for r in seed_results]}")
+    print(f"  Mean F1-Score: {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
+    print(f"  Seed ROC-AUCs: {[round(r['oof_auc'],5) for r in seed_results]}")
 
     result = {
         "variant":    variant_name,
@@ -861,7 +864,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     # ── Phase D: Write report ─────────────────────────────────
     round_num = int(state.get("feature_round") or 1)
-    write_round_report(paths, [result], round_num, anchor_auc)
+    write_round_report(paths, [result], round_num, anchor_f1)
 
     return {
         "status":   result["gate"],

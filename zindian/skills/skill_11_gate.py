@@ -27,6 +27,8 @@ def run() -> dict:
     anchor_score = float(state.get(f"anchor_oof_{metric_key}") or 0.0)
     variants_passed = int(state.get("variants_passed") or 0)
 
+    print(f"[skill_11] gating against {f'anchor_oof_{metric_key}'} = {anchor_score:.8f}")
+
     print(f"Variants passed this round : {variants_passed}")
     print(f"Best variant               : {best_variant}")
     print(f"Best OOF {metric_name.upper():<8}      : {best_score:.5f}")
