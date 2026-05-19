@@ -35,11 +35,17 @@ except Exception:
 
 load_dotenv(override=False)
 _api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+http_config = types.HttpOptions(
+    client_args={
+        "timeout": 60.0,
+        "proxy": None,
+    }
+)
 if _api_key:
-    CLIENT = genai.Client(api_key=_api_key)
+    CLIENT = genai.Client(api_key=_api_key, http_options=http_config)
     print("[Scientist] GEMINI_API_KEY found — client initialized.")
 else:
-    CLIENT = genai.Client()
+    CLIENT = genai.Client(http_options=http_config)
     print("[Scientist] No API key — client initialized with ADC.")
 MODEL_NAME = "gemini-2.5-flash"
 TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "label", "y"]

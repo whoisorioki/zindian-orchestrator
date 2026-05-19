@@ -4,6 +4,8 @@ An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
 > 🎯 **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
 
+Every action should declare which problem it serves: Problem 1 (generic Zindian agent) or Problem 2 (EY Biodiversity execution).
+
 ---
 
 ## 📋 Quick Status
@@ -16,6 +18,12 @@ An **autonomous ML competition agent framework** for Zindi Africa competitions.
 | **Architecture** | Competition-agnostic ✅ |
 | **External Review** | READY ✅ |
 | **MVP Timeline** | ~20-24 hours |
+
+### EY-frogs Performance History
+
+| Reference | OOF F1 | Threshold | LB |
+|-----------|--------|-----------|----|
+| Verified multi-seed blend | 0.84110 | 0.426 | 0.88350 |
 
 ---
 

@@ -20,6 +20,14 @@ An autonomous ML competition agent for Zindi Africa competitions. Every decision
 the agent makes is conditional on the active competition's rules. No hardcoded
 competition assumptions. The agent adapts to each challenge.
 
+Every orchestrator action must declare which problem it serves: Problem 1 (generic Zindian agent) or Problem 2 (EY Biodiversity execution).
+
+### EY-frogs Performance Snapshot
+
+| Reference | OOF F1 | Threshold | LB |
+|---|---:|---:|---:|
+| Verified multi-seed blend | 0.84110 | 0.426 | 0.88350 |
+
 ---
 
 ## Environment

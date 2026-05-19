@@ -79,7 +79,13 @@ def determine_submission_metrics(submission_file: Path, state: dict[str, Any]) -
             except (TypeError, ValueError):
                 continue
 
-    fallback_value = state.get("best_variant_oof_f1", 0.8357)
+    fallback_value = (
+        state.get("last_variant_oof_f1")
+        or state.get("best_variant_oof_f1")
+        or state.get("anchor_oof_f1")
+        or state.get("anchor_oof_rmse")
+        or 0.0
+    )
     return float(fallback_value), "best_variant_oof_f1"
 
 
@@ -128,8 +134,8 @@ def run(submission_file: str) -> dict:
 {'='*60}
 File             : {sub_path.name}
 Branch           : {branch}
-OOF AUC          : {best_auc}
 OOF F1           : {best_f1}
+Reference ROC-AUC: {best_auc}
 Metric source    : {metric_source}
 Remaining today  : {remaining}
 Validation       : ✅ PASSED

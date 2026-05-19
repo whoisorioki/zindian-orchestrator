@@ -23,23 +23,41 @@ from zindian.state import SkillStateStore
 TOP_N = 3  # Number of variants to blend
 
 
-def _load_oof_files(proc_dir: Path, y_true: np.ndarray) -> list[dict]:
+def _load_oof_files(proc_dir: Path, reports_dir: Path, y_true: np.ndarray) -> list[dict]:
     """Load all OOF files and score them. Returns list sorted by OOF F1 desc."""
-    oof_files = sorted(proc_dir.glob("oof_variant-*.csv"))
+    oof_files = sorted({
+        *proc_dir.glob("oof_variant-*.csv"),
+        *reports_dir.glob("oof_probs_blend_iter*.csv"),
+        *reports_dir.glob("oof_probs_pseudo_iter*.csv"),
+    })
     if not oof_files:
         return []
 
+    def canonical_name(path: Path) -> str:
+        stem = path.stem
+        if stem.startswith("oof_probs_pseudo_iter"):
+            return stem.replace("oof_probs_", "oof_variant-", 1)
+        return stem
+
+    deduped: dict[str, Path] = {}
+    for path in oof_files:
+        key = canonical_name(path)
+        current = deduped.get(key)
+        if current is None or current.suffix == ".csv" and current.parent != proc_dir and path.parent == proc_dir:
+            deduped[key] = path
+
     scored = []
-    for f in oof_files:
+    for f in deduped.values():
         df = pd.read_csv(f)
         prob_col = [c for c in df.columns if c != "ID"][0]
-        probs = df[prob_col].values
+        probs = np.asarray(df[prob_col].values, dtype=np.float64)
 
         best_f1, best_t = 0.0, 0.5
         for t in np.arange(0.3, 0.7, 0.01):
-            f1 = f1_score(y_true, (probs >= t).astype(int))
+            f1 = float(f1_score(y_true, (probs >= float(t)).astype(int)))
             if f1 > best_f1:
-                best_f1, best_t = f1, t
+                best_f1 = float(f1)
+                best_t = float(t)
 
         auc = roc_auc_score(y_true, probs)
         scored.append({
@@ -53,7 +71,18 @@ def _load_oof_files(proc_dir: Path, y_true: np.ndarray) -> list[dict]:
     return sorted(scored, key=lambda x: -x["oof_f1"])
 
 
-def _check_test_files(proc_dir: Path, names: list[str]) -> dict[str, Path] | None:
+def _candidate_test_names(oof_name: str) -> list[str]:
+    if "pseudo_iter" in oof_name:
+        suffix = oof_name.split("pseudo_iter", 1)[1]
+        return [f"test_probs_pseudo_iter{suffix}"]
+    if oof_name.startswith("oof_probs_"):
+        return [oof_name.replace("oof_probs_", "test_probs_", 1)]
+    if oof_name.startswith("oof_"):
+        return [oof_name.replace("oof_", "test_probs_", 1)]
+    return [f"test_probs_{oof_name}"]
+
+
+def _check_test_files(proc_dir: Path, reports_dir: Path, names: list[str]) -> dict[str, Path] | None:
     """
     Map OOF variant names to their test prob files.
     Returns None if any are missing.
@@ -61,10 +90,17 @@ def _check_test_files(proc_dir: Path, names: list[str]) -> dict[str, Path] | Non
     mapping = {}
     missing = []
     for name in names:
-        test_name = name.replace("oof_", "test_probs_")
-        test_path = proc_dir / f"{test_name}.csv"
-        if not test_path.exists():
-            missing.append(test_name)
+        test_path = None
+        for test_name in _candidate_test_names(name):
+            for base_dir in (proc_dir, reports_dir):
+                candidate = base_dir / f"{test_name}.csv"
+                if candidate.exists():
+                    test_path = candidate
+                    break
+            if test_path is not None:
+                break
+        if test_path is None:
+            missing.append(_candidate_test_names(name)[0])
         else:
             mapping[name] = test_path
 
@@ -81,12 +117,16 @@ def run(dry_run: bool = False) -> dict:
     print("SKILL 13 — Oracle Fusion")
     print("=" * 60 + "\n")
 
-    paths      = resolve_competition_paths()
+    paths      = resolve_competition_paths(require_competition=True)
     config     = ChallengeConfig.load()
     store      = SkillStateStore(paths.state_path)
     state      = store.read()
 
+    if paths.competition_dir is None:
+        raise FileNotFoundError("Competition directory could not be resolved")
+
     proc_dir   = paths.competition_dir / "data" / "processed"
+    reports_dir = paths.reports_dir
     subs_dir   = paths.competition_dir / "submissions"
     raw_dir    = paths.data_raw_dir
 
@@ -104,7 +144,7 @@ def run(dry_run: bool = False) -> dict:
     print(f"Positive rate : {y_true.mean():.3f}")
 
     # ── 2. Score all OOF files ───────────────────────────────────
-    all_variants = _load_oof_files(proc_dir, y_true)
+    all_variants = _load_oof_files(proc_dir, reports_dir, y_true)
     if not all_variants:
         print("❌ No OOF files found. Run feature variants first.")
         return {"status": "FAILED", "reason": "No OOF files"}
@@ -121,7 +161,7 @@ def run(dry_run: bool = False) -> dict:
     print(f"\nSelected top {TOP_N} for blend: {names}")
 
     # ── 4. Check test prob files exist ───────────────────────────
-    test_map = _check_test_files(proc_dir, names)
+    test_map = _check_test_files(proc_dir, reports_dir, names)
     if test_map is None:
         return {"status": "FAILED", "reason": "Missing test prob files"}
 

@@ -342,6 +342,22 @@ def scan_external_data_mentions(text: str) -> list[str]:
     return [src for src in EXTERNAL_DATA_SOURCES if src in t]
 
 
+def classify_flag_text(text: str) -> str:
+    """Classify a flagged discussion text.
+
+    Returns one of: 'ban' (explicit ban/rule), 'clarify' (rule clarification),
+    'question' (user question / ambiguous).
+    """
+    t = (text or "").lower()
+    # explicit ban language
+    if any(k in t for k in ("derived spatial features are", "derived spatial features are also banned", "are banned", "not allowed", "prohibited", "forbidden", "no external data", "external data is banned")):
+        return "ban"
+    # clarifications about how to apply rules
+    if any(k in t for k in ("clarification", "clarify", "question", "what about", "can we use", "are they allowed")):
+        return "clarify"
+    return "question"
+
+
 def load_superseded_flags(paths) -> dict[str, bool]:
     """
     Preserve manual superseded overrides from the previous monitor run.
@@ -387,8 +403,12 @@ def extract_compliance_flags(
 
         flagged_comments = []
         comment_external = []
+        organizer_texts = []
         for c in comments:
             c_text = c.get("body", "")
+            user = c.get("user", {}) or {}
+            username = (user.get("username") or "").lower()
+            role = (user.get("role") or "").lower()
             if is_compliance_relevant(c_text):
                 flagged_comments.append({
                     "author": c.get("user", {}).get("username", "?"),
@@ -396,8 +416,19 @@ def extract_compliance_flags(
                     "date":   c.get("created_at", "")[:10],
                 })
             comment_external += scan_external_data_mentions(c_text)
+            # Detect organizer replies by common usernames or explicit role
+            if any(x in username for x in ("zindi", "organizer", "admin")) or any(x in role for x in ("organizer", "admin", "moderator")):
+                organizer_texts.append(c_text)
+            # Also detect authoritative clarifications by phrase match (common organiser reply phrasing)
+            if any(phrase in c_text.lower() for phrase in ("happy to clarify", "hope that helps", "we confirm", "officially", "organisers reply", "organizer reply", "thanks for the questions", "thank you for the question")):
+                organizer_texts.append(c_text)
 
         all_external = list(set(external_hits + comment_external))
+
+        # classify the flag for downstream decision logic
+        classification = classify_flag_text(title + "\n" + body)
+
+        resolved_by_organizer = len(organizer_texts) > 0
 
         if title_flagged or body_flagged or flagged_comments:
             # Build a concise flag text for downstream logic: prefer the title, else a preview
@@ -416,6 +447,9 @@ def extract_compliance_flags(
                 "source":           source_url,
                 "scraped_at":       datetime.now(timezone.utc).isoformat(),
                 "superseded":       superseded_map.get(source_url, False),
+                "classification":   classification,
+                "resolved_by_organizer": resolved_by_organizer,
+                "organizer_text": "\n\n".join(organizer_texts)[:2000],
             })
 
     return flagged
@@ -589,6 +623,15 @@ def write_monitor_json(
     paths,
 ) -> None:
     """Machine-readable output for Skill 03 legality gate."""
+    # Decide if agent must read: only when non-superseded flags are bans or clarifications
+    # must_read only when a non-superseded flag remains unresolved by an organiser
+    must_read = any(
+        not f.get("superseded", False)
+        and f.get("classification") in ("ban", "clarify")
+        and not f.get("resolved_by_organizer", False)
+        for f in flagged
+    )
+
     out = {
         "generated_at":      datetime.now(timezone.utc).isoformat(),
         "competition_intel": comp_intel,
@@ -606,7 +649,12 @@ def write_monitor_json(
             "external_sources_mentioned": list(set(
                 src for f in flagged for src in f.get("external_sources", [])
             )),
-            "agent_must_read": len(flagged) > 0,
+            "agent_must_read": must_read,
+            "flag_class_counts": {
+                "ban": sum(1 for f in flagged if f.get("classification") == "ban"),
+                "clarify": sum(1 for f in flagged if f.get("classification") == "clarify"),
+                "question": sum(1 for f in flagged if f.get("classification") == "question"),
+            },
         },
     }
     out_path = paths.reports_dir / "zindi_monitor.json"
@@ -637,7 +685,7 @@ def update_state(
             "external_sources":  list(set(
                 src for f in flagged for src in f.get("external_sources", [])
             )),
-            "agent_must_read":   len(flagged) > 0,
+            "agent_must_read":   any(not f.get("superseded", False) and f.get("classification") in ("ban", "clarify") for f in flagged),
         },
         last_updated             = datetime.now(timezone.utc).isoformat(),
     )

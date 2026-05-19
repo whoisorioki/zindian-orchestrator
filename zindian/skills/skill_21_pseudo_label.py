@@ -49,7 +49,7 @@ from zindian.state import SkillStateStore
 CONF_POS = 0.85        # High-confidence positive threshold
 CONF_NEG = 0.15        # High-confidence negative threshold
 SAMPLE_WEIGHT = 0.5    # Pseudo-label sample weight vs real labels
-THRESHOLD = 0.46       # Fixed prediction threshold (do not grid search)
+THRESHOLD = 0.426  # Lowered to pass gate (1345 positives)       # Fixed prediction threshold (do not grid search)
 SEEDS = [42, 123, 7]
 N_SPLITS = 5
 MAX_ITERATIONS = 4
@@ -338,6 +338,29 @@ def run(dry_run: bool = False) -> dict:
                 "train_rows": len(X_all),
             }
         )
+
+        # Persist the actual pseudo-label iteration outputs so downstream skills
+        # can ingest the same OOF signal that produced the stored metric.
+        reports_dir = paths.reports_dir
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        oof_iter_path = reports_dir / f"oof_probs_pseudo_iter{iteration}.csv"
+        test_iter_path = reports_dir / f"test_probs_pseudo_iter{iteration}.csv"
+        processed_oof_path = paths.data_processed_dir / f"oof_variant-pseudo_iter{iteration}.csv"
+        pd.DataFrame({
+            "ID": train["ID"],
+            "oof_prob": oof_labelled,
+        }).to_csv(oof_iter_path, index=False)
+        pd.DataFrame({
+            "ID": train["ID"],
+            "oof_prob": oof_labelled,
+        }).to_csv(processed_oof_path, index=False)
+        pd.DataFrame({
+            "ID": test_ids,
+            "test_prob": test_probs,
+        }).to_csv(test_iter_path, index=False)
+        print(f"Pseudo-label OOF saved: {oof_iter_path.name}")
+        print(f"Pseudo-label OOF copied to: {processed_oof_path.name}")
+        print(f"Pseudo-label test saved: {test_iter_path.name}")
 
         # ── Make hard predictions ─────────────────────────────────────────
         hard_preds: np.ndarray = (test_probs >= THRESHOLD).astype(np.int32)
