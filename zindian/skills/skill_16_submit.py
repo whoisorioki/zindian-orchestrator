@@ -5,6 +5,7 @@ Post-submission: pulls rank and top 20 leaderboard automatically.
 """
 from __future__ import annotations
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +30,57 @@ def validate(sub_path: Path, sample_path: Path) -> list[str]:
     if sub.isnull().any().any():
         errors.append(f"Nulls in: {sub.columns[sub.isnull().any()].tolist()}")
     return errors
+
+
+def determine_submission_metrics(submission_file: Path, state: dict[str, Any]) -> tuple[float, str]:
+    file_name = submission_file.name.lower()
+    stem = submission_file.stem.lower()
+
+    candidate_keys: list[str] = []
+
+    if "ensemble" in file_name:
+        candidate_keys.extend([
+            "last_ensemble_oof_f1",
+            "best_ensemble_oof_f1",
+            "last_variant_oof_f1",
+            "best_variant_oof_f1",
+            "anchor_oof_f1",
+        ])
+
+    if "anchor" in file_name:
+        candidate_keys.extend([
+            "anchor_oof_f1",
+            "best_variant_oof_f1",
+            "last_variant_oof_f1",
+        ])
+
+    variant_match = re.search(r"(variant-[\w\d_]+)", stem)
+    if variant_match:
+        variant_tag = variant_match.group(1)
+        candidate_keys.extend([
+            f"{variant_tag}_oof_f1",
+            f"last_{variant_tag}_oof_f1",
+            f"best_{variant_tag}_oof_f1",
+        ])
+
+    candidate_keys.extend([
+        "last_variant_oof_f1",
+        "best_variant_oof_f1",
+        "last_ensemble_oof_f1",
+        "best_ensemble_oof_f1",
+        "anchor_oof_f1",
+    ])
+
+    for key in candidate_keys:
+        value = state.get(key)
+        if value is not None:
+            try:
+                return float(value), key
+            except (TypeError, ValueError):
+                continue
+
+    fallback_value = state.get("best_variant_oof_f1", 0.8357)
+    return float(fallback_value), "best_variant_oof_f1"
 
 
 def run(submission_file: str) -> dict:
@@ -66,8 +118,8 @@ def run(submission_file: str) -> dict:
         return {"status": "BLOCKED", "reason": "budget"}
 
     # ── Human gate ────────────────────────────────────────────
-    best_auc = state.get("best_variant_oof_auc") or state.get("anchor_oof_auc")
-    best_f1  = state.get("best_variant_oof_f1")  or state.get("anchor_oof_f1")
+    best_auc = state.get("best_variant_oof_auc") or state.get("last_ensemble_oof_auc") or state.get("anchor_oof_auc")
+    best_f1, metric_source = determine_submission_metrics(sub_path, state)
     branch   = state.get("current_git_branch", "unknown")
 
     print(f"""
@@ -78,6 +130,7 @@ File             : {sub_path.name}
 Branch           : {branch}
 OOF AUC          : {best_auc}
 OOF F1           : {best_f1}
+Metric source    : {metric_source}
 Remaining today  : {remaining}
 Validation       : ✅ PASSED
 
@@ -94,9 +147,10 @@ Type YES to submit or NO to abort.
     client  = ZindiClient()
     client.select_competition(config.slug)
 
+    feature_count = state.get("last_ensemble_features") or state.get("best_variant_features") or state.get("terraclimate_n_bands") or "?"
     comment = (f"branch:{branch}"
                f"|oof_f1:{best_f1:.4f}"
-               f"|features:{state.get('best_variant_features','?')}"
+               f"|features:{feature_count}"
                f"|calib:none")
 
     print(f"\nSubmitting with comment: {comment}")

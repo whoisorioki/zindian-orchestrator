@@ -17,6 +17,7 @@ class CompetitionPaths:
     reports_dir: Path
     submissions_dir: Path
     data_raw_dir: Path
+    data_processed_dir: Path
     notebooks_dir: Path
 
 
@@ -75,6 +76,7 @@ def resolve_competition_paths(
             reports_dir=root / "reports",
             submissions_dir=root / "submissions",
             data_raw_dir=root / "data" / "raw",
+            data_processed_dir=root / "data" / "processed",
             notebooks_dir=root / "notebooks",
         )
 
@@ -86,5 +88,6 @@ def resolve_competition_paths(
         reports_dir=comp_dir / "reports",
         submissions_dir=comp_dir / "submissions",
         data_raw_dir=comp_dir / "data" / "raw",
+        data_processed_dir=comp_dir / "data" / "processed",
         notebooks_dir=comp_dir / "notebooks",
     )

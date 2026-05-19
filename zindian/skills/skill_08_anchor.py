@@ -40,8 +40,8 @@ def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFram
     These are intentionally different — do not conflate them.
     """
     # Load from processed features — TerraClimate columns live here
-    train = pd.read_csv(paths.competition_dir / "data/processed/features_train.csv")
-    test  = pd.read_csv(paths.competition_dir / "data/processed/features_test.csv")
+    train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
+    test  = pd.read_csv(paths.data_processed_dir / "features_test.csv")
 
     # Training target: prefer the configured column, with the EY Frogs label as fallback.
     training_target_col = config.get("target_column", "Occurrence Status")

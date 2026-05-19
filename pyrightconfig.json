@@ -1,0 +1,9 @@
+{
+    "typeCheckingMode": "basic",
+    "exclude": [
+        "**/.venv/**",
+        "**/site-packages/**",
+        "**/.venv/*",
+        "**/.venv/**"
+    ]
+}

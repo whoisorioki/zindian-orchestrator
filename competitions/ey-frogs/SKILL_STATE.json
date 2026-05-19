@@ -12,20 +12,20 @@
   "best_variant_oof_rmse": null,
   "submissions_used_today": 15,
   "submissions_used_total": 20,
-  "remaining_submissions": 9,
-  "dag_phase": "phase_3_features",
+  "remaining_submissions": 4,
+  "dag_phase": "phase_5_governance_complete",
   "human_gate_13_approved": false,
   "human_gate_14_approved": false,
   "selected_submissions": [
     "tfcawL75",
-    "WeXoXWi6"
+    "X2LLeBts"
   ],
-  "last_updated": "2026-05-19T11:29:50+03:00",
+  "last_updated": "2026-05-19T19:04:24+03:00",
   "md5_train_file": "0373cba783a545f95af48b206959ab9a",
   "md5_test_file": "429b1a8ec3868dc73dc94eaffe058d68",
   "md5_sample_sub_file": "6cea7a8efd61aaea9b4cf370c94f46c8",
   "compliance": {
-    "last_checked": "2026-05-19T07:26:42.016766+00:00",
+    "last_checked": "2026-05-19T09:16:29.455367+00:00",
     "total_discussions": 10,
     "flagged_count": 3,
     "flagged_titles": [
@@ -129,7 +129,7 @@
     "vap_mean"
   ],
   "preprocessing_verdict": "tree_ensemble_no_scaling_needed",
-  "shap_completed_at": "2026-05-18T22:28:54.057836+00:00",
+  "shap_completed_at": "2026-05-19T12:08:27.060264+00:00",
   "shap_feature_count": 52,
   "shap_top_feature": "def_mean",
   "shap_top_features": [
@@ -146,8 +146,8 @@
   ],
   "pruning_delta_f1": 0.0019136424545121988,
   "pruning_pass": false,
-  "governance_locked_at": "2026-05-18T22:53:48.756036+00:00",
-  "scientist_last_run": "{\"status\": \"OK\", \"validated\": 17, \"failed\": 6}",
+  "governance_locked_at": "2026-05-19T08:50:53.477780+00:00",
+  "scientist_last_run": "{\"status\": \"OK\", \"validated\": 15, \"failed\": 0}",
   "last_ensemble_path": "/home/adrian/projects/zindian_orchestrator/competitions/ey-frogs/submissions/sub_ensemble_v1_20260519_072319.csv",
   "last_ensemble_oof_f1": 0.8393074859790295,
   "last_ensemble_oof_auc": 0.8468452799544572,

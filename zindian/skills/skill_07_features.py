@@ -83,8 +83,8 @@ def fetch_terraclimate(paths) -> Path:
     import rasterio
     from rasterio.transform import from_bounds
 
-    tiff_path = paths.competition_dir / "data/processed/TerraClimate_14band.tiff"
-    cache_dir = paths.competition_dir / "data/processed/tc_cache"
+    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
+    cache_dir = paths.data_processed_dir / "tc_cache"
 
     if tiff_path.exists():
         print(f"  ✅ Tiff already exists ({tiff_path.stat().st_size/1024**2:.1f}MB) — skipping fetch")
@@ -185,8 +185,8 @@ def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame
     import rasterio
     from rasterio.transform import rowcol
 
-    out_train = paths.competition_dir / "data/processed/features_train.csv"
-    out_test  = paths.competition_dir / "data/processed/features_test.csv"
+    out_train = paths.data_processed_dir / "features_train.csv"
+    out_test  = paths.data_processed_dir / "features_test.csv"
 
     if out_train.exists() and out_test.exists():
         print("  ✅ Feature CSVs already exist — skipping extraction")
@@ -750,8 +750,8 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     # variant-36 uses the full merged feature set
     if variant_name == "variant-36":
-        full_train = competition_dir / "data/processed/features_full_train.csv"
-        full_test  = competition_dir / "data/processed/features_full_test.csv"
+        full_train = paths.data_processed_dir / "features_full_train.csv"
+        full_test  = paths.data_processed_dir / "features_full_test.csv"
         if not full_train.exists():
             raise FileNotFoundError("features_full_train.csv not found — run merge_features.py first")
         train_feat = pd.read_csv(full_train)
@@ -804,7 +804,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     # Persist averaged OOF and test probabilities for ensembling/stacking
     try:
-        proc_dir = competition_dir / "data/processed"
+        proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
 
         oof_df = pd.DataFrame({

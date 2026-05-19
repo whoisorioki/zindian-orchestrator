@@ -9,12 +9,17 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import time
 
 import google.genai as genai
+import os
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
+from google.genai import types
 
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
@@ -28,9 +33,26 @@ except Exception:
         "tmax", "tmin", "vap", "vpd",
     ]
 
-CLIENT = genai.Client()
+load_dotenv(override=False)
+_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+if _api_key:
+    CLIENT = genai.Client(api_key=_api_key)
+    print("[Scientist] GEMINI_API_KEY found — client initialized.")
+else:
+    CLIENT = genai.Client()
+    print("[Scientist] No API key — client initialized with ADC.")
 MODEL_NAME = "gemini-2.5-flash"
 TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "label", "y"]
+
+
+class FeatureHypothesis(BaseModel):
+    hypothesis_id: str = Field(description="Unique identifier like hyp_001")
+    source_paper_id: str = Field(description="Literature reference index or domain note")
+    rationale: str = Field(description="One sentence ecological justification")
+    feature_columns: list[str] = Field(description="Exact column strings from available columns")
+    transformation: str = Field(description="raw, interaction_product, ratio, threshold_binary, or polynomial_2")
+    expected_signal: str = Field(description="positive, negative, or nonlinear")
+    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
 
 
 def get_available_columns() -> list[str]:
@@ -81,6 +103,25 @@ def _normalize_json_block(text: str) -> str:
     if raw.startswith("```"):
         raw = raw.replace("```json", "").replace("```", "").strip()
     return raw
+
+
+def _coerce_hypotheses(parsed: Any) -> list[dict[str, Any]]:
+    if parsed is None:
+        return []
+    if isinstance(parsed, list):
+        items = parsed
+    else:
+        items = [parsed]
+
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, FeatureHypothesis):
+            normalized.append(item.model_dump())
+        elif hasattr(item, "model_dump"):
+            normalized.append(item.model_dump())
+        elif isinstance(item, dict):
+            normalized.append(item)
+    return normalized
 
 
 def _hypothesis_signature(hypothesis: dict[str, Any]) -> str:
@@ -232,7 +273,14 @@ def run_scientist(
     domain_hypotheses = load_json(Path(hypotheses_path))
     prior_art = load_json(Path(priorart_path))
 
-    available_columns = get_available_columns()
+    # Load feature frame early so we can present accurate available columns
+    feature_frame_path = paths.data_processed_dir / "features_train.csv"
+    if not feature_frame_path.exists():
+        raise FileNotFoundError(f"Missing feature matrix: {feature_frame_path}")
+    feature_frame = pd.read_csv(feature_frame_path)
+
+    # Available columns for prompts and validation should come from the actual matrix
+    available_columns = [c for c in feature_frame.columns if c not in TARGET_COL_CANDIDATES and c != "ID"]
 
     user_prompt = f"""
 System Guardrails and Constraints:
@@ -250,29 +298,99 @@ ML prior art:
 Generate feature engineering hypotheses as a raw JSON array now.
 """.strip()
 
-    print(f"[Scientist] Submitting text blocks to local/cloud {MODEL_NAME} engine...")
-    response = CLIENT.models.generate_content(
-        model=MODEL_NAME,
-        contents=user_prompt,
-        config={"response_mime_type": "application/json"},
-    )
+    print(f"[Scientist] Submitting text blocks to local/cloud {MODEL_NAME} engine (3 attempts with backoff)...")
+    response = None
+    hypotheses = None
+    last_error = None
+    
+    for attempt in range(3):
+        try:
+            print(f"[Scientist] Attempt {attempt + 1}/3...")
+            response = CLIENT.models.generate_content(
+                model=MODEL_NAME,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=list[FeatureHypothesis],
+                    temperature=0.2,
+                ),
+            )
+            hypotheses = _coerce_hypotheses(getattr(response, "parsed", None))
+            if not hypotheses:
+                raw = (response.text or "").strip()
+                if not raw:
+                    raise ValueError("No structured output returned by Gemini response")
+                hypotheses = json.loads(_normalize_json_block(raw))
+            print(f"[Scientist] ✅ Cloud synthesis successful on attempt {attempt + 1}")
+            break
+        except Exception as e:
+            last_error = e
+            if attempt < 2:
+                wait_time = 2 ** attempt
+                print(f"[Scientist] Attempt {attempt + 1} failed: {str(e)[:100]}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                print(f"[Scientist] All 3 attempts failed. Last error: {str(e)[:100]}")
+    
+    if hypotheses is None:
+        # Fallback: use pre-authored domain hypotheses if model call fails
+        print(f"[Scientist] Warning: model call failed. Falling back to local hypotheses file.")
+        fallback_path = paths.reports_dir / "domain_hypotheses.json"
+        if not fallback_path.exists():
+            raise RuntimeError(
+                "Scientist model unavailable and no fallback domain_hypotheses.json found"
+            )
+        raw = fallback_path.read_text(encoding="utf-8")
+        loaded = json.loads(_normalize_json_block(raw))
 
-    raw = (response.text or "").strip()
-    if not raw:
-        raise ValueError("No text content returned by Gemini response")
+        # If fallback contains domain-level records (variables_needed), map them
+        # to concrete hypothesis entries compatible with downstream validators.
+        hypotheses = []
+        avail_set = set(available_columns)
 
-    hypotheses = json.loads(_normalize_json_block(raw))
+        def map_var_to_col(var: str) -> str | None:
+            # prefer last3mo_mean, then mean, then std/min/max, then cv/range
+            candidates = [
+                f"{var}_last3mo_mean",
+                f"{var}_mean",
+                f"{var}_std",
+                f"{var}_min",
+                f"{var}_max",
+                f"{var}_cv",
+                f"{var}_range",
+            ]
+            for c in candidates:
+                if c in avail_set:
+                    return c
+            return None
+
+        idx = 1
+        for entry in loaded if isinstance(loaded, list) else []:
+            vars_needed = entry.get("variables_needed") or entry.get("variables") or []
+            mapped = [map_var_to_col(v) for v in vars_needed]
+            mapped = [m for m in mapped if m is not None]
+            if not mapped:
+                continue
+            hypotheses.append({
+                "hypothesis_id": f"fallback_{idx:03d}",
+                "source_paper_id": entry.get("paper_title", "domain_knowledge"),
+                "rationale": entry.get("rationale", "fallback generated"),
+                "feature_columns": mapped,
+                "transformation": "raw",
+                "expected_signal": "positive",
+                "confidence": 0.8,
+            })
+            idx += 1
     if not isinstance(hypotheses, list):
         raise ValueError("Scientist model did not return a JSON array")
 
-    reports_dir = competition_dir / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    feature_frame_path = competition_dir / "data/processed/features_train.csv"
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    feature_frame_path = paths.data_processed_dir / "features_train.csv"
     if not feature_frame_path.exists():
         raise FileNotFoundError(f"Missing feature matrix: {feature_frame_path}")
     feature_frame = pd.read_csv(feature_frame_path)
 
-    failed_path = Path(failed_hypotheses_path) if failed_hypotheses_path else (reports_dir / "failed_hypotheses.json")
+    failed_path = Path(failed_hypotheses_path) if failed_hypotheses_path else (paths.reports_dir / "failed_hypotheses.json")
     failed_ledger = load_failed_ledger(failed_path)
 
     validated, failed = validate_hypotheses(hypotheses, feature_frame, failed_ledger)

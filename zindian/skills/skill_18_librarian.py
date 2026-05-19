@@ -1,6 +1,6 @@
 """
 Skill 18 — The Librarian
-Copied from legacy `skill_02_4_librarian.py` to canonical skill number.
+Canonical librarian implementation for literature mining and prior-art tracking.
 """
 from __future__ import annotations
 
