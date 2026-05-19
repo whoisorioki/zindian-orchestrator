@@ -15,7 +15,11 @@ import sys
 from datetime import datetime
 
 
-ROOT = Path.cwd()
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = _repo_root()
 TEMPLATES = ROOT / "templates"
 
 

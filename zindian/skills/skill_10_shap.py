@@ -38,13 +38,16 @@ def _load_train_frame(paths: CompetitionPaths) -> pd.DataFrame:
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")
 
+    full = paths.competition_dir / "data" / "processed" / "features_full_train.csv"
     processed = paths.competition_dir / "data" / "processed" / "features_train.csv"
     fallback = paths.data_raw_dir / "Training_Data.csv"
+    if full.exists():
+        return pd.read_csv(full)
     if processed.exists():
         return pd.read_csv(processed)
     if fallback.exists():
         return pd.read_csv(fallback)
-    raise FileNotFoundError(f"Could not find {processed} or {fallback}")
+    raise FileNotFoundError(f"Could not find {full}, {processed} or {fallback}")
 
 
 def _detect_target(config: ChallengeConfig, frame: pd.DataFrame) -> str:
@@ -146,6 +149,10 @@ def _compute_shap_audit(
         .reset_index(drop=True)
     )
 
+    shap_total = float(ranking["mean_abs_shap"].sum()) if not ranking.empty else 0.0
+    top15_share = float(ranking.head(15)["mean_abs_shap"].sum() / shap_total) if shap_total > 0 else 0.0
+    tail_share = float(1.0 - top15_share) if shap_total > 0 else 0.0
+
     thresholds = np.arange(0.3, 0.7, 0.01)
     best_threshold = float(max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int))))
     oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
@@ -158,6 +165,8 @@ def _compute_shap_audit(
         "threshold": best_threshold,
         "fold_aucs": fold_aucs,
         "ranking": ranking,
+        "top15_share": top15_share,
+        "tail_share": tail_share,
     }
 
 
@@ -258,6 +267,8 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
             "oof_auc": full_audit["oof_auc"],
             "oof_f1": full_audit["oof_f1"],
             "threshold": full_audit["threshold"],
+            "top15_share": full_audit["top15_share"],
+            "tail_share": full_audit["tail_share"],
             "top_features": ranking.head(20).to_dict(orient="records"),
         },
         "correlation_pruning": {
@@ -278,6 +289,8 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
         f"**Target**: {target}",
         f"**Full OOF AUC**: {full_audit['oof_auc']:.6f}",
         f"**Full OOF F1**: {full_audit['oof_f1']:.6f} (threshold={full_audit['threshold']:.2f})",
+        f"**Top-15 SHAP share**: {full_audit['top15_share']:.3%}",
+        f"**Tail SHAP share**: {full_audit['tail_share']:.3%}",
         f"**High-correlation pairs**: {len(pruning['correlated_pairs'])}",
         f"**Pruned feature count**: {len(pruning['pruned_features'])}",
         f"**Pruned OOF F1**: {pruned_cv.oof_f1:.6f}",
@@ -305,6 +318,7 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
 
     print(f"Top SHAP feature : {ranking.iloc[0]['feature']}" if not ranking.empty else "Top SHAP feature : none")
     print(f"Pruning delta F1 : {pruning_delta:+.6f}")
+    print(f"Top-15 SHAP share : {full_audit['top15_share']:.3%}")
     print(f"Pruning gate     : {'PASS' if pruning_pass else 'PRUNE'}")
 
     return report

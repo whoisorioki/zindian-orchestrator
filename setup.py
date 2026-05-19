@@ -1,4 +1,5 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
+
 
 setup(
     name="zindian",
@@ -8,4 +9,9 @@ setup(
         "google-genai",
         "requests",
     ],
+    entry_points={
+        "console_scripts": [
+            "tabula=tabula.__main__:main",
+        ]
+    },
 )

@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-ROOT = Path.cwd()
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = _repo_root()
 TEMPLATES = ROOT / "templates"
 
 

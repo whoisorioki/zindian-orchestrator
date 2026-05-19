@@ -669,6 +669,25 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     # Updated: only `swe_min` is confirmed constant-zero and should be dropped.
     dead = ["swe_min"]  # only confirmed constant-zero feature
     tc_clean = [f for f in tc_all if f not in dead]  # 51 features (52 TC bands - swe_min)
+    tc_pruned_37 = [
+        f for f in tc_clean if f not in {
+            "aet_mean",
+            "aet_std",
+            "def_max",
+            "ppt_max",
+            "q_min",
+            "q_std",
+            "soil_max",
+            "soil_mean",
+            "swe_max",
+            "swe_std",
+            "tmax_max",
+            "vap_std",
+            "vpd_max",
+            "vpd_mean",
+            "vpd_std",
+        }
+    ]
 
     VARIANTS = {
         "variant-00": tc_all,  # anchor baseline — same model core as Skill 08
@@ -734,7 +753,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variant-34": tc_all,
         # Round 5 — 2017-2019 window + extended features
         "variant-35": tc_all,                  # 52 TC bands, 2017-2019 window
-        "variant-36": None,                    # 91 features (full merge),
+        "variant-36": None,                    # 94 features (full merge),
         "variant-37": tc_51,   # 51 features, swe_min dropped, standard LGB
         "variant-38": tc_51,   # 51 features, 3-way blend LGB+RF+XGB
         "variant-39": tc_51,   # 51 features, dart booster LGB
@@ -746,12 +765,13 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         "variant-43": tc_all_51 + ["warm_wet_index", "aridity_index", "aet_pet_ratio"],  # ecology trio (warm/wet + water efficiency)
         "variant-44": tc_all_51 + ["tmax_mean_sq", "frost_risk"],               # temperature stress (hyp-001, hyp-007)
         "variant-45": tc_all_51 + ["aridity_index", "warm_wet_index"],         # moisture interaction (hyp-011, hyp-012)
+        "variant-46": tc_pruned_37 + ["aridity_index", "aet_pet_ratio"],       # lean clean matrix: 37 pruned + 2 structural ratios
     }
 
     if variant_name not in VARIANTS:
         raise ValueError(f"Unknown variant '{variant_name}'. Choose from: {list(VARIANTS)}")
 
-    # variant-36 uses the full merged feature set
+    # variant-36 uses the full merged feature set (94 feature columns)
     if variant_name == "variant-36":
         full_train = paths.data_processed_dir / "features_full_train.csv"
         full_test  = paths.data_processed_dir / "features_full_test.csv"
