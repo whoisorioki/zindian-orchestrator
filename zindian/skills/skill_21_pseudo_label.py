@@ -387,6 +387,61 @@ def run(dry_run: bool = False) -> dict:
 
     print(f"\nBest iteration: {best_iteration} — OOF F1 {best_oof_f1:.5f}")
     print(f"Positive count: {best_pos_count}")
+    
+    # ── AUDIT LOGGING: Save blend probability distributions ────────────
+    # Re-train on best iteration to capture OOF + test probabilities for audit
+    print("\n[Audit] Capturing blend probability distributions...")
+    if best_iteration == 0:
+        # Baseline iteration — train on labelled data only
+        X_audit = X_labelled
+        y_audit = np.asarray(y_labelled, dtype=np.int32)
+        w_audit = None
+    else:
+        # Re-construct the training set from best iteration
+        pseudo_mask_pos = test_probs_prev >= CONF_POS if test_probs_prev is not None else np.array([])
+        pseudo_mask_neg = test_probs_prev <= CONF_NEG if test_probs_prev is not None else np.array([])
+        pseudo_mask = pseudo_mask_pos | pseudo_mask_neg
+        
+        if len(pseudo_mask) > 0 and pseudo_mask.sum() > 0:
+            pseudo_X = X_test[pseudo_mask]
+            pseudo_y = (test_probs_prev[pseudo_mask] >= 0.5).astype(np.int32) if test_probs_prev is not None else np.array([])
+            pseudo_w = np.full(len(pseudo_X), SAMPLE_WEIGHT, dtype=np.float64)
+            real_w = np.ones(len(X_labelled), dtype=np.float64)
+            
+            X_audit = np.vstack([X_labelled, pseudo_X])
+            y_audit = np.concatenate([np.asarray(y_labelled, dtype=np.int32), pseudo_y]).astype(np.int32)
+            w_audit = np.concatenate([real_w, pseudo_w]).astype(np.float64)
+        else:
+            X_audit = X_labelled
+            y_audit = np.asarray(y_labelled, dtype=np.int32)
+            w_audit = None
+    
+    # Train single seed to capture OOF probabilities
+    audit_oof_probs, audit_test_probs, _ = train_ensemble_and_predict(
+        X_audit, y_audit, X_test, feature_cols, sample_weight=w_audit, seed=42
+    )
+    
+    # Save as CSV for distribution analysis
+    oof_df = pd.DataFrame({
+        "oof_prob": audit_oof_probs,
+        "oof_binary": (audit_oof_probs >= THRESHOLD).astype(int),
+    })
+    test_df = pd.DataFrame({
+        "test_id": test_ids,
+        "test_prob": audit_test_probs,
+        "test_binary": (audit_test_probs >= THRESHOLD).astype(int),
+    })
+    
+    oof_audit_path = paths.reports_dir / f"oof_probs_blend_iter{best_iteration}.csv"
+    test_audit_path = paths.reports_dir / f"test_probs_blend_iter{best_iteration}.csv"
+    
+    oof_df.to_csv(oof_audit_path, index=False)
+    test_df.to_csv(test_audit_path, index=False)
+    
+    print(f"[Audit] OOF probabilities saved: {oof_audit_path.name}")
+    print(f"[Audit] Test probabilities saved: {test_audit_path.name}")
+    print(f"[Audit] OOF distribution: mean={audit_oof_probs.mean():.4f}, std={audit_oof_probs.std():.4f}")
+    print(f"[Audit] Test distribution: mean={audit_test_probs.mean():.4f}, std={audit_test_probs.std():.4f}")
 
     # ── DIAGNOSTIC GATE CHECK ─────────────────────────────────────────────
     # Load best submission to get predictions for gate check
