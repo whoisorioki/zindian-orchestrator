@@ -14,8 +14,11 @@
     "submissions_used_total": 0,
     "remaining_submissions": null,
     "dag_phase": "uninitialized",
-    "human_gate_13_approved": false,
-    "human_gate_14_approved": false,
+    "human_gate_1_approved": false,
+    "human_gate_2_by_branch": {},
+    "human_gate_3_approved": false,
+    "human_gate_4_approved": false,
+    "human_gate_5_selection": [],
     "selected_submissions": [],
     "last_updated": null
 }

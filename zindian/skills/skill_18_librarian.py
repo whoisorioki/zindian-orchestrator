@@ -6,21 +6,20 @@ from __future__ import annotations
 
 import json, time, requests
 from pathlib import Path
+from zindian.paths import resolve_competition_paths
+from zindian.config import ChallengeConfig
+
+from zindian.constants import TC_VARIABLES as _CANONICAL_TC
+
+# Allow challenge config to override the canonical values if provided
+TC_VARIABLES: list[str] = _CANONICAL_TC
 try:
-    from zindian.skills.skill_07_features import TC_VARIABLES
+    cfg = ChallengeConfig.load()
+    tc_conf = cfg.get("tc_variables")
+    if isinstance(tc_conf, list) and tc_conf:
+        TC_VARIABLES = tc_conf
 except Exception:
-    import ast, re
-    p = Path(__file__).resolve().parent / "skill_07_features.py"
-    txt = p.read_text(encoding="utf-8")
-    m = re.search(r"TC_VARIABLES\s*=\s*(\[[^\]]*\])", txt, re.S)
-    if m:
-        TC_VARIABLES = ast.literal_eval(m.group(1))
-    else:
-        TC_VARIABLES = [
-            "aet", "def", "pdsi", "pet", "ppt",
-            "q", "soil", "srad", "swe",
-            "tmax", "tmin", "vap", "vpd",
-        ]
+    pass
 
 SEMANTIC_SCHOLAR_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
 FIELDS = "paperId,title,abstract,year,authors,tldr"
@@ -164,7 +163,7 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
 
     return hypotheses
 
-def run_librarian(config_path: str, cache_path: str) -> dict:
+def run_librarian(config_path: str | None = None, cache_path: str | None = None) -> dict:
     queries = build_queries(TC_VARIABLES)
     seen_ids = set()
     entries = []
@@ -197,6 +196,10 @@ def run_librarian(config_path: str, cache_path: str) -> dict:
         "paper_count": len(entries),
         "entries":     entries,
     }
+    if cache_path is None:
+        paths = resolve_competition_paths(require_competition=True)
+        cache_path = str(paths.reports_dir / "literature_cache.json")
+
     Path(cache_path).write_text(json.dumps(cache, indent=2))
     print(f"[Librarian] Cached {len(entries)} unique abstracts → {cache_path}")
 
@@ -209,7 +212,8 @@ def run_librarian(config_path: str, cache_path: str) -> dict:
 
 
 if __name__ == "__main__":
+    paths = resolve_competition_paths(require_competition=True)
     run_librarian(
-        config_path = "competitions/ey-frogs/challenge_config.json",
-        cache_path  = "competitions/ey-frogs/reports/literature_cache.json",
+        config_path = str(paths.config_path),
+        cache_path  = str(paths.reports_dir / "literature_cache.json"),
     )

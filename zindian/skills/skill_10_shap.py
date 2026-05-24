@@ -31,6 +31,7 @@ from sklearn.preprocessing import StandardScaler
 from zindian.config import ChallengeConfig
 from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.state import SkillStateStore
+from zindian.state import resolve_active_cv_strategy_id
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
@@ -305,6 +306,15 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
     _write_outputs(paths, report, summary_lines)
 
     state_store = SkillStateStore(paths.state_path)
+    try:
+        cfg = ChallengeConfig.load()._data
+    except Exception:
+        cfg = {}
+    try:
+        cv_id = resolve_active_cv_strategy_id(state, cfg)
+    except Exception:
+        cv_id = "unknown"
+
     state_store.update(
         shap_completed_at=datetime.now(timezone.utc).isoformat(),
         shap_feature_count=len(feature_cols),
@@ -314,6 +324,7 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
         pruning_delta_f1=pruning_delta,
         pruning_pass=pruning_pass,
         last_updated=datetime.now(timezone.utc).isoformat(),
+        shap_oof_cv_strategy_id=cv_id,
     )
 
     print(f"Top SHAP feature : {ranking.iloc[0]['feature']}" if not ranking.empty else "Top SHAP feature : none")

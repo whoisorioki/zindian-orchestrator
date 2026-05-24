@@ -14,5 +14,13 @@
     "allowed_external_data": false,
     "automl_permitted": false,
     "data_modality": null,
-    "domain": null
+    "domain": null,
+    "phase_skill_map": {
+        "1": ["skill_01", "skill_02", "skill_15"],
+        "2": ["skill_03", "skill_08"],
+        "3": ["skill_04", "skill_05", "skill_09", "skill_10"],
+        "4": ["skill_11", "skill_16"],
+        "5": ["skill_13", "skill_14", "skill_17"]
+    },
+    "variants": []
 }

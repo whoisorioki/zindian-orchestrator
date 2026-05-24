@@ -66,3 +66,54 @@ class SkillStateStore:
             state["selected_submissions"].append(submission_id)
         self.write(state)
 
+
+def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:
+    """
+    Resolve the active CV strategy identifier according to the Source of Truth rules.
+
+    Priority:
+      1. If SKILL_STATE contains an active `cv_strategy_override.active` == True,
+         return an 'override:<override_strategy>' identifier.
+      2. Else, read `challenge_config.json` cv_strategy block and return
+         'config:<type>' identifier.
+      3. Fallback to 'unknown'.
+
+    This function returns a short string suitable for tagging OOF artifacts
+    and SKILL_STATE entries.
+    """
+    try:
+        override = state_obj.get("cv_strategy_override", {}) or {}
+        if override.get("active", False):
+            return f"override:{override.get('override_strategy') or 'unknown'}"
+    except Exception:
+        pass
+
+    try:
+        cv = (config_obj or {}).get("cv_strategy") if isinstance(config_obj, dict) else None
+        if isinstance(cv, dict):
+            return f"config:{cv.get('type', 'unknown')}"
+    except Exception:
+        pass
+
+    return "unknown"
+
+
+def is_anchor_challenge_active(state_obj: dict) -> bool:
+    """Safe accessor for anchor_challenge.active in SKILL_STATE.
+
+    Returns True only if `anchor_challenge` is present and has `active`==True.
+    This protects automation from KeyError when the block is absent.
+    """
+    try:
+        return bool((state_obj or {}).get("anchor_challenge", {}) .get("active", False))
+    except Exception:
+        return False
+
+
+def get_anchor_challenge_config(state_obj: dict) -> dict:
+    """Return the `anchor_challenge` config block or empty dict if absent."""
+    try:
+        return dict((state_obj or {}).get("anchor_challenge") or {})
+    except Exception:
+        return {}
+

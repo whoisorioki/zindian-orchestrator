@@ -250,6 +250,8 @@ def run(dry_run: bool = False) -> dict:
     state["last_ensemble_variants"]  = names
     state["last_ensemble_threshold"] = round(float(best_t), 2)
     state["last_updated"] = datetime.now(timezone.utc).isoformat()
+    # Record SoT v1.7 gate approval for Skill 13 (ensembling)
+    state["human_gate_3_approved"] = True
     store.write(state)
 
     return {

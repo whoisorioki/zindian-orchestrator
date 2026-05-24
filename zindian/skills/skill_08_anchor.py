@@ -26,7 +26,7 @@ import lightgbm as lgb
 
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
-from zindian.state import SkillStateStore
+from zindian.state import SkillStateStore, resolve_active_cv_strategy_id
 from zindian.ledger import Ledger
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
@@ -427,6 +427,7 @@ def run(
         anchor_oof_f1=oof_f1,    # Explicit F1 field for clarity
         anchor_oof_auc=oof_auc,  # Keep AUC for reference
         anchor_git_branch="anchor-baseline",
+        anchor_cv_strategy_id=resolve_active_cv_strategy_id(state_store.read(), config._data),
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
     )

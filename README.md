@@ -132,6 +132,23 @@ pip install git+https://github.com/KameniAlexNea/zindi.git
 python scripts/test_zindi_auth_v2.py
 ```
 
+### Manage Python dependencies (pinned)
+
+This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to
+produce a pinned `requirements.txt`. Developers should generate and commit
+`requirements.txt` after updating `requirements.in`.
+
+```bash
+# Install the compiler
+pip install --upgrade pip-tools
+
+# Generate pinned requirements.txt
+pip-compile requirements.in --output-file requirements.txt
+
+# Install the pinned environment
+pip install -r requirements.txt
+```
+
 ### 3. Initialize DuckDB Ledger (2 min)
 
 ```bash

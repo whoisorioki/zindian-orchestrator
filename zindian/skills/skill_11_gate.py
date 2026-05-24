@@ -19,6 +19,8 @@ def run() -> dict:
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
+    # Safe read for anchor_challenge (v1.7 schema): avoid KeyError on absent block
+    anchor_challenge_active = bool(state.get("anchor_challenge", {}) .get("active", False))
 
     best_variant = state.get("best_variant_this_round")
     metric_name  = config.get("metric", "f1_score")
@@ -30,6 +32,7 @@ def run() -> dict:
     print(f"[skill_11] gating against {f'anchor_oof_{metric_key}'} = {anchor_score:.8f}")
 
     print(f"Variants passed this round : {variants_passed}")
+    print(f"Anchor challenge active   : {anchor_challenge_active}")
     print(f"Best variant               : {best_variant}")
     print(f"Best OOF {metric_name.upper():<8}      : {best_score:.5f}")
     print(f"Current anchor {metric_name.upper():<8}: {anchor_score:.5f}")

@@ -44,6 +44,7 @@ import lightgbm as lgb
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
+from zindian.state import resolve_active_cv_strategy_id
 
 # ── LOCKED PARAMETERS ─────────────────────────────────────────────────────────
 CONF_POS = 0.85        # High-confidence positive threshold
@@ -530,6 +531,12 @@ def run(dry_run: bool = False) -> dict:
         pseudo_label_submission_file=best_sub_path.name,
         pseudo_label_positive_count=best_pos_count,
         last_updated=datetime.now(timezone.utc).isoformat(),
+        pseudo_label_oof_cv_strategy_id=resolve_active_cv_strategy_id(store.read(), config._data),
+        # Snapshot anchor_challenge and indicate whether retraining is required.
+        anchor_challenge_snapshot=store.read().get("anchor_challenge", {}),
+        anchor_challenge_active=bool(store.read().get("anchor_challenge", {}) .get("active", False)),
+        # Retraining is required when pseudo-labels were actually added (best_iteration > 0)
+        retraining_required=(best_iteration > 0),
     )
 
     print(f"\n✅ SKILL_STATE.json updated with pseudo-label results")

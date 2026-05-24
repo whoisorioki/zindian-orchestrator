@@ -1,0 +1,20 @@
+# Top-level abstract dependencies for pip-compile (do NOT pin here)
+# Run: pip install -U pip-tools && pip-compile requirements.in --output-file requirements.txt
+
+# Core runtime
+python-dotenv
+requests
+
+# Data science stack
+numpy
+pandas
+scikit-learn
+lightgbm
+shap
+duckdb
+
+# Optional / research
+google-genai
+
+# Dev tools
+pip-tools

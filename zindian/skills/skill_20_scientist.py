@@ -23,15 +23,7 @@ from google.genai import types
 
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
-
-try:
-    from zindian.skills.skill_07_features import TC_VARIABLES
-except Exception:
-    TC_VARIABLES = [
-        "aet", "def", "pdsi", "pet", "ppt",
-        "q", "soil", "srad", "swe",
-        "tmax", "tmin", "vap", "vpd",
-    ]
+from zindian.constants import TC_VARIABLES
 
 load_dotenv(override=False)
 _api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")

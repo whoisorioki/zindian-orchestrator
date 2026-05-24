@@ -47,7 +47,7 @@ class SemanticScholarClient:
             self._throttle()
             try:
                 resp = self.session.get(url, params=params, timeout=15)
-                if resp.status_code == 429:
+                if getattr(resp, "status_code", None) == 429:
                     wait_time = (self.backoff_factor ** attempt) + (attempt * 5)
                     print(f"  [SS] Rate limited (429). Backing off {wait_time:.0f}s...")
                     time.sleep(wait_time)

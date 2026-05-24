@@ -6,37 +6,71 @@ from typing import Any, Dict, Optional
 
 from .paths import resolve_competition_paths
 
-# Import all skills
-try:
-    from .skills import skill_01_integrity, skill_15_reporter
-except ImportError:
-    skill_01_integrity = None
-    skill_15_reporter = None
-
-try:
-    from .skills import skill_02_intake
-except ImportError:
-    skill_02_intake = None
-
-try:
-    from .skills import skill_18_librarian, skill_19_code_miner, skill_20_scientist
-except ImportError:
-    skill_18_librarian = None
-    skill_19_code_miner = None
-    skill_20_scientist = None
+import pkgutil
+import importlib
+import types
+import zindian.skills as skills_pkg
 
 
+# Phase definitions (names correspond to module prefixes `skill_XX`)
 PHASE_1_SKILLS = ["skill_01", "skill_02", "skill_15"]
 PHASE_2_SKILLS = ["skill_03", "skill_08"]
 PHASE_3_SKILLS = ["skill_04", "skill_05", "skill_09", "skill_10"]
 PHASE_4_SKILLS = ["skill_11", "skill_16"]
 PHASE_5_SKILLS = ["skill_13", "skill_14", "skill_17"]
 
-SKILL_REGISTRY = {
-    "skill_01": ("Integrity Audit", skill_01_integrity),
-    "skill_02": ("Challenge Intake", skill_02_intake),
-    "skill_15": ("Reporter", skill_15_reporter),
-}
+
+def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
+    """Dynamically discover and import modules under `zindian.skills`.
+
+    Returns a mapping from skill key (e.g., 'skill_01') to a tuple of
+    (description, module) where module may be None if import failed.
+    """
+    registry: Dict[str, tuple[str, Optional[types.ModuleType]]] = {}
+    for finder, name, ispkg in pkgutil.iter_modules(skills_pkg.__path__):
+        if not name.startswith("skill_"):
+            continue
+        full_name = f"zindian.skills.{name}"
+        try:
+            mod = importlib.import_module(full_name)
+            desc = (mod.__doc__ or "").strip().splitlines()[0] if getattr(mod, "__doc__", None) else name
+            registry[name] = (desc, mod)
+        except Exception:
+            registry[name] = (name, None)
+    return registry
+
+
+# Build registry at import time
+SKILL_REGISTRY = _discover_skills()
+
+
+def _validate_phase_map() -> None:
+    """Check that any skills declared in challenge_config.phase_skill_map exist in SKILL_REGISTRY.
+
+    Prints warnings for any missing skills so maintainers can fix config or add shims.
+    """
+    try:
+        from .config import ChallengeConfig
+        cfg = ChallengeConfig.load()
+        phase_map = cfg.get("phase_skill_map", {}) or {}
+    except Exception:
+        phase_map = {}
+
+    missing = []
+    for phase, skills in phase_map.items():
+        for s in skills:
+            if s not in SKILL_REGISTRY:
+                missing.append((phase, s))
+
+    if missing:
+        print("[orchestrator] WARNING: phase_skill_map contains skills not discovered in SKILL_REGISTRY:")
+        for phase, s in missing:
+            print(f"  - phase {phase}: {s}")
+        print("[orchestrator] Please ensure skill modules exist or update challenge_config.json.")
+
+
+# Validate at import time so misconfigurations are visible early
+_validate_phase_map()
 
 
 def run_deep_research(
@@ -49,7 +83,12 @@ def run_deep_research(
     reports_dir = paths.reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    if skill_18_librarian is None or skill_19_code_miner is None or skill_20_scientist is None:
+    # Lookup deep research skills from registry
+    lib_desc, lib_mod = SKILL_REGISTRY.get("skill_18", (None, None))
+    miner_desc, miner_mod = SKILL_REGISTRY.get("skill_19", (None, None))
+    sci_desc, sci_mod = SKILL_REGISTRY.get("skill_20", (None, None))
+
+    if lib_mod is None or miner_mod is None or sci_mod is None:
         return {
             "status": "ERROR",
             "message": "Deep research skills are not loaded",
@@ -61,17 +100,17 @@ def run_deep_research(
     validated_hypotheses_path = reports_dir / "validated_hypotheses.json"
     failed_hypotheses_path = reports_dir / "failed_hypotheses.json"
 
-    librarian_result = skill_18_librarian.run_librarian(
+    librarian_result = lib_mod.run_librarian(
         config_path=str(paths.config_path),
         cache_path=str(literature_cache_path),
     )
 
-    code_miner_result = skill_19_code_miner.run_code_miner(
+    code_miner_result = miner_mod.run_code_miner(
         domain=domain,
         dry_run=dry_run,
     )
 
-    scientist_result = skill_20_scientist.run_scientist(
+    scientist_result = sci_mod.run_scientist(
         hypotheses_path=str(domain_hypotheses_path),
         priorart_path=str(priorart_path),
         hypothesis_path=str(validated_hypotheses_path),
@@ -147,21 +186,32 @@ def run_phase(
     Returns:
         Dict with results for each skill
     """
-    if phase == 1:
-        skills = PHASE_1_SKILLS
-    elif phase == 2:
-        skills = PHASE_2_SKILLS
-    elif phase == 3:
-        skills = PHASE_3_SKILLS
-    elif phase == 4:
-        skills = PHASE_4_SKILLS
-    elif phase == 5:
-        skills = PHASE_5_SKILLS
+    # Prefer configured phase map if present; otherwise fall back to hardcoded lists
+    try:
+        from .config import ChallengeConfig
+        cfg = ChallengeConfig.load()
+        phase_map = cfg.get("phase_skill_map", None)
+    except Exception:
+        phase_map = None
+
+    if phase_map and str(phase) in phase_map:
+        skills = phase_map[str(phase)]
     else:
-        return {
-            "status": "ERROR",
-            "message": f"Invalid phase: {phase}. Must be 1-5.",
-        }
+        if phase == 1:
+            skills = PHASE_1_SKILLS
+        elif phase == 2:
+            skills = PHASE_2_SKILLS
+        elif phase == 3:
+            skills = PHASE_3_SKILLS
+        elif phase == 4:
+            skills = PHASE_4_SKILLS
+        elif phase == 5:
+            skills = PHASE_5_SKILLS
+        else:
+            return {
+                "status": "ERROR",
+                "message": f"Invalid phase: {phase}. Must be 1-5.",
+            }
     
     results = {}
     for skill_name in skills:

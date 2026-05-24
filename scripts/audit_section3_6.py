@@ -70,8 +70,11 @@ required_fields = {
     'variants_tested': int,
     'variants_passed': int,
     'dag_phase': str,
-    'human_gate_13_approved': bool,
-    'human_gate_14_approved': bool,
+    'human_gate_1_approved': bool,
+    'human_gate_2_by_branch': dict,
+    'human_gate_3_approved': bool,
+    'human_gate_4_approved': bool,
+    'human_gate_5_selection': list,
     'selected_submissions': list,
     'submissions_used_today': int,
     'submissions_used_total': int,
@@ -91,6 +94,21 @@ for field, expected_type in required_fields.items():
         print(f'  ❌ {field}: type={type(val).__name__}, expected={expected_type.__name__}, value={val}')
     else:
         print(f'  ✅ {field}: {val}')
+
+print('\n=== Human gate key presence ===')
+for key in ['human_gate_1_approved', 'human_gate_3_approved', 'human_gate_4_approved', 'human_gate_5_selection']:
+    val = state.get(key, None)
+    if val is None:
+        print(f'  ⚠️  {key}: NULL or missing')
+    else:
+        print(f'  ✅ {key}: present (type={type(val).__name__})')
+
+# Check branch map
+bmap = state.get('human_gate_2_by_branch')
+if not isinstance(bmap, dict):
+    print('  ❌ human_gate_2_by_branch: missing or not a dict')
+else:
+    print(f'  ✅ human_gate_2_by_branch entries: {len(bmap)}')
 
 print('\n=== 4.2 selected_submissions audit ===')
 selected = state.get('selected_submissions', [])

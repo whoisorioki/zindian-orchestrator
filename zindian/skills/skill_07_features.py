@@ -33,6 +33,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, f1_score
 
 from zindian.config import ChallengeConfig
+from zindian.state import resolve_active_cv_strategy_id
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
@@ -46,18 +47,17 @@ MIN_DELTA   = 0.005          # gate: variant must beat anchor by ≥ 0.5% F1
 MAX_RETRIES = 5
 RETRY_WAIT  = 15
 
-TC_VARIABLES = [
-    "aet", "def", "pdsi", "pet", "ppt",
-    "q", "soil", "srad", "swe",
-    "tmax", "tmin", "vap", "vpd",
-]
-TC_STATS     = ["mean", "std", "min", "max"]
-TC_BAND_NAMES = [f"{v}_{s}" for v in TC_VARIABLES for s in TC_STATS]  # 52 bands
-
-# Bbox — SE Australia (confirmed 100% coverage of training data)
-MIN_LON, MAX_LON = 139.94, 151.48
-MIN_LAT, MAX_LAT = -39.74, -30.92
-TIME_SLICE       = ("2011-01-01", "2021-12-01")   # 10-year modern normal
+# Shared TerraClimate constants live in zindian.constants to avoid cross-skill imports
+from zindian.constants import (
+    TC_VARIABLES,
+    TC_STATS,
+    TC_BAND_NAMES,
+    MIN_LON,
+    MAX_LON,
+    MIN_LAT,
+    MAX_LAT,
+    TIME_SLICE,
+)
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -878,6 +878,14 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         update["best_variant_oof_f1"]     = result["oof_f1"]
         update["best_variant_threshold"]  = result["threshold"]
         update["best_variant_features"]   = len(feature_cols)
+
+    # Tag OOF outputs with active CV strategy id for reproducibility
+    try:
+        cv_id = resolve_active_cv_strategy_id(state, config._data)
+        update["last_oof_cv_strategy_id"] = cv_id
+        update[f"oof_{variant_name}_cv_strategy_id"] = cv_id
+    except Exception:
+        pass
 
     store.update(**update)
     print(f"  ✅ SKILL_STATE.json updated")
