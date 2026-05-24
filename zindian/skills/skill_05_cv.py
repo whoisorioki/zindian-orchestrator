@@ -269,6 +269,14 @@ def run(strategy: str = "compare") -> dict:
         ) if strategy == "compare" else None,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
+    # Per Source of Truth: persist the per-fold scores for the chosen strategy
+    chosen_fold_scores = None
+    try:
+        chosen_fold_scores = results.get(recommendation, {}).get("fold_scores")
+    except Exception:
+        chosen_fold_scores = None
+    if chosen_fold_scores is not None:
+        state_update["eda"] = {"fold_scores": chosen_fold_scores}
     current_phase = state.get("dag_phase")
     if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete", "phase_2_legality_checked"):
         state_update["dag_phase"] = "phase_3_features"
