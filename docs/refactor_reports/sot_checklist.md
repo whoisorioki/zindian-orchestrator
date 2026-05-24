@@ -89,7 +89,7 @@ Example Batch entry (fill after batch completes)
   - Evidence: tests passing (`pytest -q` -> 32 passed), commit SHAs: 3647e8a, 0a84143, 93ae6c9
 
 
-Update rules (who, how)
+## Update rules (who, how)
 - Who: the author of the change updates this file as part of the PR; CI reviewers verify DoD items before merging.
 - How: Edit `docs/refactor_reports/sot_checklist.md` and commit a small update describing the batch completion. Update the todo list via the agent's managed todo tool.
 - Commit message format: `docs(sot): Batch <N> update — <short desc>`
