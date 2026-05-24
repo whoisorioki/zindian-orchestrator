@@ -112,3 +112,16 @@ class ChallengeConfig:
     @property
     def slug(self) -> str:
         return self.get("slug", "unknown")
+
+
+def get_seed(default: int = 42) -> int:
+    """Convenience helper to read the reproducibility seed from the active challenge config.
+
+    Returns the integer seed found at `challenge_config.json` -> `reproducibility.seed`,
+    or `default` if absent.
+    """
+    try:
+        cfg = ChallengeConfig.load()
+        return int(cfg.get("reproducibility", {}).get("seed", default))
+    except Exception:
+        return default

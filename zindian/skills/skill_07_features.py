@@ -41,8 +41,9 @@ from zindian.skills._lightgbm_shared import train_lightgbm_cv
 warnings.filterwarnings("ignore")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-SEED        = 42
 N_SPLITS    = 5
+from zindian.config import get_seed
+SEED = get_seed()
 MIN_DELTA   = 0.005          # gate: variant must beat anchor by ≥ 0.5% F1
 MAX_RETRIES = 5
 RETRY_WAIT  = 15

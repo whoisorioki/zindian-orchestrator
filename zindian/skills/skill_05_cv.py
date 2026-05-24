@@ -32,7 +32,6 @@ from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
-SEED     = 42
 N_SPLITS = 5
 
 
@@ -47,7 +46,8 @@ def build_stratified_splits(
     Preserves class balance per fold.
     Ignores geographic structure — nearby points can appear in both train/val.
     """
-    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
+    from zindian.config import get_seed
+    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=get_seed())
     return list(skf.split(X, y))
 
 
@@ -71,7 +71,8 @@ def build_spatial_splits(
     Returns:
         (splits, geo_groups) — splits for CV, geo_groups for inspection
     """
-    kmeans     = KMeans(n_clusters=n_clusters, random_state=SEED, n_init=10)
+    from zindian.config import get_seed
+    kmeans     = KMeans(n_clusters=n_clusters, random_state=get_seed(), n_init=10)
     geo_groups = kmeans.fit_predict(coords)
 
     print(f"\n  Geographic block distribution:")

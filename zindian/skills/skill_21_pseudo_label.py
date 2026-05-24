@@ -45,13 +45,14 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 from zindian.state import resolve_active_cv_strategy_id
+from zindian.config import get_seed
 
 # ── LOCKED PARAMETERS ─────────────────────────────────────────────────────────
 CONF_POS = 0.85        # High-confidence positive threshold
 CONF_NEG = 0.15        # High-confidence negative threshold
 SAMPLE_WEIGHT = 0.5    # Pseudo-label sample weight vs real labels
 THRESHOLD = 0.426  # Lowered to pass gate (1345 positives)       # Fixed prediction threshold (do not grid search)
-SEEDS = [42, 123, 7]
+SEEDS = [get_seed(), 123, 7]
 N_SPLITS = 5
 MAX_ITERATIONS = 4
 
