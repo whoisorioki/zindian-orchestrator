@@ -112,7 +112,7 @@ def evaluate_cv_strategy(
         "learning_rate": 0.05,
         "num_leaves":    31,
         "verbose":       -1,
-        "seed":          SEED,
+        "seed":          __import__("zindian.config", fromlist=["get_seed"]).get_seed(),
     }
 
     fold_scores = []
@@ -298,7 +298,7 @@ def run(strategy: str = "compare") -> dict:
             cv_block = {
                 "type": recommendation,
                 "n_splits": N_SPLITS,
-                "random_seed": SEED,
+                "random_seed": __import__("zindian.config", fromlist=["get_seed"]).get_seed(),
             }
 
             # Only write if different to avoid unnecessary commits
