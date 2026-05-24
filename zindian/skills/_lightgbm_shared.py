@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable, Iterator, Tuple, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
+import numpy as np
+
+
+@runtime_checkable
+class Splitter(Protocol):
+    def split(self, X: np.ndarray, y: np.ndarray, groups: np.ndarray | None = None) -> Iterator[Tuple[np.ndarray, np.ndarray]]: ...
 from zindian.cv import get_cv_splits
 from sklearn.preprocessing import StandardScaler
 
@@ -30,7 +36,7 @@ def train_lightgbm_cv(
     *,
     n_splits: int = 5,
     random_seed: int = 42,
-    cv: object | None = None,
+    cv: Splitter | Iterable[Tuple[np.ndarray, np.ndarray]] | None = None,
     params: dict[str, Any] | None = None,
     num_boost_round: int = 500,
     early_stopping_rounds: int = 50,
@@ -71,10 +77,12 @@ def train_lightgbm_cv(
     if cv is None:
         splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
         split_iter = splitter.split(X, y)
-    elif hasattr(cv, "split"):
-        split_iter = cv.split(X, y)
     else:
-        split_iter = iter(cv)
+        # If `cv` implements `split`, call it; otherwise assume it's an iterable of index pairs.
+        if hasattr(cv, "split"):
+            split_iter = cv.split(X, y)
+        else:
+            split_iter = iter(cv)
 
     for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
         train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
