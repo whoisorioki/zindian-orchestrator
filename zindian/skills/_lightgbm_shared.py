@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Tuple, Protocol, runtime_checkable
+from typing import Any, Iterable, Iterator, Tuple, Protocol, runtime_checkable, cast
 
 import numpy as np
 import pandas as pd
@@ -80,9 +80,10 @@ def train_lightgbm_cv(
     else:
         # If `cv` implements `split`, call it; otherwise assume it's an iterable of index pairs.
         if hasattr(cv, "split"):
-            split_iter = cv.split(X, y)
+            split_iter = cast(Splitter, cv).split(X, y)
         else:
-            split_iter = iter(cv)
+            iterable = cast(Iterable[Tuple[np.ndarray, np.ndarray]], cv)
+            split_iter = iter(iterable)
 
     for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
         train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
