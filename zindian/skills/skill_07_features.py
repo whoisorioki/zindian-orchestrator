@@ -29,7 +29,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from sklearn.model_selection import StratifiedKFold
 from zindian.cv import make_cv_splitter
 from sklearn.metrics import roc_auc_score, f1_score
 

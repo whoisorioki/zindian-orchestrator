@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold
+# KFold usage is delegated to the central CV factory / shared trainer
 from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 

@@ -37,7 +37,6 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold
 from zindian.cv import make_cv_splitter
 
 import lightgbm as lgb
