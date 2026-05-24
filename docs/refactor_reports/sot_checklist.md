@@ -36,7 +36,9 @@ Checklist (grouped by SoT domain)
 - Check: SHAP computed per-fold on validation only; no full-train SHAP.
   - DoD: SHAP loops run per-fold and compute mean absolute per-fold then mean across folds as in SoT examples.
   - Verify: unit test for `skill_10_shap.py` runs on a small synthetic dataset and checks output schema.
-  - Status: pending
+  - Status: in-progress
+  - Notes: added per-fold SHAP unit test (`tests/test_shap_per_fold.py`) and suppressed known LightGBM/SHAP warning in test to maintain CI stability.
+  - Evidence: tests added in commit d0d7f96; SHAP warning handling adjusted in latest commit (to be recorded).
 
 5) Seed Discipline
 - Check: All model training reads seed from `challenge_config.json` `reproducibility.seed` or a shared config; no local ad-hoc seeds.
