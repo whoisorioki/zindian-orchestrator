@@ -27,7 +27,10 @@ Checklist (grouped by SoT domain)
 - Check: Single CV strategy is authored by `skill_05_cv` in Phase 1 and skills consume via `zindian.cv` helpers.
   - DoD: `challenge_config.json` contains `cv_strategy` block after Phase 1; skills use `zindian.cv.make_cv_splitter()` or accept an injected `cv` parameter. OOF outputs include `cv_strategy_id` and `seed`.
   - Verify: inspect `skill_05_cv.py` for `write` to config, grep for instantiations of `StratifiedKFold|GroupKFold` (should be only in utilities or `skill_05`).
-  - Status: in-progress
+    - Status: completed
+    - Completed_by: agent
+    - Date: 2026-05-24
+    - Evidence: commit 0a84143 (CI policy test); skill_05 updated to persist cv_strategy in this branch.
 
 4) SHAP & Feature Contracts
 - Check: SHAP computed per-fold on validation only; no full-train SHAP.

@@ -283,6 +283,33 @@ def run(strategy: str = "compare") -> dict:
     state_store.update(**state_update)
     print(f"\n✅ SKILL_STATE.json updated: cv_strategy={recommendation}")
 
+    # ── Per SoT: persist chosen cv_strategy into challenge_config.json during Phase 1 only
+    try:
+        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1")
+        if current_phase in allowed_write_phases:
+            cfg_path = paths.config_path
+            if cfg_path.exists():
+                cfg_data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            else:
+                cfg_data = {}
+
+            # Compose a minimal cv_strategy block
+            cv_block = {
+                "type": recommendation,
+                "n_splits": N_SPLITS,
+                "random_seed": SEED,
+            }
+
+            # Only write if different to avoid unnecessary commits
+            if cfg_data.get("cv_strategy") != cv_block:
+                cfg_data["cv_strategy"] = cv_block
+                cfg_path.write_text(json.dumps(cfg_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                print(f"✅ challenge_config.json updated with cv_strategy: {cv_block}")
+        else:
+            print(f"ℹ️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation.")
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"⚠️  Failed to write cv_strategy to challenge_config.json: {exc}")
+
     return {
         "status":         "OK",
         "strategy_chosen": recommendation,
