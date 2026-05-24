@@ -8,6 +8,7 @@ import pandas as pd
 import lightgbm as lgb
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
+from zindian.cv import get_cv_splits
 from sklearn.preprocessing import StandardScaler
 
 
@@ -29,6 +30,7 @@ def train_lightgbm_cv(
     *,
     n_splits: int = 5,
     random_seed: int = 42,
+    cv: object | None = None,
     params: dict[str, Any] | None = None,
     num_boost_round: int = 500,
     early_stopping_rounds: int = 50,
@@ -62,8 +64,19 @@ def train_lightgbm_cv(
     test_probs = np.zeros(len(test), dtype=np.float64)
     fold_aucs: list[float] = []
 
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
-    for fold_idx, (tr_idx, val_idx) in enumerate(skf.split(X, y)):
+    # Obtain CV splits. If `cv` is provided it may be either:
+    # - an sklearn splitter object (with .split)
+    # - an iterable of (train_idx, val_idx) tuples
+    # Otherwise fall back to a standard StratifiedKFold.
+    if cv is None:
+        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+        split_iter = splitter.split(X, y)
+    elif hasattr(cv, "split"):
+        split_iter = cv.split(X, y)
+    else:
+        split_iter = iter(cv)
+
+    for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
         train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
         val_set = lgb.Dataset(X[val_idx], label=y[val_idx], reference=train_set)
 
