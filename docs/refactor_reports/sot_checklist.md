@@ -82,7 +82,9 @@ Example Batch entry (fill after batch completes)
   - `skill_12_metric.py` — ddof=1 variance and SKILL_STATE writes. (DoD: unit test and manual inspection)
   - Tests refactor to avoid network calls. (DoD: pytest run)
 - Deferred:
-  - `skill_05_cv` must write `cv_strategy` into `challenge_config.json` during Phase 1.
+  - `skill_05_cv` must write `cv_strategy` into `challenge_config.json` during Phase 1. (Completed in this batch)
+  - Additional commits: 0a84143 (CI/test policy updates), 93ae6c9 (skill_05 cv_strategy write + docs)
+  - Evidence: tests passing (`pytest -q` -> 32 passed), commit SHAs: 3647e8a, 0a84143, 93ae6c9
 
 
 Update rules (who, how)

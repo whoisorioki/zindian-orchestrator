@@ -1,0 +1,21 @@
+python-dotenv
+requests
+
+# Data science stack
+numpy
+pandas
+scikit-learn
+lightgbm
+shap
+duckdb
+
+# Optional / research
+google-genai
+
+# Dev tools
+pip-tools
+
+# NOTE: This file is a direct copy of requirements.in and is UNPINNED.
+# To produce a pinned requirements.txt, run in a dev environment with internet:
+#   pip install -U pip-tools
+#   pip-compile requirements.in --output-file requirements.txt
