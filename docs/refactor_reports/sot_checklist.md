@@ -118,7 +118,9 @@ Template for a checklist item
   - Unit tests: `tests/test_oof_schema.py`, `tests/test_cv_factory.py`, `tests/test_shap_per_fold.py` added and passing locally.
   - `requirements.txt` fallback added to repo.
 - Remaining / In-progress:
-  - SHAP output schema test to validate `skill_10_shap` artifact format (in progress — test added).
-  - Finalize Batch 2 PR and run CI in upstream environment.
+  - SHAP output schema test to validate `skill_10_shap` artifact format (added).
+  - Seed discipline: added deterministic tests for `train_lightgbm_cv` to ensure reproducibility via `random_seed`.
+  - OOF schema enforcement: added `tests/test_lightgbm_runresult_schema.py` to validate `LightGBMRunResult` shape and types.
+  - Finalize Batch 2 -> Batch 3 transition and run CI in upstream environment.
 
 Evidence: local test run `pytest -q` -> 36 passed, commits present on branch `refactor/sot`.
