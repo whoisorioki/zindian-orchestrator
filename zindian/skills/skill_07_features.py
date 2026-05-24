@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from sklearn.model_selection import StratifiedKFold
+from zindian.cv import make_cv_splitter
 from sklearn.metrics import roc_auc_score, f1_score
 
 from zindian.config import ChallengeConfig
@@ -365,12 +366,12 @@ def train_variant(
             "test_probs": lgb_result.test_probs,
         }
 
-    skf        = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
+    splitter   = make_cv_splitter(n_splits=N_SPLITS, random_seed=seed)
     oof_probs  = np.zeros(len(y))
     test_probs = np.zeros(len(test))
 
     print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
-    for fold, (tr_idx, val_idx) in enumerate(skf.split(X, y)):
+    for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
         model = None
 
         # ── variant-13: tuned LightGBM ────────────────────

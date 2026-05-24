@@ -26,6 +26,7 @@ import pandas as pd
 import shap
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
+from zindian.cv import make_cv_splitter
 from sklearn.preprocessing import StandardScaler
 
 from zindian.config import ChallengeConfig
@@ -118,12 +119,12 @@ def _compute_shap_audit(
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed)
     oof_probs = np.zeros(len(frame), dtype=np.float64)
     fold_aucs: list[float] = []
     fold_importances: list[np.ndarray] = []
 
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y), start=1):
+    for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y), start=1):
         model = _train_shap_fold_model(
             X[train_idx],
             y[train_idx],

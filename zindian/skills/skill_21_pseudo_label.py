@@ -38,6 +38,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
+from zindian.cv import make_cv_splitter
 
 import lightgbm as lgb
 
@@ -154,9 +155,9 @@ def train_ensemble_and_predict(
     
     oof: np.ndarray = np.zeros(len(X_train), dtype=np.float64)
     preds: np.ndarray = np.zeros(len(X_test), dtype=np.float64)
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
+    splitter = make_cv_splitter(n_splits=N_SPLITS, random_seed=seed)
 
-    for fold, (tr_idx, va_idx) in enumerate(cv.split(X_train, y_train_array)):
+    for fold, (tr_idx, va_idx) in enumerate(splitter.split(X_train, y_train_array)):
         X_tr, X_va = X_train[tr_idx], X_train[va_idx]
         y_tr, y_va = y_train_array[tr_idx], y_train_array[va_idx]
         w_tr = sample_weight[tr_idx] if sample_weight is not None else None
