@@ -1,10 +1,10 @@
 # SoT Compliance Checklist & DoD
 
-Purpose
+## Purpose
 - Centralized checklist mapping the Source of Truth (SoT) rules to concrete DoD (Definition of Done) checks.
 - Use this file to mark items completed after each refactor batch and to record evidence (commits, files changed, tests).
 
-How to use
+## How to use
 - Before changing code, read the relevant SoT entry in `docs/source_of_truth.md` and this checklist item.
 - Implement changes, run tests, and update this checklist with status, date, and commit SHA.
 - Use the workspace todo list to track implementation tasks; reference the checklist item id in commits/PRs.
@@ -78,17 +78,6 @@ Per-batch DoD process
 
 Example Batch entry (fill after batch completes)
 
-## Batch 1 — Completed (2026-05-24)
-- Commit: 3647e8a
-- Completed:
-  - `skill_12_metric.py` — ddof=1 variance and SKILL_STATE writes. (DoD: unit test and manual inspection)
-  - Tests refactor to avoid network calls. (DoD: pytest run)
-- Deferred:
-  - `skill_05_cv` must write `cv_strategy` into `challenge_config.json` during Phase 1. (Completed in this batch)
-  - Additional commits: 0a84143 (CI/test policy updates), 93ae6c9 (skill_05 cv_strategy write + docs)
-  - Evidence: tests passing (`pytest -q` -> 32 passed), commit SHAs: 3647e8a, 0a84143, 93ae6c9
-
-
 ## Update rules (who, how)
 - Who: the author of the change updates this file as part of the PR; CI reviewers verify DoD items before merging.
 - How: Edit `docs/refactor_reports/sot_checklist.md` and commit a small update describing the batch completion. Update the todo list via the agent's managed todo tool.
@@ -105,8 +94,31 @@ Template for a checklist item
   - Evidence: <commit/PR/file links>
 ```
 
-Storage and audit
+## Storage and audit
 - Keep this checklist in `docs/refactor_reports/sot_checklist.md` and update after each batch. Reference it in PR descriptions and the `SKILL_STATE.json` where appropriate (e.g., `last_refactor_batch` metadata).
 
-Questions & Next actions
-- I can: (A) update this file's Batch 1 section with exact commit SHAs and evidence from the earlier edits, (B) implement `skill_05` config write change next, or (C) add CI checks to assert no direct instantiation of CV splitters. Which should I do now?
+## Batch 1 — Completed (2026-05-24)
+- Commit: 3647e8a
+- Completed:
+  - `skill_12_metric.py` — ddof=1 variance and SKILL_STATE writes. (DoD: unit test and manual inspection)
+  - Tests refactor to avoid network calls. (DoD: pytest run)
+- Deferred:
+  - `skill_05_cv` must write `cv_strategy` into `challenge_config.json` during Phase 1. (Completed in this batch)
+  - Additional commits: 0a84143 (CI/test policy updates), 93ae6c9 (skill_05 cv_strategy write + docs)
+  - Evidence: tests passing (`pytest -q` -> 32 passed), commit SHAs: 3647e8a, 0a84143, 93ae6c9
+
+## Batch 2 — In Progress (2026-05-24)
+- Scope: Centralize CV factory, refactor LightGBM shared training, enforce CV instantiation policy, add tests (OOF schema, CV factory, SHAP per-fold), and add requirements fallback.
+- Commits: 3647e8a, 0a84143, 93ae6c9, d0d7f96, 0a84143, d760bef, d0d7f96, 3033e1e
+- Completed:
+  - `zindian/cv.py` added — central CV factory (DoD: reviewed code + tests that exercise the factory).
+  - `_lightgbm_shared.py` updated to accept `cv` param and use splitter (DoD: code change committed, training helpers use factory).
+  - Multiple skills refactored to use `zindian.cv` (skill_10_shap, skill_07_features, skill_21_pseudo_label, skill_08_anchor).
+  - CI policy test `tests/test_cv_policy.py` added and tightened to ignore virtualenv and site-packages (DoD: test passes in local run).
+  - Unit tests: `tests/test_oof_schema.py`, `tests/test_cv_factory.py`, `tests/test_shap_per_fold.py` added and passing locally.
+  - `requirements.txt` fallback added to repo.
+- Remaining / In-progress:
+  - SHAP output schema test to validate `skill_10_shap` artifact format (in progress — test added).
+  - Finalize Batch 2 PR and run CI in upstream environment.
+
+Evidence: local test run `pytest -q` -> 36 passed, commits present on branch `refactor/sot`.
