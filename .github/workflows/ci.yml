@@ -42,8 +42,15 @@ jobs:
 
       - name: Verify requirements lockfile is current
         run: |
-          bash scripts/compile_requirements.sh
-          git diff --exit-code -- requirements.txt
+          python -m pip install --upgrade pip
+          pip install pip-tools
+          pip-compile --output-file /tmp/expected_requirements.txt requirements.in
+          if ! cmp -s requirements.txt /tmp/expected_requirements.txt; then
+            echo "requirements.txt is out of date. Run: pip-compile requirements.in --output-file=requirements.txt" >&2
+            diff -u requirements.txt /tmp/expected_requirements.txt || true
+            exit 1
+          fi
+          echo "requirements.txt is up-to-date"
 
   test:
     runs-on: ubuntu-latest
