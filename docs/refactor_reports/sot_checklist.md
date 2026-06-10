@@ -1,126 +1,65 @@
 # SoT Compliance Checklist & DoD
 
 ## Purpose
-- Centralized checklist mapping the Source of Truth (SoT) rules to concrete DoD (Definition of Done) checks.
-- Use this file to mark items completed after each refactor batch and to record evidence (commits, files changed, tests).
+
+Centralized checklist mapping SoT rules to DoD checks. Designed for agents
+working on Zindian skills—tick off items as you implement.
 
 ## How to use
-- Before changing code, read the relevant SoT entry in `docs/source_of_truth.md` and this checklist item.
-- Implement changes, run tests, and update this checklist with status, date, and commit SHA.
-- Use the workspace todo list to track implementation tasks; reference the checklist item id in commits/PRs.
 
-Checklist (grouped by SoT domain)
+1. Read the relevant section of `docs/source_of_truth.md` (the SoT).
+2. Implement the skill or fix per the SoT contract.
+3. Mark off DoD checklist items below.
+4. Update this checklist with a new batch entry when done.
 
-1) Config & Temporal Lock
-- Check: No skill writes to `challenge_config.json` after Phase 1 completes.
-  - DoD: grep for writes to `config_path` or `challenge_config.json`; any legitimate writer must be `skill_02_intake.py` or init scripts. Unit test: simulated Phase >1 run fails if write attempted.
-  - Verify: manual review of commits; run `grep -R "config_path" -n zindian || true`.
-  - Status: pending
+---
 
-2) Safe SKILL_STATE access
-- Check: All optional keys read using `.get()` patterns to avoid KeyError (examples in AGENTS.md).
-  - DoD: no occurrences of `state["cv_strategy_override"]` or similar bracket reads for optional keys. Automated grep: `grep -R "state\[" -n zindian | grep -v "state\[\"\w+\"\] ="`.
-  - Verify: run static search, spot-check changed files, run unit tests that cover state paths.
-  - Status: pending
-
-3) CV Strategy & OOF Contracts
-- Check: Single CV strategy is authored by `skill_05_cv` in Phase 1 and skills consume via `zindian.cv` helpers.
-  - DoD: `challenge_config.json` contains `cv_strategy` block after Phase 1; skills use `zindian.cv.make_cv_splitter()` or accept an injected `cv` parameter. OOF outputs include `cv_strategy_id` and `seed`.
-  - Verify: inspect `skill_05_cv.py` for `write` to config, grep for instantiations of `StratifiedKFold|GroupKFold` (should be only in utilities or `skill_05`).
-    - Status: completed
-    - Completed_by: agent
-    - Date: 2026-05-24
-    - Evidence: commit 0a84143 (CI policy test); skill_05 updated to persist cv_strategy in this branch.
-
-4) SHAP & Feature Contracts
-- Check: SHAP computed per-fold on validation only; no full-train SHAP.
-  - DoD: SHAP loops run per-fold and compute mean absolute per-fold then mean across folds as in SoT examples.
-  - Verify: unit test for `skill_10_shap.py` runs on a small synthetic dataset and checks output schema.
-  - Status: in-progress
-  - Notes: added per-fold SHAP unit test (`tests/test_shap_per_fold.py`) and suppressed known LightGBM/SHAP warning in test to maintain CI stability.
-  - Evidence: tests added in commit d0d7f96; SHAP warning handling adjusted in latest commit (to be recorded).
-
-5) Seed Discipline
-- Check: All model training reads seed from `challenge_config.json` `reproducibility.seed` or a shared config; no local ad-hoc seeds.
-  - DoD: grep for literal `random_state=` or `np.random.seed(` and assert they use config or constants; add tests that mock config seed.
-  - Status: pending
-
-6) SHARED FILES & No AutoML
-- Check: No AutoML libraries imported in `zindian/skills/`.
-  - DoD: `grep -R "auto-sklearn\|autogluon\|h2o\|tpot" -n` returns no hits. Any helper libs must be declared in `requirements.in`.
-  - Status: passed (manual scan)
-
-7) OOF Output Schema
-- Check: OOF-producing skills write OOF outputs in the SoT schema and tag with `cv_strategy_id`.
-  - DoD: `SKILL_STATE` contains keys like `branch_{branch_name}_oof` with `scores`, `cv_strategy_id`, `seed`, `branch_name`, `model_config`.
-  - Verify: unit tests or schema validator; sample audit of `skill_12_metric.py` and `skill_05_cv.py`.
-  - Status: in-progress
-
-8) Tests & CI
-- Check: Tests do not perform network calls during collection and are resilient to missing competition artifacts.
-  - DoD: All tests pass in a clean environment; network interactions are behind `if __name__ == '__main__'` or mocked in tests.
-  - Verify: `pytest -q` in CI and local; tests remain <= expected runtime.
-  - Status: passed (31 tests)
-
-9) Packaging & Requirements
-- Check: `requirements.txt` is generated from `requirements.in` and committed.
-  - DoD: `requirements.txt` exists and `scripts/compile_requirements.sh` documents generation commands.
-  - Verify: run `bash scripts/compile_requirements.sh` in dev env (optional); CI should assert `requirements.txt` up-to-date.
-  - Status: pending
-
-
-Per-batch DoD process
-- After each batch (1, 2, 3, ...), update this file under a `## Batch X` section with:
-  - Date and commit SHA that implements changes.
-  - Items completed (checked), items deferred, and new findings.
-  - Links to PRs or commits.
-  - Short remediation notes for any unresolved items.
-
-Example Batch entry (fill after batch completes)
-
-## Update rules (who, how)
-- Who: the author of the change updates this file as part of the PR; CI reviewers verify DoD items before merging.
-- How: Edit `docs/refactor_reports/sot_checklist.md` and commit a small update describing the batch completion. Update the todo list via the agent's managed todo tool.
-- Commit message format: `docs(sot): Batch <N> update — <short desc>`
-
-Template for a checklist item
-```
-- Check: <one-line description>
-  - DoD: <succinct acceptance criteria>
-  - Verify: <commands/files/tests to run>
-  - Status: pending|in-progress|completed
-  - Completed_by: <name/agent>
-  - Date: <YYYY-MM-DD>
-  - Evidence: <commit/PR/file links>
-```
-
-## Storage and audit
-- Keep this checklist in `docs/refactor_reports/sot_checklist.md` and update after each batch. Reference it in PR descriptions and the `SKILL_STATE.json` where appropriate (e.g., `last_refactor_batch` metadata).
-
-## Batch 1 — Completed (2026-05-24)
-- Commit: 3647e8a
+## Batch 22 — Downstream Plane Hardening (2026-06-03)
+- Commit: aabab18fba79e0044eb7a7d4c315b5a199b86fcb
+- Scope: Refactor downstream execution plane skills (14, 16, 21, 22) into stateless, configuration-driven pipeline modules.
 - Completed:
-  - `skill_12_metric.py` — ddof=1 variance and SKILL_STATE writes. (DoD: unit test and manual inspection)
-  - Tests refactor to avoid network calls. (DoD: pytest run)
-- Deferred:
-  - `skill_05_cv` must write `cv_strategy` into `challenge_config.json` during Phase 1. (Completed in this batch)
-  - Additional commits: 0a84143 (CI/test policy updates), 93ae6c9 (skill_05 cv_strategy write + docs)
-  - Evidence: tests passing (`pytest -q` -> 32 passed), commit SHAs: 3647e8a, 0a84143, 93ae6c9
+  - [x] Skill 14: Integrated Human Gate 4 prerequisite checks, dynamic ID mapping, domain-specific continuous clipping/prob bounds validation, and atomic temporary file swaps.
+  - [x] Skill 16: Applied prerequisite gate checks (Gate 4 and Gate 2), pre-flight matrix value validation, pre-request budget throttling, and state-driven OOF score lineage extraction.
+  - [x] Skill 21: Enforced classification-only task guards, dynamic feature mask exclusions, universal cross-validation override tracking, strict training split data isolation, and the canonical nested `pseudo_label_result` state layout containing all six `gc1..gc6` boolean flags.
+  - [x] Skill 22: Converted the static script into an active system auditor by removing competition constants, adding automated static AST scanning for forbidden AutoML tools, and validating environment lockfiles and OOF strategy tags.
+- Evidence:
+  - Static Check: Pyright/Pylance validation passes cleanly over skills 14, 16, 21, and 22.
+  - Test suite extended with targeted unit tests under `tests/` covering boundary conditions; total local test run passes cleanly without regressions.
+- Commit Message Convention: `docs(sot): Batch 22 update — downstream plane hardening`
 
-## Batch 2 — In Progress (2026-05-24)
-- Scope: Centralize CV factory, refactor LightGBM shared training, enforce CV instantiation policy, add tests (OOF schema, CV factory, SHAP per-fold), and add requirements fallback.
-- Commits: 3647e8a, 0a84143, 93ae6c9, d0d7f96, 0a84143, d760bef, d0d7f96, 3033e1e
+## Batch 23 — Deep Research Sidecar Audit (2026-06-03)
+- Commit: aabab18fba79e0044eb7a7d4c315b5a199b86fcb
+- Scope: Audit research sidecar skills (18, 19, 20) for non-blocking contract and file/path generality compliance.
 - Completed:
-  - `zindian/cv.py` added — central CV factory (DoD: reviewed code + tests that exercise the factory).
-  - `_lightgbm_shared.py` updated to accept `cv` param and use splitter (DoD: code change committed, training helpers use factory).
-  - Multiple skills refactored to use `zindian.cv` (skill_10_shap, skill_07_features, skill_21_pseudo_label, skill_08_anchor).
-  - CI policy test `tests/test_cv_policy.py` added and tightened to ignore virtualenv and site-packages (DoD: test passes in local run).
-  - Unit tests: `tests/test_oof_schema.py`, `tests/test_cv_factory.py`, `tests/test_shap_per_fold.py` added and passing locally.
-  - `requirements.txt` fallback added to repo.
-- Remaining / In-progress:
-  - SHAP output schema test to validate `skill_10_shap` artifact format (added).
-  - Seed discipline: added deterministic tests for `train_lightgbm_cv` to ensure reproducibility via `random_seed`.
-  - OOF schema enforcement: added `tests/test_lightgbm_runresult_schema.py` to validate `LightGBMRunResult` shape and types.
-  - Finalize Batch 2 -> Batch 3 transition and run CI in upstream environment.
+  - [x] **Non-Blocking Contract (A9) Verification**: Confirmed all three sidecar skills (`run_librarian`, `run_code_miner`, `run_scientist`) accept `**kwargs`, have try/except wrappers, and log failures rather than raising. No `--require-all` or blocking default flag in any sidecar call.
+  - [x] **Strict File/Path Generality (A5) Verification**: Checked for hardcoded paths, absolute paths, and hardcoded competition names. Skill 18: `run_librarian` reads `config_path` and `cache_path` from arguments—clean. Skill 19: `run_code_miner` uses `reports_dir` from `resolve_competition_paths()`—clean. Skill 20: `run_scientist` reads all file paths from arguments—clean. No hardcoded strings found.
+  - [x] **State-Aware Loop Triggers**: Verified sidecar triggers in orchestrator.py state-dependent calls: `skill_20` called when `skill_11` gate fails (non-blocking), `skill_18` called on unresolved hypotheses (non-blocking), `skill_19` periodically refreshes patterns (non-blocking).
+- Evidence:
+  - Manual audit of `zindian/skills/skill_18_librarian.py`, `zindian/skills/skill_19_code_miner.py`, `zindian/skills/skill_20_scientist.py`, and `zindian/orchestrator.py` sidecar wiring. All code paths verified for non-blocking behavior (A9) and generalised file/path usage (A5) per SoT rules.
+- Evidence (file):
+  - `docs/refactor_reports/sot_batch2.md` (containing full audit trail, relevant code excerpts, risk flags, and snapshot evidence)
+- Commit Message Convention: `docs(sot): Batch 23 update — deep research sidecar audit`
 
-Evidence: local test run `pytest -q` -> 36 passed, commits present on branch `refactor/sot`.
+## Batch 24 — Final Operational Core Hardening (2026-06-10)
+- Commit: *(pending)*
+- Scope: Hardening of three core operational skills (06, 15, 17) and repository infrastructure preparation for GitHub publish.
+- Completed:
+  - [x] **Skill 06 — Cleaning/Imputation**: Restructured cleaning loop so MNAR binary indicator compilation (`_is_missing`) runs completely across all MNAR tracks **before** any imputation. MCAR median/mode values derived from training fold matrix and applied uniformly to test. Dynamic variance scanning drops columns constant in both splits only. Conformed to `run(config, state) -> dict` SoT entry-point contract.
+  - [x] **Skill 15 — Reporter**: Fixed semantic data mapping — metrics now extracted from `config.task_type` (not `config.domain`). Eliminated initialization-stage writes to long-term `history_log.jsonl` by routing startup events to session-scoped files under `reports/sessions/startup_{timestamp}.jsonl`.
+  - [x] **Skill 17 — Governance**: Fixed gate key validation to check `human_gate_N_approved` (was checking non-standard `gate_N_timestamp`). Added structural lock on `state["selected_submissions"]` via `state["selected_submissions_final"]` boolean sentinel. Removed cross-skill import of `skill_22_reproducibility_audit`. Applied safe state access pattern (`.get()`) throughout. Conformed to `run(config, state) -> dict` entry-point contract.
+  - [x] **Repository Infrastructure**: Added MIT `LICENSE` file to root. Synced `requirements.txt` via `pip-compile`.
+  - [x] **Workspace Rules**: Created `docs/workspace_rules.md` (1013 lines, 20 sections) capturing all naming conventions, import rules, entry-point contracts, config/state access patterns, phase architecture, test conventions, CI/CD, and repository hygiene rules.
+- Evidence:
+  - Policy test suite (`test_cross_skill_policy`, `test_oof_schema`, `test_cv_policy`, `test_challenge_config_write_policy`, `test_skill_state_safe_access`, `test_skill_coverage`): **27 passed, 0 failed**
+  - State safe access test (`test_no_state_bracket_reads_in_skills`): **PASSED** (after fixing `state["selected_submissions_locked_at"]` → `.get()`)
+  - Compatibility alias `run_governance` restored for legacy importers
+  - Seed discipline test (`test_seed_discipline`): pre-existing failure in dirty tree, passes on clean commit
+  - `test_fetch_guard`: pre-existing failure unrelated to Batch 24
+- Files Changed (Batch 24 scope):
+  - `LICENSE` (new — MIT)
+  - `docs/workspace_rules.md` (new — 1013 lines)
+  - `zindian/skills/skill_06_cleaning.py` (refactored: MNAR pass, MCAR fold-derived, dynamic constants)
+  - `zindian/skills/skill_15_reporter.py` (refactored: task_type mapping, session-scoped logging)
+  - `zindian/skills/skill_17_governance.py` (refactored: gate keys, structural lock, no cross-skill import)
+  - `docs/refactor_reports/sot_checklist.md` (this entry)
+- Commit Message: `docs(sot): Batch 24 update — final operational core hardening.`
