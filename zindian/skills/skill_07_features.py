@@ -28,12 +28,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import importlib
 import lightgbm as lgb
 from zindian.cv import make_cv_splitter
 from sklearn.metrics import roc_auc_score, f1_score
 
 from zindian.config import ChallengeConfig
-from zindian.state import resolve_active_cv_strategy_id
+from zindian.state import resolve_active_cv_strategy_id, write_oof_record
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
@@ -41,10 +42,8 @@ from zindian.skills._lightgbm_shared import train_lightgbm_cv
 warnings.filterwarnings("ignore")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-N_SPLITS    = 5
 from zindian.config import get_seed
 SEED = get_seed()
-MIN_DELTA   = 0.005          # gate: variant must beat anchor by ≥ 0.5% F1
 MAX_RETRIES = 5
 RETRY_WAIT  = 15
 
@@ -53,12 +52,11 @@ from zindian.constants import (
     TC_VARIABLES,
     TC_STATS,
     TC_BAND_NAMES,
-    MIN_LON,
-    MAX_LON,
-    MIN_LAT,
-    MAX_LAT,
     TIME_SLICE,
 )
+
+# CI / test guard: set this env var to disable network fetches during tests
+NO_NETWORK = bool(os.environ.get("ZINDIAN_DISABLE_NETWORK", False))
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -67,118 +65,12 @@ def _write_state(state: dict, path: Path) -> None:
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
         json.dump(state, tmp, indent=2)
         tmp_path = tmp.name
-    os.replace(tmp_path, path)
+    os.replace(tmp_path, path)    
 
 
-# ── Phase A: TerraClimate Fetch ───────────────────────────────────────────────
+# ── Feature Extraction ───────────────────────────────────────────────
 
-def fetch_terraclimate(paths) -> Path:
-    """
-    Fetch all 13 TerraClimate variables × 4 stats = 52 bands.
-    Saves to data/processed/TerraClimate_14band.tiff.
-    Uses per-band checkpointing to survive Azure timeouts.
-    Returns path to tiff.
-    """
-    import pystac_client
-    import planetary_computer
-    import xarray as xr
-    import rasterio
-    from rasterio.transform import from_bounds
-
-    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
-    cache_dir = paths.data_processed_dir / "tc_cache"
-
-    if tiff_path.exists():
-        print(f"  ✅ Tiff already exists ({tiff_path.stat().st_size/1024**2:.1f}MB) — skipping fetch")
-        return tiff_path
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    tiff_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def connect():
-        catalog = pystac_client.Client.open(
-            "https://planetarycomputer.microsoft.com/api/stac/v1",
-            modifier=planetary_computer.sign_inplace
-        )
-        collection = catalog.get_collection("terraclimate")
-        asset      = collection.assets["zarr-abfs"]
-        ds = xr.open_dataset(asset.href, **asset.extra_fields["xarray:open_kwargs"])
-        ds = ds.drop("crs", dim=None)
-        ds = ds.sel(time=slice(*TIME_SLICE))
-        mask_lon = (ds.lon >= MIN_LON) & (ds.lon <= MAX_LON)
-        mask_lat = (ds.lat >= MIN_LAT) & (ds.lat <= MAX_LAT)
-        return ds.where(mask_lon & mask_lat, drop=True)
-
-    print("  Connecting to Planetary Computer...")
-    ds = connect()
-    print(f"  ✅ Connected — dims: {dict(ds.dims)}")
-
-    bands, band_names = [], []
-
-    for var in TC_VARIABLES:
-        if var not in ds:
-            print(f"  ⚠️  {var} not in dataset — skipping")
-            continue
-        for stat in TC_STATS:
-            key        = f"{var}_{stat}"
-            cache_file = cache_dir / f"{key}.npy"
-
-            if cache_file.exists():
-                print(f"  ✅ {key} — from cache")
-                bands.append(np.load(cache_file))
-                band_names.append(key)
-                continue
-
-            print(f"  ⏳ {key}...", end=" ", flush=True)
-            fn = {"mean": lambda a: a.mean(dim="time"),
-                  "std":  lambda a: a.std(dim="time"),
-                  "min":  lambda a: a.min(dim="time"),
-                  "max":  lambda a: a.max(dim="time")}[stat]
-            result = None
-
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    result = fn(ds[var]).compute().values
-                    break
-                except Exception:
-                    if attempt == MAX_RETRIES:
-                        raise
-                    print(f"\n  ⚠️  Attempt {attempt} failed — reconnecting in {RETRY_WAIT}s...")
-                    time.sleep(RETRY_WAIT)
-                    try:
-                        ds = connect()
-                    except Exception:
-                        pass
-
-            if result is None:
-                raise RuntimeError(f"Failed to compute {key}")
-            np.save(cache_file, result)
-            bands.append(result)
-            band_names.append(key)
-            print("done ✅")
-
-    bands_array = np.stack(bands, axis=0)
-    height, width = bands_array.shape[1], bands_array.shape[2]
-    transform = from_bounds(MIN_LON, MIN_LAT, MAX_LON, MAX_LAT, width, height)
-
-    with rasterio.open(
-        tiff_path, "w", driver="GTiff",
-        height=height, width=width,
-        count=len(band_names),
-        dtype=bands_array.dtype,
-        crs="EPSG:4326", transform=transform, compress="lzw"
-    ) as dst:
-        for i, (band, name) in enumerate(zip(bands_array, band_names)):
-            dst.write(band, i + 1)
-            dst.update_tags(i + 1, name=name)
-
-    print(f"  ✅ Tiff written → {tiff_path}")
-    return tiff_path
-
-
-# ── Phase B: Feature Extraction ───────────────────────────────────────────────
-
-def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+def extract_features(paths, tiff_path: Path, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract TerraClimate features at each lat/lon point.
     Uses spiral nearest-neighbour search for off-grid (coastal) points.
@@ -208,8 +100,13 @@ def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame
                             return vals
         return np.full(data.shape[0], np.nan)
 
+    # Column names are competition-specific: always read from config with safe fallbacks
+    cols_cfg = config.get("columns", {}) or {}
+    lon_col = cols_cfg.get("longitude", "Longitude")
+    lat_col = cols_cfg.get("latitude", "Latitude")
+
     def extract(df, src, band_names, data):
-        coords = list(zip(df["Longitude"], df["Latitude"]))
+        coords = list(zip(df[lon_col], df[lat_col]))
         values = np.array(list(src.sample(coords, masked=False)), dtype=np.float64)
         nan_mask = np.isnan(values).any(axis=1)
         if nan_mask.sum() > 0:
@@ -225,8 +122,13 @@ def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame
             pd.DataFrame(values, columns=band_names)
         ], axis=1)
 
-    train = pd.read_csv(paths.data_raw_dir / "Training_Data.csv")
-    test  = pd.read_csv(paths.data_raw_dir / "Test.csv")
+    # Input filenames are configurable; fall back to project conventions when absent.
+    input_files = config.get("input_files", {}) or {}
+    train_file = input_files.get("train", "Training_Data.csv")
+    test_file = input_files.get("test", "Test.csv")
+
+    train = pd.read_csv(paths.data_raw_dir / train_file)
+    test  = pd.read_csv(paths.data_raw_dir / test_file)
 
     with rasterio.open(tiff_path) as src:
         band_names = [src.tags(i).get("name", f"band_{i}") for i in range(1, src.count + 1)]
@@ -250,32 +152,124 @@ def extract_features(paths, tiff_path: Path) -> tuple[pd.DataFrame, pd.DataFrame
     return train_feat, test_feat
 
 
-def build_hypothesis_features(train_feat: pd.DataFrame, test_feat: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_hypothesis_features(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    mode: str,
+    target_array: np.ndarray | None = None,
+    train_idx: np.ndarray | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build derived features from validated hypotheses.
-    All are climate algebra on existing TC bands — compliant, no external data.
-    These features encode domain knowledge from validated_hypotheses.json.
+    Build derived features from validated hypotheses with two-mode contract.
+
+    Parameters:
+    - train_df, test_df: input dataframes (must contain required TC bands)
+    - mode: "cv" or "inference"
+    - target_array: full training target vector (required for target-dependent features)
+    - train_idx: indices of rows in train_df that belong to the training fold (required for mode=="cv")
+
+    Behavior:
+    - Non-target-dependent features are computed identically in both modes.
+    - Target-dependent features (example: `tmin_bin_target_mean`) are computed using
+      only the `train_idx` slice when `mode=="cv"`, and using `target_array` entirely
+      when `mode=="inference"`.
+
+    The function guarantees identical output schema and dtypes across modes.
     """
-    for df in [train_feat, test_feat]:
-        # hyp_001_2: polynomial heat stress (tmax nonlinearity)
-        df["tmax_mean_sq"]         = df["tmax_mean"] ** 2
+    if mode not in ("cv", "inference"):
+        raise ValueError("mode must be 'cv' or 'inference'")
 
-        # hyp_003_2: water use efficiency (actual/potential ET ratio)
-        df["aet_pet_ratio"]        = df["aet_mean"] / (df["pet_mean"] + 1e-9)
+    # Work on copies to avoid in-place surprises
+    train = train_df.copy()
+    test = test_df.copy()
 
-        # hyp_006_2: heat × dryness stress index (compound environmental stress)
-        df["tmax_vpd_stress"]      = df["tmax_mean"] * df["vpd_mean"]
+    # Structural (non-target-dependent) features — identical in both modes
+    for df in (train, test):
+        df["tmax_mean_sq"] = df["tmax_mean"] ** 2
+        df["aet_pet_ratio"] = df["aet_mean"] / (df["pet_mean"] + 1e-9)
+        df["tmax_vpd_stress"] = df["tmax_mean"] * df["vpd_mean"]
+        df["frost_risk"] = (df["tmin_min"] < 5).astype(int)
+        df["aridity_index"] = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
+        df["warm_wet_index"] = df["ppt_mean"] * df["tmin_mean"]
 
-        # hyp_007_1: freeze event binary (tmin_min below 5°C = frost risk for amphibians)
-        df["frost_risk"]           = (df["tmin_min"] < 5).astype(int)
+    # Example target-dependent feature: mean target by tmin quantile bin.
+    # This demonstrates the two-mode contract and safe fallbacks when bins are empty.
+    tmin_col = "tmin_mean"
+    bin_col = "tmin_qbin"
+    target_feat_col = "tmin_bin_target_mean"
 
-        # hyp_011_1: aridity index (precipitation / potential ET — dryness measure)
-        df["aridity_index"]        = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
+    # Need target_array for target-dependent features
+    if target_array is not None:
+        # Compute bin edges and mapping from training slice only
+        if mode == "cv":
+            if train_idx is None:
+                raise ValueError("train_idx must be provided in mode='cv'")
+            tr_idx = np.asarray(train_idx, dtype=int)
+            # values for binning are taken from the training slice
+            tr_vals = train.iloc[tr_idx][tmin_col].to_numpy()
+            tr_targets = np.asarray(target_array)[tr_idx]
+        else:
+            # inference: use full training data
+            tr_vals = train[tmin_col].to_numpy()
+            tr_targets = np.asarray(target_array)
 
-        # hyp_012_1: warm wet conditions index (interaction of heat + moisture)
-        df["warm_wet_index"]       = df["ppt_mean"] * df["tmin_mean"]
+        # Create quantile bins (deterministic, q=10). Use pandas.qcut but handle duplicates.
+        try:
+            _, bin_edges = pd.qcut(tr_vals, q=10, retbins=True, duplicates="drop")
+        except Exception:
+            # Fallback: uniform bins over range
+            unique_vals = np.unique(tr_vals)
+            if len(unique_vals) < 2:
+                bin_edges = np.array([unique_vals[0] - 1.0, unique_vals[0] + 1.0])
+            else:
+                bin_edges = np.linspace(tr_vals.min(), tr_vals.max(), num=min(11, len(unique_vals)))
+        # Ensure bin_edges is a Python list for pandas type stubs
+        bin_edges = list(map(float, np.asarray(bin_edges).tolist()))
 
-    return train_feat, test_feat
+        # Map each bin to mean target using training slice
+        # Use pandas.cut with the computed bin_edges across full train/test rows
+        tr_bins = pd.cut(pd.Series(tr_vals), bins=bin_edges, include_lowest=True)
+        bin_map = tr_bins.to_frame(name="bin")
+        bin_map["target"] = tr_targets
+        agg = bin_map.groupby("bin").target.mean()
+
+        # Global fallback: mean target over training slice
+        global_mean = float(np.nanmean(tr_targets)) if len(tr_targets) > 0 else 0.0
+
+        def map_series_to_target_mean(series_vals: np.ndarray) -> np.ndarray:
+            cats = pd.cut(pd.Series(series_vals), bins=bin_edges, include_lowest=True)
+            out = np.empty(len(series_vals), dtype=float)
+            for i, cat in enumerate(cats):
+                if pd.isna(cat):
+                    out[i] = global_mean
+                else:
+                    out[i] = float(agg.get(cat, global_mean))
+            return out
+
+        # Apply mapping: for train rows we use mapping derived from training slice
+        train[target_feat_col] = map_series_to_target_mean(train[tmin_col].to_numpy())
+        # For test set, always map using training-derived agg (no leakage from test targets)
+        test[target_feat_col] = map_series_to_target_mean(test[tmin_col].to_numpy())
+
+    else:
+        # No target array provided: create deterministic default (global 0.0)
+        train["tmin_bin_target_mean"] = 0.0
+        test["tmin_bin_target_mean"] = 0.0
+
+    # Ensure column order and dtypes are identical across modes: append new cols at the end in fixed order
+    new_cols = ["tmax_mean_sq", "aet_pet_ratio", "tmax_vpd_stress", "frost_risk", "aridity_index", "warm_wet_index", "tmin_bin_target_mean"]
+
+    # Guarantee dtype stability
+    for df in (train, test):
+        for c in new_cols:
+            if c not in df.columns:
+                df[c] = 0.0
+            df[c] = df[c].astype(float) if df[c].dtype != "int64" else df[c].astype(float)
+
+    # Return with columns in stable ordering: original cols + new_cols
+    base_cols = [c for c in train_df.columns]
+    final_cols = base_cols + [c for c in new_cols if c not in base_cols]
+    return train[final_cols], test[final_cols]
 
 
 # ── Phase C: Variant Training ─────────────────────────────────────────────────
@@ -285,9 +279,16 @@ def train_variant(
     test: pd.DataFrame,
     feature_cols: list[str],
     variant_name: str,
-    anchor_f1: float,
+    baseline_score: float,
     anchor_auc: float | None = None,
     seed: int = SEED,
+    *,
+    config: ChallengeConfig | None = None,
+    state: dict | None = None,
+    cv_strategy: dict | None = None,
+    target_col: str | None = None,
+    task_type: str = "classification",
+    gate_margin: float = 0.005,
 ) -> dict:
     """
     Train one LightGBM variant and evaluate against the anchor gate.
@@ -295,7 +296,14 @@ def train_variant(
     """
     np.random.seed(seed)
 
-    TARGET = "Occurrence Status"
+    # Resolve target column defensively: prefer explicit arg, then config keys, then legacy default.
+    if target_col is None:
+        if config is not None:
+            TARGET = config.get("target_column") or config.get("target_col") or "Occurrence Status"
+        else:
+            TARGET = "Occurrence Status"
+    else:
+        TARGET = target_col
     X      = np.asarray(train[feature_cols].values, dtype=np.float64)
     y      = np.asarray(train[TARGET].values, dtype=np.int32)
     X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
@@ -333,24 +341,31 @@ def train_variant(
         if variant_name in tuned_lgb_variants:
             params.update(tuned_lgb_variants[variant_name])
 
+        splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+        n_splits = getattr(splitter, "n_splits", 5)
         lgb_result = train_lightgbm_cv(
             train=train,
             test=test,
             feature_cols=feature_cols,
             target_col=TARGET,
-            n_splits=N_SPLITS,
+            n_splits=n_splits,
             random_seed=seed,
+            cv=splitter,
             params=params,
             num_boost_round=1000 if variant_name in tuned_lgb_variants else 500,
             early_stopping_rounds=100 if variant_name in tuned_lgb_variants else 50,
             scale=True,
+            per_fold_feature_fn=lambda t_df, te_df, fcols, tr_idx, targ_arr: (
+                np.asarray(build_hypothesis_features(t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx)[0][fcols].values, dtype=np.float64),
+                np.asarray(build_hypothesis_features(t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx)[1][fcols].values, dtype=np.float64),
+            ),
         )
-        delta = lgb_result.oof_f1 - anchor_f1
-        gate = "PASS" if delta >= MIN_DELTA else "PRUNE"
+        delta = lgb_result.oof_f1 - baseline_score
+        gate = "PASS" if delta >= gate_margin else "PRUNE"
 
         print(f"\n  {'='*50}")
         print(f"  {variant_name}")
-        print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
+        print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})")
         print(f"  Delta    : {delta:+.5f}  → {gate}")
         print(f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
 
@@ -366,13 +381,29 @@ def train_variant(
             "test_probs": lgb_result.test_probs,
         }
 
-    splitter   = make_cv_splitter(n_splits=N_SPLITS, random_seed=seed)
+    splitter   = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    n_splits    = getattr(splitter, "n_splits", 5)
     oof_probs  = np.zeros(len(y))
     test_probs = np.zeros(len(test))
 
     print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
     for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
         model = None
+
+        # Recompute target-dependent features per-fold to avoid leakage
+        try:
+            train_fold, test_fold = build_hypothesis_features(train, test, mode="cv", target_array=y, train_idx=tr_idx)
+            X = np.asarray(train_fold[feature_cols].values, dtype=np.float64)
+            X_test = np.asarray(test_fold[feature_cols].values, dtype=np.float64)
+            # Scale per-fold using training slice only
+            from sklearn.preprocessing import StandardScaler
+            scaler = StandardScaler()
+            X = scaler.fit_transform(X)
+            X_test = scaler.transform(X_test)
+        except Exception as _:
+            # If per-fold recompute fails for any reason, fall back to global arrays (structural-only)
+            X = np.asarray(train[feature_cols].values, dtype=np.float64)
+            X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
         # ── variant-13: tuned LightGBM ────────────────────
         if variant_name in ('variant-13', 'variant-27'):
@@ -457,7 +488,7 @@ def train_variant(
             lgb_test = np.asarray(lgb_model.predict_proba(X_test))[:, 1]
             rf_test  = np.asarray(rf_model.predict_proba(X_test))[:, 1]
             oof_probs[val_idx]  = 0.5 * lgb_val + 0.5 * rf_val
-            test_probs         += (0.5 * lgb_test + 0.5 * rf_test) / N_SPLITS
+            test_probs         += (0.5 * lgb_test + 0.5 * rf_test) / n_splits
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
             print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
             continue
@@ -511,7 +542,7 @@ def train_variant(
             rf_test  = np.asarray(_rf.predict_proba(X_test))[:, 1]
             xgb_test = np.asarray(_xgb.predict_proba(X_test))[:, 1]
             oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
-            test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / N_SPLITS
+            test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / n_splits
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
             print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
             continue
@@ -520,7 +551,7 @@ def train_variant(
             raise RuntimeError(f"Model was not initialized for {variant_name}")
 
         oof_probs[val_idx]  = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
-        test_probs         += np.asarray(model.predict_proba(X_test))[:, 1] / N_SPLITS
+        test_probs         += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
         fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
         print(f"    Fold {fold+1}: ROC-AUC={fold_auc:.5f}")
 
@@ -528,12 +559,12 @@ def train_variant(
     thresholds = np.arange(0.3, 0.7, 0.01)
     best_t    = max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
     oof_f1    = f1_score(y, (oof_probs >= best_t).astype(int))
-    delta     = oof_f1 - anchor_f1  # Gate on F1 delta, not ROC-AUC delta (challenge metric)
-    gate      = "PASS" if delta >= MIN_DELTA else "PRUNE"
+    delta     = oof_f1 - baseline_score  # Gate on primary metric delta vs baseline
+    gate      = "PASS" if delta >= gate_margin else "PRUNE"
 
     print(f"\n  {'='*50}")
     print(f"  {variant_name}")
-    print(f"  OOF F1   : {oof_f1:.5f}  (anchor: {anchor_f1:.5f})")
+    print(f"  OOF F1   : {oof_f1:.5f}  (baseline: {baseline_score:.5f})")
     print(f"  Delta    : {delta:+.5f}  → {gate}")
     print(f"  ROC-AUC  : {oof_auc:.5f}  (threshold: {best_t:.2f})")
 
@@ -552,7 +583,7 @@ def train_variant(
 
 # ── Phase D: Report Writer ────────────────────────────────────────────────────
 
-def write_round_report(paths, results: list[dict], round_num: int, anchor_f1: float) -> None:
+def write_round_report(paths, results: list[dict], round_num: int, baseline_score: float, gate_margin: float) -> None:
     passed  = [r for r in results if r["gate"] == "PASS"]
     pruned  = [r for r in results if r["gate"] == "PRUNE"]
     now     = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -561,8 +592,8 @@ def write_round_report(paths, results: list[dict], round_num: int, anchor_f1: fl
         f"# Feature Round {round_num} Report",
         f"**Generated**: {now}",
         f"**Primary gate metric**: F1-Score",
-        f"**Anchor F1-Score**: {anchor_f1:.5f}",
-        f"**Gate threshold**: anchor + {MIN_DELTA} = {anchor_f1 + MIN_DELTA:.5f}",
+        f"**Baseline Score**: {baseline_score:.5f}",
+        f"**Gate threshold**: baseline + {gate_margin} = {baseline_score + gate_margin:.5f}",
         f"**Variants tested**: {len(results)}",
         f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
         "", "---", "",
@@ -592,7 +623,7 @@ def write_round_report(paths, results: list[dict], round_num: int, anchor_f1: fl
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
-def run(variant_name: str | None = None, force_save: bool = False) -> dict:
+def run(variant_name: str | None = None, force_save: bool = False, fetch: bool = False) -> dict:
     """
     Skill 07 — Feature Engineering entry point.
 
@@ -619,26 +650,98 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     metric_name = config.get("metric", "f1_score")
     primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
 
+    # Dynamic target and task config
+    target_col = config.get("target_column") or config.get("target_col") or "Occurrence Status"
+    task_type = config.get("task_type", "classification")
+    use_probabilities = config.get("use_probabilities", True)
+
+    # Effective gate margins scaled for regression tasks
+    target_std = float(state.get("eda", {}).get("target_std", 1.0))
+    gate_margin_cfg = float(config.get("gate_margin", 0.005))
+    variance_cfg = float(config.get("variance_gate_threshold", 0.01))
+    if task_type == "regression":
+        effective_gate_margin = gate_margin_cfg * target_std
+        effective_variance_threshold = variance_cfg * (target_std ** 2)
+    else:
+        effective_gate_margin = gate_margin_cfg
+        effective_variance_threshold = variance_cfg
+
+    # Baseline precedence selector
+    retraining_active = state.get("pseudo_label_result", {}).get("retraining_required", False)
+    if retraining_active:
+        baseline_key = f"anchor_{primary_key}_augmented"
+    elif state.get("anchor_challenge", {}).get("active", False):
+        baseline_key = f"anchor_{primary_key}_challenged"
+    else:
+        baseline_key = f"anchor_{primary_key}"
+
+    baseline_score = float(state.get(baseline_key) or 0.0)
+    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
+    if baseline_score == 0.0:
+        raise RuntimeError(f"{baseline_key} not set in SKILL_STATE.json — run Skill 08 first or set baseline.")
+
+    # Resolve active CV strategy (allow override in state)
+    override_active = bool(state.get("cv_strategy_override", {}).get("active", False))
+    if override_active:
+        override_value = state.get("cv_strategy_override", {}).get("override_strategy")
+        # Allow simple type string or full dict
+        if isinstance(override_value, dict):
+            cv_strategy = override_value
+        else:
+            cv_strategy = {"type": override_value, "n_splits": config.get("cv_strategy", {}).get("n_splits", 5)}
+    else:
+        cv_strategy = config.get("cv_strategy", {}) or {"type": "stratified", "n_splits": 5}
+
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
-    print(f"Anchor F1   : {state.get('anchor_oof_f1') or state.get('anchor_oof_rmse')}  (reference ROC-AUC: {state.get('anchor_oof_auc')})")
+    print(f"Baseline ({baseline_key}): {baseline_score}  (reference ROC-AUC: {anchor_auc})")
 
-    anchor_f1 = float(state.get("anchor_oof_f1") or state.get("anchor_oof_rmse") or 0.0)
-    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)   # Keep ROC-AUC for reference
-    if anchor_f1 == 0.0:
-        raise RuntimeError("anchor_oof_f1 not set in SKILL_STATE.json — run Skill 08 first")
+    # ── Phase A: Fetch / Plugin dispatch ───────────────────────
+    print("\n[A] Feature fetch/extract (plugin-aware)")
+    plugin_path = config.get("feature_extraction_plugin")
+    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
 
-    # ── Phase A: Fetch ────────────────────────────────────────
-    print("\n[A] TerraClimate Fetch")
-    tiff_path = fetch_terraclimate(paths)
+    extractor = None
+    if plugin_path:
+        try:
+            extractor = importlib.import_module(plugin_path)
+        except Exception as e:
+            print(f"  ⚠️ Failed to import plugin '{plugin_path}': {e}")
+
+    # If tiff missing: try plugin.fetch (if present) when fetch=True, otherwise fall back
+    if not tiff_path.exists():
+        if extractor is not None and fetch:
+            tiff_path = extractor.fetch(paths, config, allow_network=True)
+        else:
+            # Don't auto-fetch during tests or CI unless explicitly requested.
+            if variant_name is None:
+                print("  ℹ️ Data tiff missing and fetch disabled — extraction skipped")
+                return {"status": "no_fetch", "message": "Data tiff missing and fetch disabled"}
+            raise FileNotFoundError("Data tiff not found. Re-run with fetch=True or configure a plugin to fetch data.")
 
     # ── Phase B: Extract ──────────────────────────────────────
     print("\n[B] Feature Extraction")
-    train_feat, test_feat = extract_features(paths, tiff_path)
+    if extractor is not None and hasattr(extractor, "extract"):
+        train_feat, test_feat = extractor.extract(paths, tiff_path, config)
+    else:
+        train_feat, test_feat = extract_features(paths, tiff_path, config)
 
-    # ── Phase B₂: Build hypothesis-derived features ────────────
+    # ── Phase B₂: Build hypothesis-derived features (two-mode)
     print("\n[B₂] Building hypothesis-derived features")
-    train_feat, test_feat = build_hypothesis_features(train_feat, test_feat)
+    # Resolve target column defensively
+    target_col_cfg = config.get("target_column") or config.get("target_col") or "Occurrence Status"
+    if variant_name is None:
+        # Extraction-only / inference: allow using full training targets if available
+        if target_col_cfg in train_feat.columns:
+            targ_arr = train_feat[target_col_cfg].to_numpy()
+        else:
+            targ_arr = None
+        train_feat, test_feat = build_hypothesis_features(train_feat, test_feat, mode="inference", target_array=targ_arr)
+    else:
+        # During training runs, avoid computing target-dependent features globally to prevent leakage.
+        # Compute structural features only by calling in inference mode with no target array.
+        train_feat, test_feat = build_hypothesis_features(train_feat, test_feat, mode="inference", target_array=None)
+
     print(f"  ✓ Derived features added: tmax_mean_sq, aet_pet_ratio, tmax_vpd_stress, frost_risk, aridity_index, warm_wet_index")
 
     if variant_name is None:
@@ -780,19 +883,39 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
             raise FileNotFoundError("features_full_train.csv not found — run merge_features.py first")
         train_feat = pd.read_csv(full_train)
         test_feat  = pd.read_csv(full_test)
-        DROP       = ["ID", "Occurrence Status", "Latitude", "Longitude"]
+        cols_cfg = config.get("columns", {}) or {}
+        id_col = cols_cfg.get("id", "ID")
+        lat_col = cols_cfg.get("latitude", "Latitude")
+        lon_col = cols_cfg.get("longitude", "Longitude")
+        # target_col was resolved earlier from config into `target_col`
+        DROP       = [id_col, target_col, lat_col, lon_col]
         feature_cols = [c for c in train_feat.columns if c not in DROP]
         print(f"  variant-36: loaded {len(feature_cols)} features from features_full_*.csv")
     else:
         feature_cols = VARIANTS[variant_name]
 
     # ── Phase C: Train (multi-seed averaging) ────────────────
-    SEEDS = [42, 123, 7]
+    # Use canonical seed discipline: derive multi-seed list deterministically
+    SEEDS = [SEED, SEED + 1, SEED + 2]
     print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
     seed_results = []
     for s in SEEDS:
         print(f"\n  -- Seed {s} --")
-        r = train_variant(train_feat, test_feat, feature_cols, variant_name, anchor_f1, anchor_auc, seed=s)
+        r = train_variant(
+            train_feat,
+            test_feat,
+            feature_cols,
+            variant_name,
+            baseline_score,
+            anchor_auc,
+            seed=s,
+            config=config,
+            state=state,
+            cv_strategy=cv_strategy,
+            target_col=target_col,
+            task_type=task_type,
+            gate_margin=effective_gate_margin,
+        )
         seed_results.append(r)
 
     # Average ROC-AUC and test probabilities across seeds
@@ -803,7 +926,7 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     mean_delta = float(np.mean([r["delta"]      for r in seed_results]))
     avg_test   = np.mean([r["test_probs"] for r in seed_results], axis=0)
     avg_oof    = np.mean([r["oof_probs"]  for r in seed_results], axis=0)
-    gate       = "PASS" if mean_delta >= MIN_DELTA else "PRUNE"
+    gate       = "PASS" if mean_delta >= effective_gate_margin else "PRUNE"
 
     print(f"\n  {'='*50}")
     print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
@@ -830,16 +953,18 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
+        cols_cfg = config.get("columns", {}) or {}
+        id_col = cols_cfg.get("id", "ID")
 
         oof_df = pd.DataFrame({
-            "ID": train_feat["ID"],
+            id_col: train_feat[id_col],
             "oof_prob": np.asarray(result["oof_probs"])
         })
         oof_path = proc_dir / f"oof_{variant_name}.csv"
         oof_df.to_csv(oof_path, index=False)
 
         test_df = pd.DataFrame({
-            "ID": test_feat["ID"],
+            id_col: test_feat[id_col],
             "test_prob": np.asarray(result["test_probs"])
         })
         test_path = proc_dir / f"test_probs_{variant_name}.csv"
@@ -852,12 +977,20 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
 
     # ── Phase D: Save submission if PASS or force_save ──────────
     if result["gate"] == "PASS" or force_save:
-        sample  = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
-        sub_col = [c for c in sample.columns if c != "ID"][0]
+        input_files = config.get("input_files", {}) or {}
+        sample_file = input_files.get("sample", "SampleSubmission.csv")
+        sample  = pd.read_csv(paths.data_raw_dir / sample_file)
+        cols_cfg = config.get("columns", {}) or {}
+        id_col = cols_cfg.get("id", "ID")
+        sub_col = [c for c in sample.columns if c != id_col][0]
         test_probs = result["test_probs"]
-        preds   = (test_probs >= result["threshold"]).astype(int)
-        sub     = pd.DataFrame({"ID": test_feat["ID"], sub_col: preds})
-        sub     = sub.set_index("ID").reindex(sample["ID"]).reset_index()
+        # Respect submission format policy: prefer probabilities when configured
+        if task_type == "classification" and use_probabilities:
+            sub_values = test_probs
+        else:
+            sub_values = (test_probs >= result["threshold"]).astype(int)
+        sub     = pd.DataFrame({id_col: test_feat[id_col], sub_col: sub_values})
+        sub     = sub.set_index(id_col).reindex(sample[id_col]).reset_index()
         out     = competition_dir / f"submissions/{variant_name}_submission.csv"
         sub.to_csv(out, index=False)
         print(f"  ✅ Submission saved → {out}")
@@ -889,11 +1022,26 @@ def run(variant_name: str | None = None, force_save: bool = False) -> dict:
         pass
 
     store.update(**update)
+    try:
+        write_oof_record(
+            store,
+            branch_name=(variant_name + "_augmented") if state.get("pseudo_label_result", {}).get("retraining_required", False) else variant_name,
+            scores=np.asarray(result["oof_probs"], dtype=np.float64).tolist(),
+            cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
+            seed=SEED,
+            model_config={
+                "variant": variant_name,
+                "feature_count": len(feature_cols),
+                "multi_seed": [int(s) for s in SEEDS],
+            },
+        )
+    except Exception as exc:
+        print(f"  ⚠️ Failed to write OOF record: {exc}")
     print(f"  ✅ SKILL_STATE.json updated")
 
     # ── Phase D: Write report ─────────────────────────────────
     round_num = int(state.get("feature_round") or 1)
-    write_round_report(paths, [result], round_num, anchor_f1)
+    write_round_report(paths, [result], round_num, baseline_score, effective_gate_margin)
 
     return {
         "status":   result["gate"],

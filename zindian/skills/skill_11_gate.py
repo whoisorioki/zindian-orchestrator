@@ -4,82 +4,221 @@ Promotes the best passing variant to new anchor.
 Blocks if no variant passed the gate this round.
 """
 from __future__ import annotations
+
 import subprocess
 from datetime import datetime, timezone
+from typing import Any
+
+import numpy as np
+
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
+
+def _metric_key(config: ChallengeConfig) -> str:
+    metric_name = str(config.get("metric", "f1_score"))
+    return "f1" if metric_name == "f1_score" else metric_name
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fold_score_variance(state: dict) -> float | None:
+    metric_analysis = state.get("metric_analysis", {}) or {}
+    if isinstance(metric_analysis, dict) and metric_analysis.get("fold_score_variance") is not None:
+        return _to_float(metric_analysis.get("fold_score_variance"))
+
+    eda = state.get("eda", {}) or {}
+    fold_scores = eda.get("fold_scores") if isinstance(eda, dict) else None
+    if not fold_scores:
+        return None
+    try:
+        return float(np.var(np.asarray(fold_scores, dtype=np.float64), ddof=1))
+    except Exception:
+        return None
+
+
+def _effective_thresholds(config: ChallengeConfig, state: dict) -> tuple[float, float]:
+    task_type = str(config.get("task_type", "classification"))
+    variance_gate_threshold = float(config.get("variance_gate_threshold", 0.0) or 0.0)
+    gate_margin = float(config.get("gate_margin", 0.0) or 0.0)
+
+    if task_type == "regression":
+        target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
+        return variance_gate_threshold * (target_std ** 2), gate_margin * target_std
+
+    return variance_gate_threshold, gate_margin
+
+
+def _baseline_score(state: dict, metric_key: str) -> tuple[float | None, str]:
+    retraining_active = state.get("pseudo_label_result", {}) or {}
+    retraining_required = bool(retraining_active.get("retraining_required", False)) if isinstance(retraining_active, dict) else False
+    anchor_challenge = state.get("anchor_challenge", {}) or {}
+    challenge_active = bool(anchor_challenge.get("active", False)) if isinstance(anchor_challenge, dict) else False
+
+    if retraining_required:
+        key = f"anchor_oof_{metric_key}_augmented"
+        value = _to_float(state.get(key))
+        if value is not None:
+            return value, key
+
+    if challenge_active:
+        key = f"anchor_oof_{metric_key}_challenged"
+        value = _to_float(state.get(key))
+        if value is not None:
+            return value, key
+
+    key = f"anchor_oof_{metric_key}"
+    value = _to_float(state.get(key))
+    return (value, key) if value is not None else (None, key)
+
+
+def _write_failure_diagnosis(store: SkillStateStore, diagnosis: dict) -> None:
+    store.update(
+        phase_3_gate_diagnosis=diagnosis,
+        dag_phase="phase_3_gate_blocked",
+        last_updated=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def run() -> dict:
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SKILL 11 — Branch Gate")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     paths = resolve_competition_paths()
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
-    # Safe read for anchor_challenge (v1.7 schema): avoid KeyError on absent block
-    anchor_challenge_active = bool(state.get("anchor_challenge", {}) .get("active", False))
 
-    best_variant = state.get("best_variant_this_round")
-    metric_name  = config.get("metric", "f1_score")
-    metric_key   = "f1" if metric_name == "f1_score" else metric_name
-    best_score   = float(state.get(f"best_variant_oof_{metric_key}") or 0.0)
-    anchor_score = float(state.get(f"anchor_oof_{metric_key}") or 0.0)
+    best_variant = state.get("best_variant_this_round") or state.get("best_variant_branch")
+    metric_key = _metric_key(config)
+    best_score_value = state.get(f"best_variant_oof_{metric_key}")
+    best_score = float(best_score_value or 0.0)
+    fold_score_variance = _fold_score_variance(state)
+    effective_variance_threshold, effective_gate_margin = _effective_thresholds(config, state)
+    baseline_score, baseline_key = _baseline_score(state, metric_key)
+    leaked_features = state.get("leaked_features", []) or []
+    human_gate_key = f"human_gate_2_{best_variant}_approved" if best_variant else "human_gate_2_unknown_approved"
+    human_gate_approved = bool(state.get(human_gate_key, False))
+    shap_pass = bool(state.get("shap_completed_at")) and bool(state.get("pruning_pass", False))
     variants_passed = int(state.get("variants_passed") or 0)
+    branch_name = str(best_variant or "unknown")
 
-    print(f"[skill_11] gating against {f'anchor_oof_{metric_key}'} = {anchor_score:.8f}")
+    task_type = str(config.get("task_type", "classification"))
+    direction = str(config.get("metric_direction", "maximize"))
 
-    print(f"Variants passed this round : {variants_passed}")
-    print(f"Anchor challenge active   : {anchor_challenge_active}")
-    print(f"Best variant               : {best_variant}")
-    print(f"Best OOF {metric_name.upper():<8}      : {best_score:.5f}")
-    print(f"Current anchor {metric_name.upper():<8}: {anchor_score:.5f}")
-    print(f"Delta                      : {best_score - anchor_score:+.5f}")
+    print(f"[skill_11] checking branch: {branch_name}")
+    print(f"[skill_11] baseline key     : {baseline_key}")
+    print(f"[skill_11] metric key       : {metric_key}")
+    print(f"[skill_11] fold variance    : {fold_score_variance}")
+    print(f"[skill_11] leaked features  : {len(leaked_features)}")
+    print(f"[skill_11] human gate key   : {human_gate_key}={human_gate_approved}")
+
+    diagnosis = {
+        "branch_name": branch_name,
+        "best_variant": best_variant,
+        "metric_key": metric_key,
+        "task_type": task_type,
+        "direction": direction,
+        "variants_passed": variants_passed,
+        "best_score": best_score,
+        "baseline_score": baseline_score,
+        "fold_score_variance": fold_score_variance,
+        "effective_variance_threshold": effective_variance_threshold,
+        "effective_gate_margin": effective_gate_margin,
+        "leaked_features": leaked_features,
+        "shap_pass": shap_pass,
+        "human_gate_key": human_gate_key,
+        "human_gate_approved": human_gate_approved,
+    }
 
     if variants_passed == 0:
-        print("\n❌ GATE BLOCKED — no variant passed this round")
-        print("   Return to Skill 07 with different feature hypotheses")
-        store.update(dag_phase="phase_3_gate_blocked",
-                     last_updated=datetime.now(timezone.utc).isoformat())
-        return {"status": "BLOCKED", "reason": "no variants passed"}
+        diagnosis["failure_reason"] = "no_variants_passed"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "no variants passed", "diagnosis": diagnosis}
 
-    # Promote best variant to new anchor
-    round_num  = int(state.get("feature_round") or 1)
+    if not branch_name:
+        diagnosis["failure_reason"] = "missing_branch_name"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "missing branch name", "diagnosis": diagnosis}
+
+    if branch_name in {str(item) for item in leaked_features}:
+        diagnosis["failure_reason"] = "branch_leaked"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "branch leaked", "diagnosis": diagnosis}
+
+    if fold_score_variance is None or fold_score_variance >= effective_variance_threshold:
+        diagnosis["failure_reason"] = "variance_gate_failed"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "variance gate failed", "diagnosis": diagnosis}
+
+    if baseline_score is None:
+        diagnosis["failure_reason"] = "missing_baseline"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "missing baseline", "diagnosis": diagnosis}
+
+    if direction == "maximize":
+        improved = (best_score - baseline_score) > effective_gate_margin
+    else:
+        improved = (baseline_score - best_score) > effective_gate_margin
+
+    if not improved:
+        diagnosis["failure_reason"] = "baseline_gate_failed"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "baseline gate failed", "diagnosis": diagnosis}
+
+    if not shap_pass:
+        diagnosis["failure_reason"] = "shap_gate_failed"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "shap gate failed", "diagnosis": diagnosis}
+
+    if not human_gate_approved:
+        diagnosis["failure_reason"] = "human_gate_missing"
+        _write_failure_diagnosis(store, diagnosis)
+        return {"status": "BLOCKED", "reason": "human gate missing", "diagnosis": diagnosis}
+
+    round_num = int(state.get("feature_round") or 1)
     new_branch = f"anchor-v{round_num + 1}"
 
-    print(f"\n✅ GATE PASSED — promoting {best_variant} to {new_branch}")
+    print(f"\n✅ GATE PASSED — promoting {branch_name} to {new_branch}")
 
     try:
-        subprocess.run(["git", "checkout", "-b", new_branch],
-                      check=True, capture_output=True)
+        subprocess.run(["git", "checkout", "-b", new_branch], check=True, capture_output=True)
         print(f"✅ Git branch created: {new_branch}")
     except subprocess.CalledProcessError:
-        subprocess.run(["git", "checkout", new_branch],
-                      check=True, capture_output=True)
+        subprocess.run(["git", "checkout", new_branch], check=True, capture_output=True)
         print(f"✅ Switched to: {new_branch}")
 
     store.update(
-        anchor_oof_auc      = state.get("best_variant_oof_auc"),
-        anchor_oof_f1       = state.get("best_variant_oof_f1"),
-        anchor_git_branch   = new_branch,
-        feature_round       = round_num + 1,
-        variants_tested     = 0,
-        variants_passed     = 0,
-        best_variant_this_round = None,
-        best_variant_oof_auc    = None,
-        dag_phase               = "phase_3_anchor_promoted",
-        last_updated            = datetime.now(timezone.utc).isoformat(),
+        anchor_oof_auc=state.get("best_variant_oof_auc"),
+        anchor_oof_f1=state.get("best_variant_oof_f1"),
+        anchor_git_branch=new_branch,
+        feature_round=round_num + 1,
+        variants_tested=0,
+        variants_passed=0,
+        best_variant_this_round=None,
+        best_variant_oof_auc=None,
+        dag_phase="phase_3_anchor_promoted",
+        last_updated=datetime.now(timezone.utc).isoformat(),
+        phase_3_gate_diagnosis={**diagnosis, "passed": True, "new_branch": new_branch},
     )
-    print(f"✅ SKILL_STATE.json — new anchor {metric_name.upper()}: {best_score:.5f}")
+    print(f"✅ SKILL_STATE.json — new anchor {metric_key.upper()}: {best_score:.5f}")
     print(f"✅ Feature round advanced to: {round_num + 1}")
 
     return {
-        "status":      "PASS",
-        "new_anchor":  new_branch,
-        "anchor_metric":  best_score,
-        "promoted":    best_variant,
+        "status": "PASS",
+        "new_branch": new_branch,
+        "anchor_metric": best_score,
+        "promoted": branch_name,
+        "diagnosis": diagnosis,
     }
 
 if __name__ == "__main__":

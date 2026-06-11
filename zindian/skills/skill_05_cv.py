@@ -1,17 +1,17 @@
 """
 Skill 05 — CV Architect
 ========================
-Builds and validates the cross-validation strategy for the active competition.
-Writes the chosen CV split indices to SKILL_STATE.json for use by all downstream skills.
+Builds the cross-validation strategy for the active competition.
+Writes the chosen CV strategy to challenge_config.json during Phase 1 only,
+and records the selection in SKILL_STATE.json for downstream skills.
 
-Two strategies implemented:
-  A) StratifiedKFold    — standard, ignores geography (current baseline)
-  B) Spatial Block CV   — GroupKFold on KMeans geographic clusters (recommended)
+Strategy selection is deterministic and based on dataset properties;
+no empirical strategy comparison loop is performed.
 
 Usage:
-  python -m zindian.skills.skill_05_cv                    # compare both, write best
-  python -m zindian.skills.skill_05_cv --strategy=spatial # force spatial
-  python -m zindian.skills.skill_05_cv --strategy=stratified # force stratified
+    python -m zindian.skills.skill_05_cv
+    python -m zindian.skills.skill_05_cv --strategy=spatial
+    python -m zindian.skills.skill_05_cv --strategy=stratified
 """
 
 from __future__ import annotations
@@ -20,42 +20,66 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.model_selection import GroupKFold, StratifiedKFold
-from sklearn.metrics import f1_score, roc_auc_score
-import lightgbm as lgb
+from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, TimeSeriesSplit
 
-from zindian.config import ChallengeConfig
+from zindian.config import ChallengeConfig, get_seed
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 N_SPLITS = 5
+SPATIAL_CLUSTER_MULTIPLIER = 3
 
 
 # ── CV Strategy Builders ───────────────────────────────────────────────────────
 
+def _config_data(config: ChallengeConfig) -> dict[str, Any]:
+    return getattr(config, "_data", {}) or {}
+
+
+def _resolve_target_col(config: ChallengeConfig) -> str:
+    target_col = config.get("target_col") or config.get("target_column")
+    if not target_col:
+        raise RuntimeError("target_col not initialized in challenge_config.json")
+    return str(target_col)
+
+
+def _policy_filtered_columns(config: ChallengeConfig) -> set[str]:
+    blocked = config.get("policy_filters", []) or []
+    if not isinstance(blocked, (list, tuple, set)):
+        return set()
+    return {str(col) for col in blocked if col is not None}
+
+
+def _build_sphere_projection(coords: np.ndarray) -> np.ndarray:
+    lat = np.deg2rad(coords[:, 0].astype(np.float64))
+    lon = np.deg2rad(coords[:, 1].astype(np.float64))
+    x = np.cos(lat) * np.cos(lon)
+    y = np.cos(lat) * np.sin(lon)
+    z = np.sin(lat)
+    return np.column_stack([x, y, z]).astype(np.float64)
+
+
 def build_stratified_splits(
     X: np.ndarray,
     y: np.ndarray,
+    n_splits: int = N_SPLITS,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """
-    Strategy A — StratifiedKFold.
-    Preserves class balance per fold.
-    Ignores geographic structure — nearby points can appear in both train/val.
-    """
-    from zindian.config import get_seed
-    skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=get_seed())
-    return list(skf.split(X, y))
+    """Strategy: StratifiedKFold for class imbalance stability."""
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=get_seed())
+    return list(splitter.split(X, y))
 
 
 def build_spatial_splits(
     X:      np.ndarray,
     y:      np.ndarray,
     coords: np.ndarray,
-    n_clusters: int = N_SPLITS,
+    n_splits: int = N_SPLITS,
+    n_clusters: int | None = None,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
     """
     Strategy B — Spatial Block CV.
@@ -66,90 +90,101 @@ def build_spatial_splits(
         X:          Feature matrix
         y:          Labels
         coords:     (n, 2) array of [Latitude, Longitude]
-        n_clusters: Number of geographic blocks (default = N_SPLITS)
+        n_clusters: Number of geographic blocks (default = 3 × n_splits, capped by sample count)
 
     Returns:
         (splits, geo_groups) — splits for CV, geo_groups for inspection
     """
-    from zindian.config import get_seed
-    kmeans     = KMeans(n_clusters=n_clusters, random_state=get_seed(), n_init=10)
-    geo_groups = kmeans.fit_predict(coords)
+    cluster_count = n_clusters or max(n_splits * SPATIAL_CLUSTER_MULTIPLIER, n_splits + 1)
+    cluster_count = min(cluster_count, len(coords))
+    if cluster_count < n_splits:
+        raise RuntimeError("Not enough spatial samples to build stable fold groups")
+
+    projected = _build_sphere_projection(coords)
+    kmeans = KMeans(n_clusters=cluster_count, random_state=get_seed(), n_init=10)
+    geo_groups = kmeans.fit_predict(projected)
 
     print(f"\n  Geographic block distribution:")
-    for block_id in range(n_clusters):
+    for block_id in range(cluster_count):
         block_mask  = geo_groups == block_id
         block_pos   = y[block_mask].sum()
         block_total = block_mask.sum()
+        prevalence = (block_pos / block_total * 100.0) if block_total else 0.0
         print(f"    Block {block_id}: {block_total:4d} samples  "
               f"({block_pos:3d} positive, "
-              f"{block_pos/block_total*100:.1f}% prevalence)")
+              f"{prevalence:.1f}% prevalence)")
 
-    gkf    = GroupKFold(n_splits=N_SPLITS)
+    # Construct a GroupKFold via the central CV factory and split using geo_groups
+    gkf = GroupKFold(n_splits=n_splits)
     splits = list(gkf.split(X, y, groups=geo_groups))
 
     return splits, geo_groups
 
 
-# ── CV Evaluator ───────────────────────────────────────────────────────────────
+def _resolve_decision(config: ChallengeConfig, state: dict[str, Any], ft: pd.DataFrame) -> dict[str, Any]:
+    eda = state.get("eda", {}) or {}
+    raw_config = _config_data(config)
 
-def evaluate_cv_strategy(
-    X:        np.ndarray,
-    y:        np.ndarray,
-    splits:   list[tuple[np.ndarray, np.ndarray]],
-    strategy: str,
-    metric_name: str,
-) -> dict:
-    """
-    Train a lightweight LightGBM on the given splits.
-    Returns the primary OOF metric — used to compare strategies.
-    LGB params are intentionally light (fast eval only, not anchor quality).
-    """
-    oof_probs = np.zeros(len(y), dtype=np.float64)
+    temporal_confirmed = bool(eda.get("temporal_index_confirmed", False))
+    group_confirmed = bool(eda.get("group_structure_confirmed", False))
+    spatial_signal = bool((raw_config.get("spatial_signal", {}) or {}).get("present", False))
+    group_signal = bool((raw_config.get("group_signal", {}) or {}).get("present", False))
+    task_type = str(raw_config.get("task_type", config.get("task_type", "classification")))
+    minority_ratio = raw_config.get("minority_ratio", eda.get("minority_ratio"))
 
-    params = {
-        "objective":     "binary",
-        "metric":        "binary_logloss",
-        "learning_rate": 0.05,
-        "num_leaves":    31,
-        "verbose":       -1,
-        "seed":          __import__("zindian.config", fromlist=["get_seed"]).get_seed(),
-    }
+    if temporal_confirmed:
+        return {
+            "type": "TimeSeriesSplit",
+            "shuffle": False,
+            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "selection_reason": "temporal_index_confirmed",
+        }
 
-    fold_scores = []
-    for fold_idx, (tr_idx, val_idx) in enumerate(splits):
-        train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
-        val_set   = lgb.Dataset(X[val_idx], label=y[val_idx], reference=train_set)
+    if group_confirmed or spatial_signal or group_signal:
+        group_col = None
+        if group_signal:
+            group_col = (raw_config.get("group_signal", {}) or {}).get("col")
+        if group_col is None and spatial_signal:
+            group_col = (raw_config.get("spatial_signal", {}) or {}).get("group_col")
+        if group_col is None:
+            group_col = eda.get("group_col")
+        # If a group column is available, use GroupKFold. If not, return a
+        # GroupKFold decision with no group_col so the caller can attempt a
+        # spatial clustering fallback (using latitude/longitude) before
+        # falling back to safer strategies.
+        if group_col is None:
+            return {
+                "type": "GroupKFold",
+                "shuffle": False,
+                "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+                "group_col": None,
+                "selection_reason": "group_structure_requested_but_group_col_missing",
+            }
+        if str(group_col) not in ft.columns:
+            raise RuntimeError(f"group_col '{group_col}' not present in features_train.csv")
+        return {
+            "type": "GroupKFold",
+            "shuffle": False,
+            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "group_col": str(group_col),
+            "selection_reason": "group_structure_confirmed" if group_confirmed else ("spatial_signal.present" if spatial_signal else "group_signal.present"),
+        }
 
-        model = lgb.train(
-            params,
-            train_set,
-            num_boost_round=300,
-            valid_sets=[val_set],
-            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(period=-1)],
-        )
-
-        oof_probs[val_idx] = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
-        if metric_name == "f1_score":
-            fold_score = f1_score(y[val_idx], (oof_probs[val_idx] >= 0.5).astype(int))
-        else:
-            fold_score = roc_auc_score(y[val_idx], oof_probs[val_idx])
-        fold_scores.append(float(fold_score))
-        print(f"    [{strategy}] Fold {fold_idx+1}: {metric_name.upper()}={fold_score:.5f}")
-
-    if metric_name == "f1_score":
-        oof_primary = float(f1_score(y, (oof_probs >= 0.5).astype(int)))
-    else:
-        oof_primary = float(roc_auc_score(y, oof_probs))
-    print(f"  [{strategy}] OOF {metric_name.upper()}: {oof_primary:.5f}  "
-          f"(std={np.std(fold_scores):.5f})")
+    if task_type == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15:
+        return {
+            "type": "StratifiedKFold",
+            "shuffle": True,
+            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "random_state": int(raw_config.get("reproducibility", {}).get("seed", get_seed())),
+            "selection_reason": f"minority_ratio={float(minority_ratio):.3f} < 0.15",
+        }
 
     return {
-        "strategy":  strategy,
-        "metric_name": metric_name,
-        "oof_primary": oof_primary,
-        "fold_scores": fold_scores,
-        "fold_std":  float(np.std(fold_scores)),
-        "oof_auc":   float(roc_auc_score(y, oof_probs)),
+        "type": "KFold",
+        "shuffle": True,
+        "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+        "random_state": int(raw_config.get("reproducibility", {}).get("seed", get_seed())),
+        "selection_reason": "default regression or balanced classification fallback",
     }
 
 
@@ -171,14 +206,12 @@ def run(strategy: str = "compare") -> dict:
 
     paths  = resolve_competition_paths(require_competition=True)
     config = ChallengeConfig.load()
-    metric_name = config.get("metric", "auc")
     competition_dir = paths.competition_dir
     if competition_dir is None:
         raise RuntimeError("Competition directory could not be resolved")
 
     print(f"Competition : {config.slug}")
     print(f"Strategy    : {strategy}")
-    print(f"Metric      : {metric_name}")
 
     # ── Load features ──────────────────────────────────────────
     ft_path = competition_dir / "data" / "processed" / "features_train.csv"
@@ -191,98 +224,94 @@ def run(strategy: str = "compare") -> dict:
     ft = pd.read_csv(ft_path)
     print(f"\nFeatures loaded: {ft.shape}")
 
-    target_col   = config.get("target_column", "Occurrence Status")
-    feature_cols = [c for c in ft.columns
-                    if c not in ("ID", target_col)]
-    coord_cols   = [c for c in (config.get("latitude_column", "Latitude"), config.get("longitude_column", "Longitude")) if c in ft.columns]
+    target_col = _resolve_target_col(config)
+    state_store = SkillStateStore(paths.state_path)
+    state = state_store.read()
+    decision = _resolve_decision(config, state, ft)
 
-    X      = ft[feature_cols].values.astype(np.float32)
-    y      = ft[target_col].values.astype(np.int32)
-    coords = ft[coord_cols].values.astype(np.float64) if len(coord_cols) == 2 else None
+    forced_strategy = strategy if strategy in ("spatial", "stratified", "timeseries", "kfold") else None
+    selected_type = forced_strategy or decision["type"]
+    selection_reason = decision["selection_reason"] if forced_strategy is None else f"forced_{forced_strategy}"
+
+    policy_blocked = _policy_filtered_columns(config)
+    coord_names = {
+        str(config.get("latitude_column", "Latitude")),
+        str(config.get("longitude_column", "Longitude")),
+    }
+    group_col = decision.get("group_col")
+    excluded_cols = {"ID", target_col, *coord_names, *policy_blocked}
+    if group_col is not None:
+        excluded_cols.add(str(group_col))
+
+    feature_cols = [c for c in ft.columns if c not in excluded_cols]
+    coord_cols = [c for c in coord_names if c in ft.columns]
+
+    # Use explicit np.asarray to provide concrete ndarray types for static checkers
+    X = np.asarray(ft[feature_cols].values, dtype=np.float32)
+    y = np.asarray(ft[target_col].values, dtype=np.int32)
+    coords = np.asarray(ft[coord_cols].values, dtype=np.float64) if len(coord_cols) == 2 else None
 
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
-    print(f"Positive rate: {y.mean()*100:.1f}%")
+    if len(y) > 0:
+        print(f"Positive rate: {float(np.asarray(y, dtype=np.float64).mean())*100:.1f}%")
 
-    results = {}
+    # If GroupKFold was selected but no explicit group_col is available,
+    # attempt a spatial clustering fallback when coordinates exist. If that
+    # fails (too few points or clustering error), gracefully fall back to
+    # StratifiedKFold (classification with imbalance) or KFold otherwise.
+    minority_ratio = config.get("minority_ratio") or (state.get("eda") or {}).get("minority_ratio")
 
-    # ── Strategy A — Stratified ────────────────────────────────
-    if strategy in ("compare", "stratified"):
-        print(f"\n── Strategy A: StratifiedKFold ──")
-        strat_splits = build_stratified_splits(X, y)
-        results["stratified"] = evaluate_cv_strategy(
-            X, y, strat_splits, "stratified", metric_name
-        )
-
-    # ── Strategy B — Spatial Block ─────────────────────────────
-    if strategy in ("compare", "spatial"):
-        print(f"\n── Strategy B: Spatial Block CV ──")
-        if coords is None:
-            raise RuntimeError("Spatial CV requested but latitude/longitude columns are not available in features_train.csv")
-        spatial_splits, geo_groups = build_spatial_splits(X, y, coords)
-        results["spatial"] = evaluate_cv_strategy(
-            X, y, spatial_splits, "spatial", metric_name
-        )
-
-    # ── Compare and recommend ──────────────────────────────────
-    print(f"\n{'='*60}")
-    print(f"CV COMPARISON RESULTS")
-    print(f"{'='*60}")
-
-    for name, res in results.items():
-        print(f"  {name:12s}: OOF {metric_name.upper()}={res['oof_primary']:.5f}  "
-              f"std={res['fold_std']:.5f}")
-
-    if strategy == "compare" and len(results) == 2:
-        strat_score   = results["stratified"]["oof_primary"]
-        spatial_score = results["spatial"]["oof_primary"]
-        gap           = strat_score - spatial_score
-
-        print(f"\n  Gap (stratified - spatial): {gap:+.5f}")
-
-        if gap > 0.01:
-            recommendation = "spatial"
-            print(f"\n  ⚠️  Gap > 0.01 — stratified CV is OPTIMISTIC.")
-            print(f"  Recommendation: switch to SPATIAL block CV.")
-            print(f"  The gate has been too lenient — raise MIN_DELTA to 0.008.")
-        elif gap > 0.003:
-            recommendation = "spatial"
-            print(f"\n  ⚠️  Moderate gap — spatial CV is safer.")
-            print(f"  Recommendation: switch to SPATIAL block CV.")
+    if selected_type == "GroupKFold" and decision.get("group_col") is None:
+        print("\nGroupKFold requested but no group_col supplied — attempting spatial clustering fallback")
+        if coords is not None and len(coords) >= N_SPLITS:
+            try:
+                _splits, geo_groups = build_spatial_splits(X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS)))
+                # If clustering succeeded, mark group_col as generated and persist small artifact
+                selected_type = "GroupKFold"
+                selection_reason = selection_reason + "; spatial_clusters_generated"
+                # signal generated cluster group in state; concrete group_col name is an implementation detail
+                state_store.update(spatial_cluster_generated=True, spatial_cluster_count=int(max(1, len(set(geo_groups)))))
+                print("  ✅ spatial clusters generated; using GroupKFold on cluster groups")
+            except Exception as exc:
+                print(f"  ⚠️  Spatial clustering failed or insufficient samples: {exc} — falling back to safer CV")
+                if (config.get("task_type") == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15):
+                    selected_type = "StratifiedKFold"
+                    selection_reason = selection_reason + "; fallback_to_stratified_due_to_sparse_spatial"
+                else:
+                    selected_type = "KFold"
+                    selection_reason = selection_reason + "; fallback_to_kfold_due_to_sparse_spatial"
         else:
-            recommendation = "stratified"
-            print(f"\n  ✅ Gap < 0.003 — stratified CV is acceptable.")
-            print(f"  Recommendation: keep STRATIFIED (current).")
-    else:
-        recommendation = strategy
+            print("  ⚠️  No coordinate columns available or too few rows for spatial clustering — falling back to safer CV")
+            if (config.get("task_type") == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15):
+                selected_type = "StratifiedKFold"
+                selection_reason = selection_reason + "; fallback_to_stratified_no_coords"
+            else:
+                selected_type = "KFold"
+                selection_reason = selection_reason + "; fallback_to_kfold_no_coords"
 
-    # ── Write to SKILL_STATE.json ──────────────────────────────
-    state_store = SkillStateStore(paths.state_path)
-    state = state_store.read()
+    print(f"\nSelected CV strategy: {selected_type}")
+    print(f"Selection reason     : {selection_reason}")
+
     state_update = {
-        "cv_strategy": recommendation,
-        "cv_primary_metric": metric_name,
-        "cv_stratified_oof_auc": results.get("stratified", {}).get("oof_auc"),
-        "cv_spatial_oof_auc": results.get("spatial", {}).get("oof_auc"),
-        "cv_gap": round(
-            (results.get("stratified", {}).get("oof_primary", 0) or 0) -
-            (results.get("spatial", {}).get("oof_primary", 0) or 0), 6
-        ) if strategy == "compare" else None,
+        "cv_strategy": {
+            "type": selected_type,
+            "n_splits": int(decision.get("n_splits", N_SPLITS)),
+            "shuffle": bool(decision.get("shuffle", False)),
+            "random_state": decision.get("random_state"),
+            "group_col": decision.get("group_col"),
+            "selection_reason": selection_reason,
+        },
+        "cv_strategy_type": selected_type,
+        "cv_strategy_selection_reason": selection_reason,
+        "cv_group_col": decision.get("group_col"),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    # Per Source of Truth: persist the per-fold scores for the chosen strategy
-    chosen_fold_scores = None
-    try:
-        chosen_fold_scores = results.get(recommendation, {}).get("fold_scores")
-    except Exception:
-        chosen_fold_scores = None
-    if chosen_fold_scores is not None:
-        state_update["eda"] = {"fold_scores": chosen_fold_scores}
     current_phase = state.get("dag_phase")
     if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete", "phase_2_legality_checked"):
         state_update["dag_phase"] = "phase_3_features"
     state_store.update(**state_update)
-    print(f"\n✅ SKILL_STATE.json updated: cv_strategy={recommendation}")
+    print(f"\n✅ SKILL_STATE.json updated: cv_strategy={selected_type}")
 
     # ── Per SoT: persist chosen cv_strategy into challenge_config.json during Phase 1 only
     try:
@@ -294,14 +323,15 @@ def run(strategy: str = "compare") -> dict:
             else:
                 cfg_data = {}
 
-            # Compose a minimal cv_strategy block
             cv_block = {
-                "type": recommendation,
-                "n_splits": N_SPLITS,
-                "random_seed": __import__("zindian.config", fromlist=["get_seed"]).get_seed(),
+                "type": selected_type,
+                "n_splits": int(decision.get("n_splits", N_SPLITS)),
+                "shuffle": bool(decision.get("shuffle", False)),
+                "random_state": decision.get("random_state"),
+                "group_col": decision.get("group_col"),
+                "selection_reason": selection_reason,
             }
 
-            # Only write if different to avoid unnecessary commits
             if cfg_data.get("cv_strategy") != cv_block:
                 cfg_data["cv_strategy"] = cv_block
                 cfg_path.write_text(json.dumps(cfg_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -312,10 +342,10 @@ def run(strategy: str = "compare") -> dict:
         print(f"⚠️  Failed to write cv_strategy to challenge_config.json: {exc}")
 
     return {
-        "status":         "OK",
-        "strategy_chosen": recommendation,
-        "results":         results,
-        "recommendation":  recommendation,
+        "status": "OK",
+        "strategy_chosen": selected_type,
+        "selection_reason": selection_reason,
+        "cv_strategy": state_update["cv_strategy"],
     }
 
 
@@ -327,9 +357,9 @@ if __name__ == "__main__":
         elif arg == "--strategy" and len(sys.argv) > sys.argv.index(arg) + 1:
             strategy = sys.argv[sys.argv.index(arg) + 1]
 
-    if strategy not in ("compare", "spatial", "stratified"):
+    if strategy not in ("compare", "spatial", "stratified", "timeseries", "kfold"):
         print(f"❌ Unknown strategy '{strategy}'. "
-              f"Use: compare, spatial, stratified")
+              f"Use: compare, spatial, stratified, timeseries, kfold")
         sys.exit(1)
 
     result = run(strategy=strategy)

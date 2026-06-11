@@ -16,8 +16,10 @@ Feeds into:
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +52,53 @@ EXTERNAL_DATA_SOURCES = [
 ]
 
 
+def _resolve_external_banned(full_text: str) -> bool:
+    ban_phrases = (
+        "you may use only the datasets provided",
+        "only the datasets provided for this challenge",
+        "no external data",
+    )
+    allow_phrases = (
+        "external data is allowed",
+        "you may use external data",
+        "external data permitted",
+        "external data is permitted",
+    )
+    if any(phrase in full_text for phrase in ban_phrases):
+        return True
+    if any(phrase in full_text for phrase in allow_phrases):
+        return False
+    return True
+
+
+def _parse_deadline(full_text: str) -> str | None:
+    month_lookup = {
+        name.lower(): index
+        for index, name in enumerate(calendar.month_name)
+        if name
+    }
+    month_lookup.update(
+        {
+            abbr.lower(): index
+            for index, abbr in enumerate(calendar.month_abbr)
+            if abbr
+        }
+    )
+    month_pattern = "|".join(sorted(month_lookup.keys(), key=len, reverse=True))
+    dl = re.search(
+        rf"close[sd]?\s+(?:on|at)?\s*({month_pattern})\s+(\d{{1,2}}),?\s*(\d{{4}})",
+        full_text,
+        flags=re.IGNORECASE,
+    )
+    if not dl:
+        return None
+    month_num = month_lookup.get(dl.group(1).lower())
+    if month_num is None:
+        return None
+    deadline = datetime(int(dl.group(3)), month_num, int(dl.group(2)))
+    return f"{deadline:%B} {deadline.day}, {deadline:%Y}"
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def _get_headers() -> dict:
@@ -71,7 +120,22 @@ def scrape_competition_page(slug: str) -> dict:
     import re
 
     base = f"https://zindi.africa/competitions/{slug}"
-    results = {}
+    results = {
+        "metric": None,
+        "use_probabilities": False,
+        "external_banned": True,
+        "automl_banned": False,
+        "code_review_tier": None,
+        "daily_limit": 10,
+        "total_limit": 300,
+        "public_split_pct": 20,
+        "team_size": 4,
+        "must_select_2": False,
+        "seed_required": False,
+        "prizes": {},
+        "deadline": None,
+        "external_sources_on_data_page": [],
+    }
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -85,11 +149,11 @@ def scrape_competition_page(slug: str) -> dict:
         # Metric detection — Zindi standard evaluation section phrases
         metric = None
         metric_patterns = [
-            (r"evaluation metric.*?is\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)", "group"),
-            (r"scored using\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)", "group"),
-            (r"error metric.*?(f1|rmse|mae|auc|accuracy|log.?loss|f-1)", "group"),
+            r"evaluation metric.*?is\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
+            r"scored using\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
+            r"error metric.*?(f1|rmse|mae|auc|accuracy|log.?loss|f-1)",
         ]
-        for pattern, _ in metric_patterns:
+        for pattern in metric_patterns:
             m = re.search(pattern, full_text)
             if m:
                 raw = m.group(1).strip()
@@ -130,11 +194,7 @@ def scrape_competition_page(slug: str) -> dict:
         )
 
         # External data — Zindi standard phrase
-        external_banned = (
-            "you may use only the datasets provided" in full_text
-            or "only the datasets provided for this challenge" in full_text
-            or "no external data" in full_text
-        )
+        external_banned = _resolve_external_banned(full_text)
 
         # AutoML — Zindi standard phrase
         automl_banned = (
@@ -186,12 +246,9 @@ def scrape_competition_page(slug: str) -> dict:
                 prizes[label] = int(pm2.group(1).replace(",",""))
 
         # Deadline
-        deadline = None
-        dl = re.search(r"close[sd]?\s+(?:on|at)?\s*(may|june|july|august|september|october)\s+(\d+),?\s*(\d{4})", full_text)
-        if dl:
-            deadline = f"{dl.group(1).capitalize()} {dl.group(2)}, {dl.group(3)}"
+        deadline = _parse_deadline(full_text)
 
-        results = {
+        results.update({
             "metric":            metric,
             "use_probabilities": use_probabilities,
             "external_banned":   external_banned,
@@ -205,7 +262,7 @@ def scrape_competition_page(slug: str) -> dict:
             "seed_required":     seed_required,
             "prizes":            prizes,
             "deadline":          deadline,
-        }
+        })
 
         # ── Data page ──────────────────────────────────────────
         print(f"  Scraping: {base}/data")
@@ -266,14 +323,32 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
     # page and discussion board — it is the authoritative source.
     if config:
         scraped.setdefault("competition_intel", {})
+        competition_intel = scraped.setdefault("competition_intel", {})
+        for key, default in (
+            ("metric", None),
+            ("use_probabilities", False),
+            ("external_banned", False),
+            ("automl_banned", False),
+            ("code_review_tier", None),
+            ("daily_limit", 10),
+            ("total_limit", 300),
+            ("public_split_pct", 20),
+            ("team_size", 4),
+            ("must_select_2", False),
+            ("seed_required", False),
+            ("prizes", {}),
+            ("deadline", None),
+            ("external_sources_on_data_page", []),
+        ):
+            scraped.setdefault(key, default)
         if config.get("metric"):
             scraped["metric"] = config.get("metric")
         if config.get("use_probabilities") is not None:
             scraped["use_probabilities"] = config.get("use_probabilities")
         if config.get("allowed_external_data") is not None:
-            scraped["competition_intel"]["external_banned"] = not config.get("allowed_external_data")
+            competition_intel["external_banned"] = not config.get("allowed_external_data")
         if config.get("automl_permitted") is not None:
-            scraped["competition_intel"]["automl_banned"] = not config.get("automl_permitted")
+            competition_intel["automl_banned"] = not config.get("automl_permitted")
         if config.get("code_review_tier"):
             scraped["code_review_tier"] = config.get("code_review_tier")
         if config.get("daily_limit"):
@@ -417,10 +492,10 @@ def extract_compliance_flags(
                 })
             comment_external += scan_external_data_mentions(c_text)
             # Detect organizer replies by common usernames or explicit role
-            if any(x in username for x in ("zindi", "organizer", "admin")) or any(x in role for x in ("organizer", "admin", "moderator")):
+            if any(x in username for x in ("zindi", "organizer", "organiser", "admin")) or any(x in role for x in ("organizer", "organiser", "admin", "moderator")):
                 organizer_texts.append(c_text)
             # Also detect authoritative clarifications by phrase match (common organiser reply phrasing)
-            if any(phrase in c_text.lower() for phrase in ("happy to clarify", "hope that helps", "we confirm", "officially", "organisers reply", "organizer reply", "thanks for the questions", "thank you for the question")):
+            if any(phrase in c_text.lower() for phrase in ("happy to clarify", "hope that helps", "we confirm", "officially", "organisers reply", "organiser reply", "organizers reply", "organizer reply", "thanks for the questions", "thank you for the question")):
                 organizer_texts.append(c_text)
 
         all_external = list(set(external_hits + comment_external))
@@ -762,8 +837,8 @@ def run() -> dict:
     if external_banned_from_flags:
         comp_intel["external_banned"] = True
     else:
-        # Leave scraped value as-is (False/True) when no explicit ban found in flags
-        comp_intel.setdefault("external_banned", False)
+        # Default to the most restrictive state when the monitor lacks an explicit answer.
+        comp_intel.setdefault("external_banned", True)
 
     # ── 3. Leaderboard ────────────────────────────────────────
     print("\n[3/4] Fetching leaderboard status...")

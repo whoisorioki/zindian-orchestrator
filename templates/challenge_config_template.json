@@ -1,10 +1,22 @@
 {
     "name": null,
     "slug": null,
+    "task_type": null,
     "metric": null,
     "metric_direction": null,
-    "submission_format": null,
+    "target_col": null,
+    "target_domain_bounds": {
+        "min": null,
+        "max": null
+    },
     "use_probabilities": false,
+    "drift_threshold": 0.05,
+    "submission_format": null,
+    "submission_budget": {
+        "total": 0,
+        "daily": 0,
+        "used": 0
+    },
     "daily_limit": null,
     "total_limit": null,
     "public_split_pct": null,
@@ -15,6 +27,11 @@
     "automl_permitted": false,
     "data_modality": null,
     "domain": null,
+    "data_shape": {
+        "n_train": 0,
+        "n_test": 0,
+        "n_cols": 0
+    },
     "phase_skill_map": {
         "1": ["skill_01", "skill_02", "skill_15"],
         "2": ["skill_03", "skill_08"],
@@ -22,5 +39,23 @@
         "4": ["skill_11", "skill_16"],
         "5": ["skill_13", "skill_14", "skill_17"]
     },
-    "variants": []
+    "reproducibility": {
+        "seed": 42
+    },
+    "shap_leak_threshold": 3.0,
+    "variance_gate_threshold": 0.01,
+    "gate_margin": 0.001,
+    "cv_strategy": {
+        "type": "",
+        "n_splits": 5,
+        "shuffle": false,
+        "random_state": 42,
+        "group_col": null,
+        "stratify_col": null,
+        "selection_reason": ""
+    },
+    "variants": [],
+    "community_signals": [],
+    "policy_filters": [],
+    "file_hashes": {}
 }

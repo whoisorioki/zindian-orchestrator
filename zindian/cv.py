@@ -18,7 +18,7 @@ from sklearn.model_selection import (
     GroupKFold,
 )
 
-from .config import ChallengeConfig
+from .config import ChallengeConfig, get_seed
 
 
 def _read_strategy(config: ChallengeConfig | None = None) -> dict:
@@ -43,7 +43,14 @@ def make_cv_splitter(
     strat = cv_strategy or _read_strategy(None)
     ctype = strat.get("type", "stratified")
     n = n_splits or strat.get("n_splits", 5)
-    seed = random_seed or strat.get("random_seed", strat.get("seed", 42))
+    # Resolve seed: prefer caller-provided `random_seed`, then strategy values,
+    # finally fall back to the canonical `reproducibility.seed` via `get_seed()`.
+    if random_seed is not None:
+        seed = random_seed
+    else:
+        seed = strat.get("random_seed", strat.get("seed", None))
+        if seed is None:
+            seed = get_seed()
 
     if ctype in ("stratified", "strat", "stratify"):
         return StratifiedKFold(n_splits=int(n), shuffle=True, random_state=int(seed))

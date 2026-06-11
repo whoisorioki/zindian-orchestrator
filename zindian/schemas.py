@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class ValidationError(Exception):
     message: str
     path: str = ""

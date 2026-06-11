@@ -25,6 +25,63 @@ from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
 
+def _normalize_policy_token(value: Any) -> str:
+    token = str(value).strip().lower()
+    return "_".join(token.replace("-", "_").split())
+
+
+def _collect_banned_features(monitor_data: Mapping[str, Any], config: Mapping[str, Any]) -> List[str]:
+    banned: List[str] = []
+
+    monitor_root = monitor_data.get("banned_features", []) if isinstance(monitor_data, Mapping) else []
+    if isinstance(monitor_root, list):
+        banned.extend(monitor_root)
+    elif monitor_root:
+        banned.append(monitor_root)
+
+    competition_intel = monitor_data.get("competition_intel", {}) if isinstance(monitor_data, Mapping) else {}
+    nested_monitor = competition_intel.get("banned_features", []) if isinstance(competition_intel, Mapping) else []
+    if isinstance(nested_monitor, list):
+        banned.extend(nested_monitor)
+    elif nested_monitor:
+        banned.append(nested_monitor)
+
+    config_banned = config.get("banned_features", []) if config else []
+    if isinstance(config_banned, list):
+        banned.extend(config_banned)
+    elif config_banned:
+        banned.append(config_banned)
+
+    return list(dict.fromkeys(str(item) for item in banned if item is not None))
+
+
+def _normalize_planned_feature_entries(entries: Any) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+
+    def add_entry(entry: Any) -> None:
+        if entry is None:
+            return
+        if isinstance(entry, (list, tuple, set)):
+            for item in entry:
+                add_entry(item)
+            return
+        if isinstance(entry, str):
+            normalized.append({"name": entry, "transforms": [], "uses_lat_lon": False})
+            return
+        if isinstance(entry, Mapping):
+            normalized.append({
+                "name": entry.get("name") or entry.get("feature") or str(entry),
+                "source": entry.get("source", ""),
+                "transforms": entry.get("transforms", []),
+                "uses_lat_lon": entry.get("uses_lat_lon", False),
+            })
+            return
+        normalized.append({"name": str(entry), "transforms": [], "uses_lat_lon": False})
+
+    add_entry(entries)
+    return normalized
+
+
 def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]) -> Dict[str, Any]:
     """Derive a generic feature policy from monitor output and config.
 
@@ -36,13 +93,11 @@ def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str,
     allowed_data_sources = comp.get("allowed_data_sources", ["competition_provided_only"])
 
     # Banned transformations and features: combine monitor and config
-    banned_from_monitor = monitor_data.get("banned_features", []) if isinstance(monitor_data, dict) else []
-    banned_from_config = config.get("banned_features", []) if config else []
-    banned_transformations = list(set(banned_from_monitor + banned_from_config))
+    banned_transformations = _collect_banned_features(monitor_data, config)
 
     # Lat/Lon permitted if no spatial bans mention 'derived_spatial' or 'spatial'
     lat_lon_permitted = True
-    low = [b.lower() for b in banned_transformations]
+    low = [_normalize_policy_token(b) for b in banned_transformations]
     if any("spatial" in s for s in low) or any("latitude" in s or "longitude" in s for s in low):
         lat_lon_permitted = False
 
@@ -78,17 +133,21 @@ def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[s
     """
     results: List[Dict[str, Any]] = []
 
-    allowed_sources = set([
-        s.lower() for s in policy.get("allowed_data_sources", policy.get("allowed_sources", []))
-    ])
+    allowed_sources = {
+        _normalize_policy_token(source)
+        for source in policy.get("allowed_data_sources", policy.get("allowed_sources", []))
+    }
     external_ok = policy.get("external_data_permitted", True)
-    banned_trans = set([s.lower() for s in policy.get("banned_transformations", [])])
+    banned_trans = {
+        _normalize_policy_token(transform)
+        for transform in policy.get("banned_transformations", [])
+    }
     lat_ok = policy.get("coordinate_features_permitted", policy.get("lat_lon_permitted_as_feature", True))
 
     for f in planned_features:
         name = f.get("name")
-        source = (f.get("source") or "").lower()
-        transforms = [t.lower() for t in f.get("transforms", [])]
+        source = _normalize_policy_token(f.get("source") or "")
+        transforms = [_normalize_policy_token(t) for t in f.get("transforms", [])]
         uses_lat_lon = bool(f.get("uses_lat_lon", False))
 
         status = "PASS"
@@ -103,7 +162,7 @@ def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[s
 
         # Transformation check
         if not blocks:
-            offending = [t for t in transforms if any(bt in t for bt in banned_trans)]
+            offending = [t for t in transforms if t in banned_trans]
             if offending:
                 status = "BLOCK"
                 reason = f"Banned transformation(s) detected: {offending}"
@@ -189,23 +248,10 @@ def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, An
         if not planned_features:
             # Fallback: use anchor feature summary if available
             af = state.get("anchor_features")
-            if af:
-                planned_features = [{"name": af, "transforms": [], "uses_lat_lon": False}]
-            else:
-                planned_features = []
+            planned_features = af
 
     # Normalize planned_features into the expected structure
-    normalized = []
-    for p in planned_features:
-        if isinstance(p, str):
-            normalized.append({"name": p, "transforms": [], "uses_lat_lon": False})
-        else:
-            normalized.append({
-                "name": p.get("name") or p.get("feature") or str(p),
-                "source": p.get("source", ""),
-                "transforms": p.get("transforms", []),
-                "uses_lat_lon": p.get("uses_lat_lon", False),
-            })
+    normalized = _normalize_planned_feature_entries(planned_features)
 
     checks = check_planned_features(policy, normalized)
     _write_legality_report(paths, checks, policy)
@@ -224,7 +270,10 @@ def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, An
     }
     # Only advance dag_phase if current is before phase_2_legality_checked
     current_phase = state.get("dag_phase")
-    if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete") and status == "GO":
+    if status == "GO" and (
+        current_phase in (None, "uninitialized", "phase_0_foundation")
+        or (isinstance(current_phase, str) and current_phase.startswith("phase_1_"))
+    ):
         patch["dag_phase"] = "phase_2_legality_checked"
 
     store.update(**patch)

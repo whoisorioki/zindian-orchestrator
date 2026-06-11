@@ -2,7 +2,7 @@
 
 **For use with:** Claude Code, Claude API (system prompt), or any
 agentic coding session implementing Zindian skills.
-**Paired document:** `source_of_truth_v2.0.md`
+**Paired document:** `source_of_truth.md` (v2.0.1-Canonical)
 **Author:** Orioki — MCS 4.2, JKUAT
 
 ---
@@ -338,5 +338,5 @@ def run(config: dict, state: dict) -> dict:
 ---
 
 *Zindian Orchestrator — Coding Agent System Prompt*
-*Paired with: source_of_truth_v2.0.md*
+*Paired with: source_of_truth.md (v2.0.1-Canonical)*
 *Maintained by: Orioki — MCS 4.2, JKUAT*

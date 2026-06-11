@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
+from zindian.state import SkillStateStore
 
 
 # Default target column names (can be overridden per-competition)
@@ -56,26 +57,26 @@ def verify_hash(current: str, locked: str, name: str) -> bool:
 
 
 def update_skill_state(integrity: dict, state_path: Path) -> None:
-    if not state_path.exists():
-        raise FileNotFoundError(f"SKILL_STATE.json not found at {state_path}")
-    with state_path.open("r", encoding="utf-8") as f:
-        state = json.load(f)
+    """Persist integrity hashes into SKILL_STATE.json using SkillStateStore.
 
-    state["md5_target_hash"] = integrity["md5_target_hash"]
-    state["md5_train_file"] = integrity["md5_train_file"]
-    state["md5_test_file"] = integrity["md5_test_file"]
-    state["md5_sample_sub_file"] = integrity["md5_sample_sub_file"]
+    Uses safe update semantics and schema validation.
+    """
+    store = SkillStateStore(state_path)
+    state = store.read()
+    # Prepare updates dict
+    updates = {
+        "md5_target_hash": integrity["md5_target_hash"],
+        "md5_train_file": integrity["md5_train_file"],
+        "md5_test_file": integrity["md5_test_file"],
+        "md5_sample_sub_file": integrity["md5_sample_sub_file"],
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
     # Do not downgrade dag_phase if already beyond phase_1
     current_phase = state.get("dag_phase")
     if current_phase in (None, "uninitialized", "phase_0_foundation"):
-        state["dag_phase"] = "phase_1_complete"
-    state["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json", dir=str(state_path.parent)) as tmp:
-        json.dump(state, tmp, indent=2)
-        tmp_path = tmp.name
-    os.replace(tmp_path, state_path)
-    print(f"✅ {state_path} updated with MD5 hashes")
+        updates["dag_phase"] = "phase_1_complete"
+    store.update(**updates)
+    print(f"✅ {state_path} updated with MD5 hashes via SkillStateStore")
 
 
 def run(re_verify: bool = False) -> dict:
@@ -145,7 +146,7 @@ def run(re_verify: bool = False) -> dict:
         print(f"✅ Target values confirmed numeric binary: {[0,1]}")
 
     # Print class distribution
-    counts = train[TARGET_COL].value_counts().to_dict()
+    counts = train[target_col].value_counts().to_dict()
     total = len(train)
     print(f"\n  Class distribution:")
     print(f"    Absent  (0): {counts.get(0, 0):,} ({counts.get(0,0)/total*100:.1f}%)")
@@ -172,14 +173,30 @@ def run(re_verify: bool = False) -> dict:
 
     # If re-verifying, compare against locked hashes
     if re_verify:
-        with state_path.open("r", encoding="utf-8") as f:
-            state = json.load(f)
+        store = SkillStateStore(state_path)
+        state = store.read()
 
         print("\nVerifying against locked hashes...")
-        verify_hash(md5_target, state.get("md5_target_hash"), "target column")
-        verify_hash(md5_train_file, state.get("md5_train_file"), "train file")
-        verify_hash(md5_test_file, state.get("md5_test_file"), "test file")
-        verify_hash(md5_sample_sub, state.get("md5_sample_sub_file"), "sample submission")
+        locked = state.get("md5_target_hash")
+        if not locked:
+            raise RuntimeError("No locked md5_target_hash found in SKILL_STATE.json for verification")
+        verify_hash(md5_target, locked, "target column")
+
+        locked = state.get("md5_train_file")
+        if not locked:
+            raise RuntimeError("No locked md5_train_file found in SKILL_STATE.json for verification")
+        verify_hash(md5_train_file, locked, "train file")
+
+        locked = state.get("md5_test_file")
+        if not locked:
+            raise RuntimeError("No locked md5_test_file found in SKILL_STATE.json for verification")
+        verify_hash(md5_test_file, locked, "test file")
+
+        locked = state.get("md5_sample_sub_file")
+        if not locked:
+            raise RuntimeError("No locked md5_sample_sub_file found in SKILL_STATE.json for verification")
+        verify_hash(md5_sample_sub, locked, "sample submission")
+
         print("✅ All hashes match — data integrity confirmed")
     else:
         # First run — lock the hashes (do not downgrade dag_phase if beyond)

@@ -10,37 +10,150 @@ Usage: python3 -m zindian.skills.skill_04_eda
 from __future__ import annotations
 
 import json
+import traceback
 from pathlib import Path
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
+from typing import Any, Dict, Mapping
 
 from zindian.paths import resolve_competition_paths, CompetitionPaths
 
 
-def detect_target(paths: CompetitionPaths) -> str | None:
-    # Try challenge_config.json -> SKILL_STATE.json -> heuristics
-    cfg_path = paths.config_path
-    state_path = paths.state_path
-    target = None
-    try:
-        if cfg_path.exists():
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            # common key names
-            for k in ("target", "label", "target_column", "output_column"):
-                if k in cfg and cfg[k]:
-                    return cfg[k]
-    except Exception:
-        pass
-    try:
-        if state_path.exists():
-            st = json.loads(state_path.read_text(encoding="utf-8"))
-            for k in ("target", "target_column", "primary_key", "label"):
-                if k in st and st[k]:
-                    return st[k]
-    except Exception:
-        pass
-    return None
+def _load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object at {path}")
+    return data
+
+
+def detect_target(paths: CompetitionPaths) -> str:
+    # Try challenge_config.json -> SKILL_STATE.json only; never guess.
+    cfg = _load_json_object(paths.config_path)
+    for key in ("target", "label", "target_column", "output_column"):
+        value = cfg.get(key)
+        if value:
+            return str(value)
+
+    state = _load_json_object(paths.state_path)
+    for key in ("target", "target_column", "primary_key", "label"):
+        value = state.get(key)
+        if value:
+            return str(value)
+
+    raise ValueError(
+        "Unable to resolve target column from challenge_config.json or SKILL_STATE.json; "
+        "EDA will not guess a target column."
+    )
+
+
+def _load_eda_config(paths: CompetitionPaths) -> dict[str, Any]:
+    return _load_json_object(paths.config_path)
+
+
+def _extract_explicit_encoding_rules(config_data: Mapping[str, Any]) -> dict[str, str]:
+    rules: dict[str, str] = {}
+
+    def add_rules(value: Any, default_encoding: str) -> None:
+        if isinstance(value, Mapping):
+            for name, encoding in value.items():
+                if name:
+                    rules[str(name)] = str(encoding or default_encoding)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, str):
+                    rules[item] = default_encoding
+                elif isinstance(item, Mapping):
+                    name = item.get("name") or item.get("column") or item.get("feature")
+                    if name:
+                        rules[str(name)] = str(item.get("encoding") or item.get("type") or default_encoding)
+
+    add_rules(config_data.get("feature_encoding", {}), "categorical")
+    add_rules(config_data.get("categorical_columns", []), "categorical")
+    add_rules(config_data.get("ordinal_columns", []), "ordinal")
+    add_rules(config_data.get("nominal_columns", []), "nominal")
+    return rules
+
+
+def _high_correlation_pairs(corr: pd.DataFrame, thresh: float = 0.95) -> list[tuple[str, str, float]]:
+    pairs: list[tuple[str, str, float]] = []
+    labels = list(corr.index)
+    positions = {label: idx for idx, label in enumerate(labels)}
+
+    for row_name, row_values in corr.iterrows():
+        row_pos = positions[row_name]
+        for col_name, value in row_values.items():
+            if positions[col_name] <= row_pos:
+                continue
+            if pd.notna(value) and float(value) > thresh:
+                pairs.append((str(row_name), str(col_name), float(value)))
+    return pairs
+
+
+def _outlier_summary(series: pd.Series, total_rows: int) -> dict[str, Any]:
+    numeric_values = pd.to_numeric(series, errors="coerce").dropna().astype(float).to_numpy()
+    if numeric_values.size == 0:
+        return {"outlier_pct": 0.0, "flag": False, "method": "empty", "skewness": 0.0}
+
+    skew_value: Any = pd.Series(numeric_values).skew() if numeric_values.size >= 3 else 0.0
+    skewness = float(skew_value) if not pd.isna(skew_value) else 0.0
+    if pd.isna(skewness):
+        skewness = 0.0
+
+    abs_skewness = abs(skewness)
+    if abs_skewness >= 1.0:
+        median = float(np.median(numeric_values))
+        mad = float(np.median(np.abs(numeric_values - median)))
+        if mad > 0:
+            modified_z = 0.6745 * np.abs(numeric_values - median) / mad
+            outlier_mask = modified_z > 3.5
+            method = "mad"
+        else:
+            outlier_mask = np.abs(numeric_values - median) > 0
+            method = "median_deviation"
+    else:
+        q1 = float(np.quantile(numeric_values, 0.25))
+        q3 = float(np.quantile(numeric_values, 0.75))
+        iqr = q3 - q1
+        if iqr > 0:
+            low = q1 - 1.5 * iqr
+            high = q3 + 1.5 * iqr
+            outlier_mask = np.logical_or(numeric_values < low, numeric_values > high)
+            method = "iqr"
+        else:
+            low, high = np.quantile(numeric_values, [0.01, 0.99])
+            outlier_mask = np.logical_or(numeric_values < low, numeric_values > high)
+            method = "quantile_fence"
+
+    outlier_pct = float(outlier_mask.sum() / max(1, total_rows))
+    return {
+        "outlier_pct": outlier_pct,
+        "flag": outlier_pct > 0.05,
+        "method": method,
+        "skewness": skewness,
+    }
+
+
+def _build_categorical_columns(df: pd.DataFrame, feature_cols: list[str], explicit_rules: Mapping[str, str]) -> list[dict[str, Any]]:
+    categorical_columns: list[dict[str, Any]] = []
+    for column in feature_cols:
+        column_rules = explicit_rules.get(column)
+        if pd.api.types.is_object_dtype(df[column]) or pd.api.types.is_string_dtype(df[column]) or str(df[column].dtype) == "category":
+            categorical_columns.append({
+                "name": column,
+                "cardinality": int(df[column].nunique(dropna=False)),
+                "encoding": column_rules or "one-hot or ordinal",
+            })
+        elif column_rules is not None:
+            categorical_columns.append({
+                "name": column,
+                "cardinality": int(df[column].nunique(dropna=False)),
+                "encoding": column_rules,
+            })
+    return categorical_columns
 
 
 def mcar_mnar_assessment(df: pd.DataFrame, col: str, target: str) -> str:
@@ -51,14 +164,11 @@ def mcar_mnar_assessment(df: pd.DataFrame, col: str, target: str) -> str:
         return "none"
     # If correlation between null indicator and target > small threshold -> MNAR
     if target in df.columns:
-        try:
-            null_ind = series.isnull().astype(float)
-            target_series = pd.to_numeric(df[target], errors="coerce").astype(float)
-            corr = null_ind.corr(target_series)
-            if pd.notna(corr) and abs(corr) >= 0.05:
-                return "MNAR"
-        except Exception:
-            pass
+        null_ind = series.isnull().astype(float)
+        target_series = pd.to_numeric(df[target], errors="coerce").astype(float)
+        corr = null_ind.corr(target_series)
+        if pd.notna(corr) and abs(corr) >= 0.05:
+            return "MNAR"
     return "MCAR"
 
 
@@ -81,17 +191,13 @@ def run():
             raise FileNotFoundError(f"Training data not found at {proc_train} or {raw_train}")
         df = pd.read_csv(raw_train)
 
+    config_data = _load_eda_config(paths)
+    explicit_rules = _extract_explicit_encoding_rules(config_data)
+
     # Detect target column
     target = detect_target(paths)
-    if target is None or target not in df.columns:
-        # Heuristic: look for binary-looking columns
-        for c in df.columns:
-            if df[c].dropna().isin([0, 1]).all() and df[c].nunique() <= 2:
-                target = c
-                break
-    if target is None:
-        # fallback to second column if can't detect
-        target = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+    if target not in df.columns:
+        raise ValueError(f"Resolved target column '{target}' is not present in the training data")
 
     # Exclude ID, coords, and target
     exclude_lower = {"id", "id_number", "latitude", "longitude", target.lower()}
@@ -122,16 +228,7 @@ def run():
     # Correlations
     numeric_feats = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     corr = df[numeric_feats].corr().abs()
-    corr_values = corr.to_numpy(dtype=float, copy=False)
-    upper_mask = np.triu(np.ones(corr_values.shape, dtype=bool), k=1)
-    high_corr_pairs = []
-    thresh = 0.95
-    for row_idx, row_name in enumerate(corr.index):
-        for col_idx, col_name in enumerate(corr.columns):
-            if upper_mask[row_idx, col_idx]:
-                value = corr_values[row_idx, col_idx]
-                if value > thresh:
-                    high_corr_pairs.append((row_name, col_name, float(value)))
+    high_corr_pairs = _high_correlation_pairs(corr, thresh=0.95)
 
     pii_keywords = {"email", "phone", "name", "id_number", "ssn"}
     pii_risk = [c for c in df.columns if any(k in c.lower() for k in pii_keywords)]
@@ -148,40 +245,21 @@ def run():
     # PREPROCESSING AUDIT
     missingness_pattern = {c: mcar_mnar_assessment(df, c, target) for c in null_cols}
 
-    categorical_columns = []
-    for c in feature_cols:
-        if df[c].dtype == object:
-            categorical_columns.append({"name": c, "cardinality": int(df[c].nunique()) , "encoding": "one-hot or ordinal"})
-        elif pd.api.types.is_integer_dtype(df[c]) and df[c].nunique() < 20:
-            categorical_columns.append({"name": c, "cardinality": int(df[c].nunique()), "encoding": "ordinal"})
+    categorical_columns = _build_categorical_columns(df, feature_cols, explicit_rules)
 
     scaling_needed = []
     for c in numeric_feats:
-        try:
-            snum = pd.to_numeric(df[c], errors="coerce").dropna()
-            if snum.empty:
-                continue
-            val = float(snum.max() - snum.min())
-            if val > 1000:
-                scaling_needed.append(c)
-        except Exception:
+        snum = pd.to_numeric(df[c], errors="coerce").dropna()
+        if snum.empty:
             continue
+        range_span = float(snum.quantile(0.95) - snum.quantile(0.05))
+        scale_ratio = float(snum.std(ddof=1) / max(snum.abs().median(), 1e-12)) if len(snum) > 1 else 0.0
+        if range_span > 1000 or scale_ratio > 10:
+            scaling_needed.append(c)
 
-    # Outlier via IQR
     outlier_flags = {}
     for c in numeric_feats:
-        numeric_values = pd.to_numeric(df[c], errors="coerce").dropna().astype(float).to_numpy()
-        if numeric_values.size == 0:
-            outlier_flags[c] = {"outlier_pct": 0.0, "flag": False}
-            continue
-        q1 = float(np.quantile(numeric_values, 0.25))
-        q3 = float(np.quantile(numeric_values, 0.75))
-        iqr = q3 - q1
-        low = q1 - 1.5 * iqr
-        high = q3 + 1.5 * iqr
-        outliers = int(np.logical_or(numeric_values < low, numeric_values > high).sum())
-        pct = float(outliers / float(len(df)))
-        outlier_flags[c] = {"outlier_pct": pct, "flag": pct > 0.05}
+        outlier_flags[c] = _outlier_summary(df[c], len(df))
 
     # Standardisation verdict
     std_verdict = {
@@ -242,23 +320,29 @@ def run():
     summary_path = reports_dir / "eda_summary.md"
     summary_path.write_text("\n".join(md_lines), encoding="utf-8")
 
-    # Update SKILL_STATE.json safely
+    # Update SKILL_STATE.json using SkillStateStore (safe, validated)
+    from zindian.state import SkillStateStore
+
+    state_path = paths.state_path
+    store = SkillStateStore(state_path)
+    state = store.read()
+    current_phase = state.get("dag_phase")
+    allowed = current_phase in (None, "uninitialized", "phase_0_foundation") or (
+        isinstance(current_phase, str) and current_phase.startswith("phase_1_")
+    )
+    updates = {
+        "eda_completed_at": datetime.now(timezone.utc).isoformat(),
+        "dead_features": zero_variance,
+        "high_corr_pairs_count": len(high_corr_pairs),
+    }
+    if allowed:
+        updates["dag_phase"] = "phase_1_eda_complete"
     try:
-        state_path = paths.state_path
-        state = {}
-        if state_path.exists():
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        current_phase = state.get("dag_phase")
-        allowed = current_phase in (None, "phase_1_integrity", "phase_1_eda")
-        if allowed:
-            state["dag_phase"] = "phase_1_eda_complete"
-        state["eda_completed_at"] = datetime.now(timezone.utc).isoformat()
-        state["dead_features"] = zero_variance
-        state["high_corr_pairs_count"] = len(high_corr_pairs)
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
+        store.update(**updates)
     except Exception:
-        pass
+        print("ERROR: failed to update SKILL_STATE.json after EDA")
+        traceback.print_exc()
+        raise
 
     # Print clean summary
     print("EDA complete — report written to:", rep_path)

@@ -14,8 +14,11 @@
   "submissions_used_total": 22,
   "remaining_submissions": 3,
   "dag_phase": "phase_3_features",
-  "human_gate_13_approved": true,
-  "human_gate_14_approved": false,
+  "human_gate_1_approved": true,
+  "human_gate_2_by_branch": {},
+  "human_gate_3_approved": false,
+  "human_gate_4_approved": false,
+  "human_gate_5_selection": [],
   "selected_submissions": [
     "tfcawL75",
     "X2LLeBts"

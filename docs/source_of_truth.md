@@ -1,13 +1,11 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** 2.0-Canonical
+**Version:** 2.0.1-Canonical
 **Status:** Living Document — Approved for Production Automation
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** v1.9 → v2.0 — 3 final fixes applied
-(Section 8 Phase 1 gate target_std check added to match Section 4;
-skill_12 output clarified as raw ddof=1 value with normalisation
-deferred to skill_11 consumption; skill_21 Guard Condition 4 restated
-as effective_variance_threshold for consistency with normalised system)
+**Last updated:** v2.0 → v2.0.1 — 2 label fixes applied
+(Section 4 Phase 1 gate reference string advanced to v2.0.1;
+Section 8 skill_21 DoD Guard Condition 4 synced to effective_variance_threshold label)
 
 ---
 
@@ -811,7 +809,7 @@ No string literals permitted in `skill_05` body.
 **Phase 1 → Phase 2A gate:**
 
 ```
-[ ] challenge_config.json matches v1.9 schema — all
+[ ] challenge_config.json matches v2.0.1 schema — all
     fields present and non-null where required
 [ ] task_type, metric, target_col confirmed
 [ ] metric_direction written and set
@@ -2210,7 +2208,8 @@ optimisation.
 [ ] Guard Condition 3: does not run when
     leaked_features non-empty
 [ ] Guard Condition 4: does not run when
-    fold_score_variance >= variance_gate_threshold
+    fold_score_variance >= effective_variance_threshold
+    (equivalent to raw variance_gate_threshold in classification)
 [ ] Guard Condition 5: does not run without calibrated
     probabilities from skill_09
 [ ] Guard Condition 6: does not run if confidence
@@ -2516,9 +2515,7 @@ optimisation.
 
 ---
 
-*End of Source of Truth Document v2.0-Canonical*
-*Patched from v1.9: 3 fixes — Section 8 Phase 1 gate target_std,
-skill_12 raw-vs-effective variance clarification, skill_21 Guard
-Condition 4 effective_variance_threshold consistency*
-*Status: Fully validated — all issues from v1.2 through v1.9 resolved*
-*Maintained by: Orioki — MCS 4.2, JKUAT*
+*End of Source of Truth Document v2.0.1-Canonical*
+*Patched from v2.0: 2 label fixes — Section 4 gate schema reference string updated to v2.0.1; 
+Section 8 skill_21 DoD Guard Condition 4 synchronized to effective_variance_threshold.*
+*Status: Fully signed off — zero open anomalies remaining.*

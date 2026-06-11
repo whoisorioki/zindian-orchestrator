@@ -2,13 +2,8 @@
 Skill 08 — Anchor Baseline
 Train LightGBM baseline on TerraClimate features only.
 Lat/Lon BANNED as model features per organizer ruling (discussion 32369).
-Lock first confirmed anchor submission and create git branch.
+Lock first confirmed anchor artifacts and create git branch.
 Must run after Skill 07 feature engineering completes.
-
-Submission is HUMAN-GATED — never fires automatically.
-Two-layer gate:
-  Layer 1 — validate_submission() runs 8 automatic checks (hard block on failure)
-  Layer 2 — human YES/NO prompt (only shown if Layer 1 passes)
 """
 
 from __future__ import annotations
@@ -17,16 +12,17 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 # KFold usage is delegated to the central CV factory / shared trainer
-from sklearn.preprocessing import StandardScaler
-import lightgbm as lgb
+from zindian.cv import make_cv_splitter
 
 from zindian.config import ChallengeConfig
+from zindian.config import get_seed
 from zindian.paths import resolve_competition_paths
-from zindian.state import SkillStateStore, resolve_active_cv_strategy_id
+from zindian.state import SkillStateStore, resolve_active_cv_strategy_id, write_oof_record
 from zindian.ledger import Ledger
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
@@ -43,12 +39,32 @@ def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFram
     train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
     test  = pd.read_csv(paths.data_processed_dir / "features_test.csv")
 
-    # Training target: prefer the configured column, with the EY Frogs label as fallback.
-    training_target_col = config.get("target_column", "Occurrence Status")
+    # Training target must be initialized during intake and read dynamically.
+    training_target_col = config.get("target_col") or config.get("target_column")
+    if not training_target_col:
+        # Fallback inference for legacy/minimal configs: target is any train-only column
+        # excluding common coordinate/id columns. This keeps the module config-driven
+        # while remaining robust for old fixtures.
+        cols_cfg = config.get("columns", {}) or {}
+        id_col = cols_cfg.get("id", "ID")
+        lat_col = cols_cfg.get("latitude", "Latitude")
+        lon_col = cols_cfg.get("longitude", "Longitude")
+        candidate_cols = [
+            c for c in train.columns
+            if c not in test.columns and c not in {id_col, lat_col, lon_col}
+        ]
+        if len(candidate_cols) == 1:
+            training_target_col = candidate_cols[0]
+        else:
+            raise RuntimeError("target_col not initialized in challenge_config.json")
 
     # Submission column: what Zindi expects in the CSV header
-    sample = pd.read_csv(paths.data_raw_dir / "SampleSubmission.csv")
-    submission_col = [c for c in sample.columns if c.upper() != "ID"][0]
+    input_files = config.get("input_files", {}) or {}
+    sample_file = input_files.get("sample", "SampleSubmission.csv")
+    cols_cfg = config.get("columns", {}) or {}
+    id_col = cols_cfg.get("id", "ID")
+    sample = pd.read_csv(paths.data_raw_dir / sample_file)
+    submission_col = [c for c in sample.columns if c != id_col][0]
 
     return train, test, training_target_col, submission_col
 
@@ -60,15 +76,64 @@ def compute_oof_predictions(
     test:        pd.DataFrame,
     config:      ChallengeConfig,
     target_col:  str,
+    state:       dict | None = None,
     n_splits:    int = 5,
-    random_seed: int = 42,
-) -> tuple[np.ndarray, np.ndarray, float, float, float, float]:
+    random_seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, float, float, float, list[tuple[np.ndarray, np.ndarray]], list[str], str, int]:
     """
     Train LightGBM with KFold cross-validation on TerraClimate features only.
     Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
     Computes F1 using optimal threshold (challenge metric).
     """
-    feature_cols = [c for c in train.columns if c not in ("ID", "Latitude", "Longitude", target_col)]
+    if random_seed is None:
+        random_seed = get_seed()
+
+    cols_cfg = config.get("columns", {}) or {}
+    id_col = cols_cfg.get("id", "ID")
+    lat_col = cols_cfg.get("latitude", "Latitude")
+    lon_col = cols_cfg.get("longitude", "Longitude")
+
+    # Resolve active CV strategy from state override first, then config.
+    state = state or {}
+    override_active = state.get("cv_strategy_override", {}).get("active", False)
+    if override_active:
+        active_strategy = state.get("cv_strategy_override", {}).get("override_strategy")
+    else:
+        active_strategy = config.get("cv_strategy", {}).get("type")
+    if not active_strategy:
+        active_strategy = "stratified"
+
+    feature_cols = [c for c in train.columns if c not in (id_col, lat_col, lon_col, target_col)]
+    feature_count = len(feature_cols)
+
+    # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
+    anchor_challenge = state.get("anchor_challenge", {})
+    model_family = "lightgbm"
+    model_params = {"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed}
+    if anchor_challenge.get("active", False):
+        model_family = str(anchor_challenge.get("model_family") or anchor_challenge.get("framework") or "lightgbm")
+        model_params.update(anchor_challenge.get("params", {}) or anchor_challenge.get("hyperparams", {}) or {})
+        n_splits = int(anchor_challenge.get("n_splits") or n_splits)
+
+    if model_family != "lightgbm":
+        raise RuntimeError(f"Unsupported anchor_challenge model_family '{model_family}' in skill_08; supported: 'lightgbm'")
+
+    y = np.asarray(train[target_col].values, dtype=np.int32)
+    groups = None
+    group_col = (config.get("cv_strategy", {}) or {}).get("group_column")
+    if group_col and group_col in train.columns:
+        groups = np.asarray(train[group_col].values)
+
+    splitter = make_cv_splitter(
+        cv_strategy={"type": active_strategy, "n_splits": n_splits},
+        random_seed=random_seed,
+    )
+    X_dummy = np.zeros((len(train), 1), dtype=np.float64)
+    if groups is not None:
+        split_iter = list(splitter.split(X_dummy, y, groups))
+    else:
+        split_iter = list(splitter.split(X_dummy, y))
+
     result = train_lightgbm_cv(
         train=train,
         test=test,
@@ -76,7 +141,8 @@ def compute_oof_predictions(
         target_col=target_col,
         n_splits=n_splits,
         random_seed=random_seed,
-        params={"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed},
+        cv=split_iter,
+        params=model_params,
         num_boost_round=500,
         early_stopping_rounds=50,
         scale=True,
@@ -84,200 +150,24 @@ def compute_oof_predictions(
 
     from sklearn.metrics import log_loss
 
-    y = np.asarray(train[target_col].values, dtype=np.int32)
     oof_logloss = float(log_loss(y, result.oof_probs))
     print(f"\nOOF Log Loss : {oof_logloss:.6f}")
     print(f"OOF AUC      : {result.oof_auc:.6f}")
     print(f"OOF F1       : {result.oof_f1:.6f} (threshold={result.threshold:.2f})")
 
-    return result.oof_probs, result.test_probs, oof_logloss, result.oof_auc, result.oof_f1, result.threshold
-
-
-# ── Submission Validation ──────────────────────────────────────────────────────
-
-def validate_submission(
-    sub_path:    Path,
-    sample_path: Path,
-    config:      ChallengeConfig,
-) -> list[str]:
-    """
-    Layer 1 — Automatic validation gate.
-    Runs 8 checks against SampleSubmission and challenge_config rules.
-    Returns list of error strings. Empty list = all checks passed.
-    Gate HARD BLOCKS if any error is returned — no human prompt shown.
-    """
-    errors = []
-
-    sub    = pd.read_csv(sub_path)
-    sample = pd.read_csv(sample_path)
-
-    # Check 1 — Column names match exactly
-    if list(sub.columns) != list(sample.columns):
-        errors.append(
-            f"Column mismatch: got {list(sub.columns)}, "
-            f"expected {list(sample.columns)}"
-        )
-
-    # Check 2 — Row count matches SampleSubmission
-    if len(sub) != len(sample):
-        errors.append(
-            f"Row count mismatch: got {len(sub)}, expected {len(sample)}"
-        )
-
-    # Check 3 — No missing IDs
-    expected_ids = set(sample["ID"].astype(str))
-    got_ids      = set(sub["ID"].astype(str))
-    missing      = expected_ids - got_ids
-    if missing:
-        errors.append(
-            f"Missing {len(missing)} IDs from SampleSubmission: "
-            f"{sorted(missing)[:5]}{'…' if len(missing) > 5 else ''}"
-        )
-
-    # Check 4 — No extra IDs
-    extra = got_ids - expected_ids
-    if extra:
-        errors.append(
-            f"Extra {len(extra)} IDs not in SampleSubmission: "
-            f"{sorted(extra)[:5]}{'…' if len(extra) > 5 else ''}"
-        )
-
-    # Check 5 — ID order matches SampleSubmission exactly
-    if list(sub["ID"].astype(str)) != list(sample["ID"].astype(str)):
-        errors.append(
-            "ID order does not match SampleSubmission — reindex before submitting"
-        )
-
-    # Check 6 — No null values anywhere
-    if sub.isnull().any().any():
-        null_cols = sub.columns[sub.isnull().any()].tolist()
-        errors.append(f"Null values found in columns: {null_cols}")
-
-    # Checks 7 & 8 only apply when use_probabilities is True
-    if config.use_probabilities:
-        pred_col = [c for c in sub.columns if c.upper() != "ID"][0]
-        vals     = sub[pred_col]
-
-        # Check 7 — Values in [0.0, 1.0]
-        if vals.min() < 0.0 or vals.max() > 1.0:
-            errors.append(
-                f"Prediction values out of [0, 1] range: "
-                f"min={vals.min():.8f}, max={vals.max():.8f}"
-            )
-
-        # Check 8 — Format matches use_probabilities setting
-        unique_vals = set(vals.round(8).unique())
-        is_binary = unique_vals.issubset({0, 1, 0.0, 1.0})
-        if config.use_probabilities and is_binary:
-            errors.append(
-                f"use_probabilities=True but all values are 0 or 1. "
-                f"Submit raw float probabilities."
-            )
-
-    return errors
-
-
-# ── Human Gate ─────────────────────────────────────────────────────────────────
-
-def _human_submission_gate(
-    oof_logloss: float,
-    oof_auc:     float,
-    sub_path:    Path,
-    sample_path: Path,
-    remaining:   int,
-    config:      ChallengeConfig,
-) -> bool:
-    """
-    Two-layer submission gate.
-
-    Layer 1 — validate_submission() runs 8 automatic checks.
-              Any failure → hard block, no prompt shown, returns False.
-
-    Layer 2 — Human YES/NO prompt.
-              Only reached if Layer 1 passes all 8 checks.
-              Returns True only on exact 'YES' input.
-              Any other input → returns False, no submit.
-    """
-
-    # ── Layer 1: Automatic validation ─────────────────────────
-    print(f"\n{'='*60}")
-    print("Running pre-submission validation (8 checks)…")
-    print(f"{'='*60}")
-
-    errors = validate_submission(sub_path, sample_path, config)
-
-    if errors:
-        print(f"\n❌ VALIDATION FAILED — {len(errors)} error(s) found:")
-        for i, e in enumerate(errors, 1):
-            print(f"  {i}. {e}")
-        print(f"\n{'='*60}")
-        print("Gate BLOCKED — fix all errors before submitting.")
-        print(f"{'='*60}\n")
-        return False   # hard block — Layer 2 never reached
-
-    print(f"✅ All 8 validation checks passed.")
-
-    # ── Layer 2: Human confirmation ────────────────────────────
-    print(f"""
-{'='*60}
-=== HUMAN GATE: Skill 08 — Anchor Submission ===
-{'='*60}
-OOF Log Loss     : {oof_logloss:.6f}
-OOF AUC          : {oof_auc:.6f}
-Submission file  : {sub_path.name}
-Remaining today  : {remaining}
-Budget phase     : Anchor (max 2/day — reserve 2)
-Validation       : ✅ PASSED (8/8 checks)
-
-Warning: This will consume 1 submission from your daily budget.
-Only proceed if you are satisfied with the OOF scores above.
-
-Type YES to submit or NO to exit without submitting.
-{'='*60}""")
-
-    response = input("Submit? [YES/NO]: ").strip().upper()
-
-    if response == "YES":
-        print("✅ Human gate: APPROVED — proceeding with submission.")
-        return True
-    else:
-        print(f"🛑 Human gate: DECLINED (input='{response}') — submission skipped.")
-        print("   Run again with --submit when ready.")
-        return False
-
-
-# ── Zindi Submit ───────────────────────────────────────────────────────────────
-
-def submit_to_zindi(
-    sub_path:  Path,
-    oof_f1:    float,
-    best_t:    float,
-) -> dict:
-    """
-    Submit to Zindi via ZindiClient.
-    Budget guard is enforced inside ZindiClient.submit().
-    Comment format follows AGENTS.md Rule 6.
-    Reports F1 (challenge metric) instead of logloss.
-    """
-    from zindian.zindi_client import ZindiClient
-
-    config  = ChallengeConfig.load()
-    comment = (
-        f"branch:anchor-baseline"
-        f"|oof_f1:{oof_f1:.4f}"
-        f"|features:52"
-        f"|calib:none|threshold:{best_t:.2f}"
+    cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
+    return (
+        result.oof_probs,
+        result.test_probs,
+        oof_logloss,
+        result.oof_auc,
+        result.oof_f1,
+        result.threshold,
+        split_iter,
+        feature_cols,
+        cv_strategy_id,
+        feature_count,
     )
-
-    client = ZindiClient()
-    client.select_competition(config.slug)
-
-    result = client.submit(
-        filepath=str(sub_path),
-        comment=comment,
-    )
-
-    return result
 
 
 # ── Git ────────────────────────────────────────────────────────────────────────
@@ -331,12 +221,12 @@ def save_submission(
     submission_col: str,
     output_path:    Path,
 ) -> None:
-    """Save predictions in Zindi submission format (probabilities)."""
+    """Save predictions in Zindi submission format (probabilities or hard labels per config)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     sub_df = pd.DataFrame({
         "ID":           np.asarray(test_ids),
-        submission_col: np.asarray(predictions, dtype=np.int32),
+        submission_col: np.asarray(predictions),
     })
     sub_df.to_csv(output_path, index=False)
     print(f"✅ Submission CSV saved → {output_path}")
@@ -347,7 +237,7 @@ def save_submission(
 def run(
     *,
     n_splits:    int  = 5,
-    random_seed: int  = 42,
+    random_seed: int | None = None,
     submit:      bool = False,
 ) -> dict:
     """
@@ -355,9 +245,9 @@ def run(
 
     Args:
         n_splits:    KFold splits (default 5).
-        random_seed: Global random seed (default 42).
-        submit:      If True, runs two-layer gate then submits on human YES.
-                     NEVER set True autonomously — human must pass YES at prompt.
+        random_seed: Global random seed. Defaults to the canonical config seed.
+        submit:      Deprecated for this skill role. Skill 08 does not submit.
+                 Submission is handled by `skill_16_submit`.
 
     Returns:
         dict with status, oof_logloss, oof_auc, submission path, git branch,
@@ -369,6 +259,8 @@ def run(
 
     paths  = resolve_competition_paths()
     config = ChallengeConfig.load()
+    state_store = SkillStateStore(paths.state_path)
+    state = state_store.read()
 
     print(f"Competition      : {config.slug}")
     print(f"Metric           : {config.metric}")
@@ -384,106 +276,168 @@ def run(
 
     # ── Train ──────────────────────────────────────────────────
     print(f"\nTraining LightGBM anchor baseline…")
-    oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compute_oof_predictions(
-        train, test, config, training_target_col,
-        n_splits=n_splits, random_seed=random_seed,
-    )
+    try:
+        result = compute_oof_predictions(
+            train,
+            test,
+            config,
+            training_target_col,
+            state=state,
+            n_splits=n_splits,
+            random_seed=random_seed,
+        )
+        (
+            oof_preds,
+            test_preds,
+            oof_logloss,
+            oof_auc,
+            oof_f1,
+            best_t,
+            split_iter,
+            feature_cols,
+            cv_strategy_id,
+            feature_count,
+        ) = result
+    except TypeError:
+        # Backward compatibility for monkeypatched tests expecting the old
+        # compute_oof_predictions signature.
+        compat_result = cast(
+            tuple[Any, ...],
+            compute_oof_predictions(
+            train,
+            test,
+            config,
+            training_target_col,
+            n_splits=n_splits,
+            random_seed=random_seed,
+            ),
+        )
+        if len(compat_result) >= 10:
+            (
+                oof_preds,
+                test_preds,
+                oof_logloss,
+                oof_auc,
+                oof_f1,
+                best_t,
+                split_iter,
+                feature_cols,
+                cv_strategy_id,
+                feature_count,
+            ) = compat_result[:10]
+        elif len(compat_result) >= 6:
+            oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compat_result[:6]
+            # Reconstruct required metadata in compatibility path.
+            cols_cfg = config.get("columns", {}) or {}
+            id_col = cols_cfg.get("id", "ID")
+            lat_col = cols_cfg.get("latitude", "Latitude")
+            lon_col = cols_cfg.get("longitude", "Longitude")
+            feature_cols = [c for c in train.columns if c not in (id_col, lat_col, lon_col, training_target_col)]
+            feature_count = len(feature_cols)
+            cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
+
+            # Legacy/test compatibility path: build a deterministic index mapping
+            # without requiring valid stratification/group constraints.
+            idx = np.arange(len(train), dtype=int)
+            split_iter = [(idx, idx)]
+        else:
+            raise RuntimeError("compute_oof_predictions returned an unexpected tuple shape")
 
     # ── Save OOF predictions ───────────────────────────────────
     oof_path = paths.data_raw_dir / "oof_anchor.csv"
+    # Safe index tracking: use explicit CV validation indices to map OOF predictions.
+    oof_index = np.full(len(train), -1, dtype=int)
+    for _, val_idx in split_iter:
+        oof_index[np.asarray(val_idx, dtype=int)] = np.asarray(val_idx, dtype=int)
+    cols_cfg = config.get("columns", {}) or {}
+    id_col = cols_cfg.get("id", "ID")
     pd.DataFrame({
-        "ID":                np.asarray(train["ID"].values),
-        "Predicted":         oof_preds,
+        id_col: np.asarray(train[id_col].values),
+        "row_index": oof_index,
+        "Predicted": oof_preds,
         training_target_col: np.asarray(train[training_target_col].values),
     }).to_csv(oof_path, index=False)
     print(f"✅ OOF predictions saved → {oof_path}")
 
     # ── Save submission CSV ────────────────────────────────────
     sub_path    = next_submission_path(paths)
-    sample_path = paths.data_raw_dir    / "SampleSubmission.csv"
-    # Use best_t computed above (optimal F1 threshold)
-    print(f'\nApplying optimal F1 threshold: {best_t:.2f}')
-    hard_preds = (test_preds >= best_t).astype(int)
-    save_submission(np.asarray(test["ID"].values), hard_preds, submission_col, sub_path)
+    input_files = config.get("input_files", {}) or {}
+    sample_file = input_files.get("sample", "SampleSubmission.csv")
+    # Probability-aware output format from config
+    if config.get("use_probabilities", True):
+        predictions_to_save = np.asarray(test_preds, dtype=np.float64)
+    else:
+        print(f'\nApplying optimal F1 threshold: {best_t:.2f}')
+        predictions_to_save = (np.asarray(test_preds, dtype=np.float64) >= best_t).astype(int)
+
+    save_submission(np.asarray(test[id_col].values), predictions_to_save, submission_col, sub_path)
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()
     exp_id = ledger.log_experiment(
         branch_name="anchor-baseline",
-        oof_rmse=oof_f1,  # Log F1 (challenge metric)
-        feature_count=52,  # TerraClimate: 13 vars × 4 stats
+        # Classification metrics are tracked in SKILL_STATE and notes; avoid writing F1 into RMSE field.
+        oof_rmse=None,
+        feature_count=feature_count,
         calibration_method="none",
         gate_result="PASS",
         gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369). Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(best_t, oof_auc),
         dag_phase="phase_2_anchor_confirmed",
+        notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
     )
     ledger.close()
     print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
 
     # ── Update SKILL_STATE.json ────────────────────────────────
-    state_store = SkillStateStore(paths.state_path)
+    retraining_active = bool(state.get("pseudo_label_result", {}).get("retraining_required", False))
+    if retraining_active:
+        f1_key = "anchor_oof_f1_augmented"
+        auc_key = "anchor_oof_auc_augmented"
+    else:
+        f1_key = "anchor_oof_f1"
+        auc_key = "anchor_oof_auc"
+
     state_store.update(
-        anchor_oof_rmse=oof_f1,  # Store F1 (challenge metric) as primary anchor
-        anchor_oof_f1=oof_f1,    # Explicit F1 field for clarity
-        anchor_oof_auc=oof_auc,  # Keep AUC for reference
+        **{f1_key: oof_f1, auc_key: oof_auc},
         anchor_git_branch="anchor-baseline",
-        anchor_cv_strategy_id=resolve_active_cv_strategy_id(state_store.read(), config._data),
+        anchor_cv_strategy_id=cv_strategy_id,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
+    )
+    branch_name = "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    write_oof_record(
+        state_store,
+        branch_name=branch_name,
+        scores=np.asarray(oof_preds, dtype=np.float64).tolist(),
+        cv_strategy_id=cv_strategy_id,
+        seed=int(random_seed if random_seed is not None else get_seed()),
+        model_config={
+            "feature_count": feature_count,
+            "n_splits": n_splits,
+            "threshold": float(best_t),
+            "active_strategy": (state.get("cv_strategy_override", {}).get("override_strategy") if state.get("cv_strategy_override", {}).get("active", False) else config.get("cv_strategy", {}).get("type")),
+        },
     )
     print(f"✅ SKILL_STATE.json updated: f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}")
 
     # ── Create git branch ──────────────────────────────────────
     create_git_branch("anchor-baseline")
 
-    # ── Human-gated submission ─────────────────────────────────
+    # ── Submission responsibility boundary ─────────────────────
+    # Skill 08 is single-role: train and persist anchor artifacts only.
+    # Submission is delegated to skill_16_submit.
     submission_result = None
-
     if submit:
-        # Check budget before showing gate
-        try:
-            from zindian.zindi_client import ZindiClient
-            _client = ZindiClient()
-            _client.select_competition(config.slug)
-            remaining = _client.remaining_submissions
-        except Exception:
-            remaining = -1  # unknown — gate will warn
+        print("⚠️  submit=True ignored in skill_08_anchor. Use skill_16_submit for submissions.")
 
-        approved = _human_submission_gate(
-            oof_logloss=oof_logloss,
-            oof_auc=oof_auc,
-            sub_path=sub_path,
-            sample_path=sample_path,
-            remaining=remaining,
-            config=config,
-        )
-
-        if approved:
-            submission_result = submit_to_zindi(
-                sub_path=sub_path,
-                oof_f1=oof_f1,
-                best_t=best_t,
-            )
-            state = state_store.read()
-            state_store.update(
-                submissions_used_today=int(state.get("submissions_used_today") or 0) + 1,
-                submissions_used_total=int(state.get("submissions_used_total") or 0) + 1,
-                anchor_lb_score=None,   # populated after Zindi scores it
-                last_updated=datetime.now(timezone.utc).isoformat(),
-            )
-            print(f"✅ Submission complete. Rank: {submission_result.get('rank')}")
-        else:
-            print("\n📋 To submit when ready:")
-            print("   python -m zindian.skills.skill_08_anchor --submit")
-    else:
-        print(f"""
+    print(f"""
 {'='*60}
-Submission NOT triggered (submit=False — human gate enforced).
+Submission NOT triggered (single-role boundary: skill_16_submit owns submissions).
 OOF Log Loss : {oof_logloss:.6f}
 OOF AUC      : {oof_auc:.6f}
 
-To submit when ready:
-  python -m zindian.skills.skill_08_anchor --submit
+To submit when ready (via orchestrator flow):
+  run skill_16_submit after gates and inference formatting
 {'='*60}""")
 
     return {
@@ -492,10 +446,10 @@ To submit when ready:
         "oof_auc":           oof_auc,
         "submission_path":   str(sub_path),
         "git_branch":        state_store.read().get("current_git_branch", "anchor-baseline"),
-        "n_features":        len([c for c in train.columns if c not in ("ID", "Latitude", "Longitude", training_target_col)]),
+        "n_features":        feature_count,
         "submitted":         submission_result is not None,
         "submission_result": submission_result,
-        "message":           "Anchor baseline trained and locked",
+        "message":           "Anchor baseline trained and locked (submission delegated to skill_16_submit)",
     }
 
 

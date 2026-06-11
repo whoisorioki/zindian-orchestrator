@@ -12,16 +12,17 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 
-from zindian.paths import resolve_competition_paths
-from zindian.state import SkillStateStore, resolve_active_cv_strategy_id
+from zindian.cv import get_cv_splits
 from zindian.config import ChallengeConfig
+from zindian.paths import resolve_competition_paths
+from zindian.state import SkillStateStore, resolve_active_cv_strategy_id, write_oof_record
 
 
 def _fit_platt(oof_probs: np.ndarray, y: np.ndarray) -> LogisticRegression:
@@ -36,6 +37,134 @@ def _fit_isotonic(oof_probs: np.ndarray, y: np.ndarray) -> IsotonicRegression:
     return iso
 
 
+def _resolve_target_col(config: ChallengeConfig) -> str:
+    target_col = config.get("target_col") or config.get("target_column")
+    if not target_col:
+        raise RuntimeError("target_col not initialized in challenge_config.json")
+    return str(target_col)
+
+
+def _resolve_cv_strategy(config: ChallengeConfig, state: dict[str, Any]) -> dict[str, Any]:
+    raw_config = getattr(config, "_data", {}) or {}
+    strategy = dict(raw_config.get("cv_strategy") or config.get("cv_strategy", {}) or {})
+    override = state.get("cv_strategy_override", {}) or {}
+    if bool(override.get("active", False)):
+        override_strategy = override.get("override_strategy")
+        if isinstance(override_strategy, dict):
+            strategy.update(override_strategy)
+        elif override_strategy is not None:
+            strategy["type"] = override_strategy
+    return strategy
+
+
+def _resolve_candidate_branch(state: dict[str, Any], retraining_active: bool) -> str:
+    for key in ("best_variant_this_round", "best_variant_branch", "anchor_git_branch"):
+        value = state.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    branch_names: list[str] = []
+    for key, value in state.items():
+        if not (isinstance(key, str) and key.startswith("branch_") and key.endswith("_oof")):
+            continue
+        if not isinstance(value, dict):
+            continue
+        branch_name = str(value.get("branch_name") or key.removeprefix("branch_").removesuffix("_oof"))
+        if retraining_active and not branch_name.endswith("_augmented"):
+            continue
+        if not retraining_active and branch_name.endswith("_augmented"):
+            continue
+        branch_names.append(branch_name)
+
+    branch_names = list(dict.fromkeys(branch_names))
+    if len(branch_names) == 1:
+        return branch_names[0]
+
+    raise RuntimeError("No promoted branch candidate found in SKILL_STATE.json")
+
+
+def _resolve_oof_record(state: dict[str, Any], branch_name: str, retraining_active: bool) -> dict[str, Any]:
+    candidates = []
+    if retraining_active and not branch_name.endswith("_augmented"):
+        candidates.append(f"branch_{branch_name}_augmented_oof")
+        candidates.append(f"branch_{branch_name}_oof_augmented")
+    candidates.append(f"branch_{branch_name}_oof")
+    if branch_name.endswith("_augmented"):
+        candidates.append(f"branch_{branch_name.removesuffix('_augmented')}_oof_augmented")
+
+    for key in candidates:
+        record = state.get(key)
+        if isinstance(record, dict) and record.get("scores") is not None:
+            return record
+
+    raise RuntimeError(f"No OOF record found in SKILL_STATE for branch '{branch_name}'")
+
+
+def _candidate_test_names(branch_name: str, retraining_active: bool) -> list[str]:
+    names = []
+    if retraining_active and not branch_name.endswith("_augmented"):
+        names.append(f"test_probs_{branch_name}_augmented")
+    names.append(f"test_probs_{branch_name}")
+    if branch_name.endswith("_augmented"):
+        names.append(f"test_probs_{branch_name.removesuffix('_augmented')}_augmented")
+    return list(dict.fromkeys(names))
+
+
+def _resolve_test_prob_path(proc_dir: Path, reports_dir: Path, branch_name: str, retraining_active: bool) -> Path:
+    for test_name in _candidate_test_names(branch_name, retraining_active):
+        for base_dir in (proc_dir, reports_dir):
+            candidate = base_dir / f"{test_name}.csv"
+            if candidate.exists():
+                return candidate
+    raise FileNotFoundError(f"No test probability file found for branch '{branch_name}'")
+
+
+def _get_groups(train: pd.DataFrame, config: ChallengeConfig) -> np.ndarray | None:
+    cv_strategy = config.get("cv_strategy", {}) or {}
+    group_col = cv_strategy.get("group_column") or (config.get("spatial_signal", {}) or {}).get("group_col")
+    if group_col and group_col in train.columns:
+        return np.asarray(train[group_col].values)
+    return None
+
+
+def _fit_calibrator_foldwise(
+    method: str,
+    oof_probs: np.ndarray,
+    y: np.ndarray,
+    cv_strategy: dict[str, Any],
+    groups: np.ndarray | None,
+) -> tuple[np.ndarray, Any]:
+    calibrated_oof = np.asarray(oof_probs, dtype=np.float64).copy()
+    splitter = get_cv_splits(np.zeros((len(y), 1)), np.asarray(y), groups=groups, cv_strategy=cv_strategy)
+
+    for train_idx, val_idx in splitter:
+        x_train = np.asarray(oof_probs)[train_idx]
+        y_train = np.asarray(y)[train_idx]
+        x_val = np.asarray(oof_probs)[val_idx]
+
+        if np.unique(y_train).size < 2:
+            calibrated_oof[val_idx] = x_val
+            continue
+
+        if method == "platt":
+            calibrator = _fit_platt(x_train, y_train)
+            calibrated_oof[val_idx] = calibrator.predict_proba(x_val.reshape(-1, 1))[:, 1]
+        elif method == "isotonic":
+            calibrator = _fit_isotonic(x_train, y_train)
+            calibrated_oof[val_idx] = calibrator.transform(x_val)
+        else:
+            calibrated_oof[val_idx] = x_val
+
+    if np.unique(y).size < 2:
+        return calibrated_oof, None
+
+    if method == "platt":
+        return calibrated_oof, _fit_platt(oof_probs, y)
+    if method == "isotonic":
+        return calibrated_oof, _fit_isotonic(oof_probs, y)
+    return calibrated_oof, None
+
+
 def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     print("\n" + "=" * 60)
     print("SKILL 09 — Probability Calibration")
@@ -46,59 +175,75 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     store = SkillStateStore(paths.state_path)
     state = store.read()
 
+    raw_config = getattr(config, "_data", {}) or {}
+    task_type = str(raw_config.get("task_type", config.get("task_type", "classification")))
+    if task_type == "regression":
+        return {"status": "SKIPPED", "reason": "Probability calibration applies to classification tasks only"}
+
     proc_dir = paths.data_processed_dir
     reports_dir = paths.reports_dir
-
-    # Find OOF aggregate file
-    oof_files = sorted(proc_dir.glob("oof_variant-*.csv"))
-    if not oof_files:
-        print("No OOF files found for calibration")
-        return {"status": "NO_OOF"}
-
-    # Use best OOF found by skill_12 metric scan (if present)
-    best_oof = oof_files[0]
-    oof_df = pd.read_csv(best_oof)
-    prob_col = [c for c in oof_df.columns if c != "ID"][0]
-    oof_probs = np.asarray(oof_df[prob_col].values, dtype=float)
-
-    # Load train labels to calibrate against
     train = pd.read_csv(proc_dir / "features_train.csv")
-    target = config.get("target_column", "Occurrence Status")
+
+    target = _resolve_target_col(config)
+    if target not in train.columns:
+        raise RuntimeError(f"target column '{target}' not present in training data")
     y = np.asarray(train[target].values, dtype=int)
+
+    retraining_active = bool(state.get("pseudo_label_result", {}).get("retraining_required", False))
+    candidate_branch = _resolve_candidate_branch(state, retraining_active=retraining_active)
+    oof_record = _resolve_oof_record(state, candidate_branch, retraining_active=retraining_active)
+    oof_probs = np.asarray(oof_record["scores"], dtype=np.float64)
+
+    if len(oof_probs) != len(y):
+        raise RuntimeError(
+            f"OOF length mismatch for branch '{candidate_branch}': oof={len(oof_probs)} train={len(y)}"
+        )
+
+    cv_strategy = _resolve_cv_strategy(config, state)
+    groups = _get_groups(train, config)
 
     if method == "none":
         print("No calibration requested — copying original test probs to calibrated files")
-        mapping = {f: (proc_dir / f.name) for f in proc_dir.glob("test_probs_*.csv")}
+        test_path = _resolve_test_prob_path(proc_dir, reports_dir, candidate_branch, retraining_active)
+        mapping = {test_path.name: str(proc_dir / f"calib_{test_path.name}")}
     else:
-        calibrator_platt = None
-        calibrator_iso = None
-        if method == "platt":
-            calibrator_platt = _fit_platt(oof_probs, y)
-        elif method == "isotonic":
-            calibrator_iso = _fit_isotonic(oof_probs, y)
-        else:
+        if method not in ("platt", "isotonic"):
             raise ValueError(f"Unknown method: {method}")
 
-        mapping = {}
-        for test_path in proc_dir.glob("test_probs_*.csv"):
-            df = pd.read_csv(test_path)
-            pcol = [c for c in df.columns if c != "ID"][0]
-            probs = np.asarray(df[pcol].values, dtype=float)
-            if calibrator_platt is not None:
-                calibrated = calibrator_platt.predict_proba(probs.reshape(-1, 1))[:, 1]
-            elif calibrator_iso is not None:
-                calibrated = calibrator_iso.transform(probs)
+        calibrated_oof, global_calibrator = _fit_calibrator_foldwise(
+            method,
+            oof_probs,
+            y,
+            cv_strategy=cv_strategy,
+            groups=groups,
+        )
+
+        test_path = _resolve_test_prob_path(proc_dir, reports_dir, candidate_branch, retraining_active)
+        df = pd.read_csv(test_path)
+        pcol = [c for c in df.columns if c != "ID"][0]
+        probs = np.asarray(df[pcol].values, dtype=np.float64)
+
+        if global_calibrator is not None:
+            if method == "platt":
+                calibrated = global_calibrator.predict_proba(probs.reshape(-1, 1))[:, 1]
             else:
-                calibrated = probs
-            out = proc_dir / f"calib_{test_path.name}"
-            if not dry_run:
-                pd.DataFrame({"ID": df["ID"], pcol: calibrated}).to_csv(out, index=False)
-            mapping[test_path.name] = str(out)
+                calibrated = global_calibrator.transform(probs)
+        else:
+            calibrated = probs
+
+        out = proc_dir / f"calib_{test_path.name}"
+        mapping = {test_path.name: str(out)}
+        if not dry_run:
+            pd.DataFrame({"ID": df["ID"], pcol: calibrated}).to_csv(out, index=False)
 
     if not dry_run:
         state_patch = {
             "calibration_method": method,
             "calibration_written_at": datetime.now(timezone.utc).isoformat(),
+            "calibration_candidate_branch": candidate_branch,
+            "calibration_candidate_oof_key": f"branch_{candidate_branch}_oof"
+            if not retraining_active or candidate_branch.endswith("_augmented")
+            else f"branch_{candidate_branch}_oof_augmented",
         }
         try:
             cfg_data = ChallengeConfig.load()._data
@@ -111,6 +256,33 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
         except Exception:
             pass
         store.update(**state_patch)
+
+        # Persist a canonical OOF record for the calibration step (SoT-shaped)
+        try:
+            if method != "none":
+                try:
+                    cv_id = resolve_active_cv_strategy_id(store.read(), cfg_data)
+                except Exception:
+                    cv_id = "unknown"
+                seed = int(cfg_data.get("reproducibility", {}).get("seed", 42))
+                try:
+                    write_oof_record(
+                        store,
+                        branch_name=f"calibration_{candidate_branch}",
+                        scores=np.asarray(calibrated_oof, dtype=np.float64).tolist(),
+                        cv_strategy_id=cv_id,
+                        seed=seed,
+                        model_config={
+                            "method": method,
+                            "source_branch": candidate_branch,
+                            "cv_strategy": cv_strategy,
+                        },
+                    )
+                except Exception:
+                    # Do not fail the skill if OOF writing failed
+                    pass
+        except Exception:
+            pass
 
     return {"status": "OK", "method": method, "mapping": mapping}
 

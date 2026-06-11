@@ -62,8 +62,12 @@ class SkillStateStore:
     def append_selected(self, submission_id: int) -> None:
         """Append submission to selected_submissions list."""
         state = self.read()
-        if submission_id not in state["selected_submissions"]:
-            state["selected_submissions"].append(submission_id)
+        sel = state.get("selected_submissions")
+        if not isinstance(sel, list):
+            sel = []
+        if submission_id not in sel:
+            sel.append(submission_id)
+        state["selected_submissions"] = sel
         self.write(state)
 
 
@@ -96,6 +100,52 @@ def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:
         pass
 
     return "unknown"
+
+
+def write_oof_record(
+    store: SkillStateStore,
+    *,
+    branch_name: str,
+    scores: Any,
+    cv_strategy_id: str,
+    seed: int,
+    model_config: dict[str, Any],
+    touch_timestamp: bool = True,
+) -> dict[str, Any]:
+    """Persist a SoT-shaped OOF record under `branch_{branch_name}_oof`."""
+    if isinstance(scores, (list, tuple)):
+        score_list = [float(value) for value in scores]
+    else:
+        score_list = [float(scores)]
+
+    record = {
+        "scores": score_list,
+        "cv_strategy_id": str(cv_strategy_id),
+        "seed": int(seed),
+        "branch_name": str(branch_name),
+        "model_config": dict(model_config),
+    }
+
+    state = store.read()
+    key = f"branch_{branch_name}_oof"
+    # Enforce SoT retraining rules: when pseudo-label retraining is active,
+    # augmented outputs must use the `_augmented` suffix and original keys
+    # must not be overwritten. This prevents accidental overwrites of baseline OOFs.
+    retraining_active = bool((state.get("pseudo_label_result") or {}).get("retraining_required", False))
+    if retraining_active and not str(branch_name).endswith("_augmented"):
+        raise RuntimeError(
+            "Retraining active: OOF records during retraining must use the '_augmented' suffix for branch_name"
+        )
+    # Prevent overwriting original non-augmented key when retraining
+    original_key = f"branch_{str(branch_name).removesuffix('_augmented')}_oof"
+    if retraining_active and original_key in state and not str(branch_name).endswith("_augmented"):
+        raise RuntimeError(
+            f"Retraining attempted to overwrite original OOF key: {original_key}. Write to '{original_key}_augmented' instead."
+        )
+
+    state[key] = record
+    store.write(state, touch_timestamp=touch_timestamp)
+    return record
 
 
 def is_anchor_challenge_active(state_obj: dict) -> bool:

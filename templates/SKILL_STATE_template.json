@@ -15,7 +15,9 @@
     "remaining_submissions": null,
     "dag_phase": "uninitialized",
     "human_gate_1_approved": false,
-    "human_gate_2_by_branch": {},
+    "human_gate_2_by_branch": {
+        "branch_placeholder_approved": false
+    },
     "human_gate_3_approved": false,
     "human_gate_4_approved": false,
     "human_gate_5_selection": [],

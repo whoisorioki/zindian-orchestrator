@@ -29,9 +29,11 @@ from zindian.cv import make_cv_splitter
 from sklearn.preprocessing import StandardScaler
 
 from zindian.config import ChallengeConfig
+from zindian.config import get_seed
 from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.state import resolve_active_cv_strategy_id
+from zindian.state import write_oof_record
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
@@ -110,13 +112,20 @@ def _compute_shap_audit(
     target: str,
     *,
     n_splits: int = 5,
-    seed: int = 42,
+    seed: int | None = None,
 ) -> dict:
     X = np.asarray(frame[feature_cols].values, dtype=np.float64)
     y = np.asarray(frame[target].values, dtype=np.int32)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
+
+    # Resolve canonical seed if caller passed None
+    if seed is None:
+        from zindian.config import get_seed
+
+        seed = get_seed()
+    seed = int(seed)
 
     splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed)
     oof_probs = np.zeros(len(frame), dtype=np.float64)
@@ -209,7 +218,7 @@ def _write_outputs(paths: CompetitionPaths, report: dict, summary_lines: Iterabl
     print(f"✅ SHAP summary written → {summary_path}")
 
 
-def run(n_splits: int = 5, seed: int = 42) -> dict:
+def run(n_splits: int = 5, seed: int | None = None) -> dict:
     paths = resolve_competition_paths(require_competition=True)
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")
@@ -326,6 +335,18 @@ def run(n_splits: int = 5, seed: int = 42) -> dict:
         last_updated=datetime.now(timezone.utc).isoformat(),
         shap_oof_cv_strategy_id=cv_id,
     )
+    write_oof_record(
+        state_store,
+        branch_name="shap_audit",
+        scores=np.asarray(full_audit["oof_probs"], dtype=np.float64).tolist(),
+        cv_strategy_id=cv_id,
+        seed=int(seed if seed is not None else get_seed()),
+        model_config={
+            "feature_count": len(feature_cols),
+            "n_splits": n_splits,
+            "pruning_gate": bool(pruning_pass),
+        },
+    )
 
     print(f"Top SHAP feature : {ranking.iloc[0]['feature']}" if not ranking.empty else "Top SHAP feature : none")
     print(f"Pruning delta F1 : {pruning_delta:+.6f}")
@@ -340,7 +361,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
     n_splits = 5
-    seed = 42
+    seed = None
     for idx, arg in enumerate(args):
         if arg == "--n-splits" and idx + 1 < len(args):
             n_splits = int(args[idx + 1])

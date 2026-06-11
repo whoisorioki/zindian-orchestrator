@@ -22,6 +22,7 @@ from sklearn.feature_selection import mutual_info_classif
 from google.genai import types
 
 from zindian.paths import resolve_competition_paths
+from zindian.config import get_seed
 from zindian.state import SkillStateStore
 from zindian.constants import TC_VARIABLES
 
@@ -176,7 +177,9 @@ def empirical_validate_hypothesis(
 
     # Stage 2a: mutual information must be positive.
     filled = subset.fillna(subset.median(numeric_only=True)).fillna(0.0)
-    mi_scores = mutual_info_classif(filled, train_frame[target_col].astype(int), random_state=42)
+    mi_scores = mutual_info_classif(
+        filled, train_frame[target_col].astype(int), random_state=get_seed()
+    )
     if float(np.nanmean(mi_scores)) <= 0.0:
         return False, "mutual information <= 0"
 
@@ -186,7 +189,7 @@ def empirical_validate_hypothesis(
         learning_rate=0.1,
         num_leaves=8,
         max_depth=3,
-        random_state=42,
+        random_state=get_seed(),
         verbosity=-1,
     )
     model.fit(filled, train_frame[target_col].astype(int))

@@ -15,6 +15,7 @@ import difflib
 
 from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.config import ConfigNotPopulated
+from zindian.state import SkillStateStore
 
 BASE_URL = "https://api.zindi.africa/v1/competitions"
 
@@ -164,30 +165,6 @@ def extract_config(data: dict, slug: str) -> dict:
             # Non-fatal; we'll handle missing metric later
             print(f"Warning: monitor fallback failed: {e}")
 
-    # Only raise if metric is missing after both API and monitor fallback
-    if config["metric"] is None:
-        # Rebuild compliance notes to reflect current (null) use_probabilities
-        up = config.get("use_probabilities")
-        cn = []
-        if up is True:
-            cn.append("use_probabilities=True: submit raw float probabilities, do NOT threshold")
-        elif up is False:
-            cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
-        else:
-            cn.append("use_probabilities: unknown — confirm from competition page")
-        if config.get("allowed_external_data") is False:
-            cn.append("No external data allowed — provided datasets only")
-            if config.get("banned_features"):
-                cn.append("Banned features: " + ", ".join(config.get("banned_features") or []))
-        cn.extend([
-            "Final 5 days: no new team members",
-            "Must select 2 submissions before deadline",
-            "Always set random seed for reproducibility",
-            "Open source packages only — no paid services",
-        ])
-        config["compliance_notes"] = cn
-        return config
-
     # Derive metric_direction from metric when not provided
     if config.get("metric_direction") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
@@ -197,29 +174,6 @@ def extract_config(data: dict, slug: str) -> dict:
             config["metric_direction"] = "minimize"
         else:
             config["metric_direction"] = None
-
-    # If use_probabilities is still unknown after fallback, rebuild notes and return for inspection
-    if config.get("use_probabilities") is None:
-        up = config.get("use_probabilities")
-        cn = []
-        if up is True:
-            cn.append("use_probabilities=True: submit raw float probabilities, do NOT threshold")
-        elif up is False:
-            cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
-        else:
-            cn.append("use_probabilities: unknown — confirm from competition page")
-        if config.get("allowed_external_data") is False:
-            cn.append("No external data allowed — provided datasets only")
-        if config.get("banned_features"):
-            cn.append("Banned features: " + ", ".join(config.get("banned_features") or []))
-        cn.extend([
-            "Final 5 days: no new team members",
-            "Must select 2 submissions before deadline",
-            "Always set random seed for reproducibility",
-            "Open source packages only — no paid services",
-        ])
-        config["compliance_notes"] = cn
-        return config
 
     # Build final compliance notes from resolved values
     up = config.get("use_probabilities")
@@ -263,17 +217,15 @@ def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
     state_path = paths.state_path
     if not state_path.exists():
         return
-    with open(state_path, encoding="utf-8") as f:
-        state = json.load(f)
-    state["dag_phase"] = "phase_1_integrity"
-    state["last_updated"] = datetime.now(timezone.utc).isoformat()
-    with tempfile.NamedTemporaryFile(
-        mode="w", delete=False, suffix=".json"
-    ) as tmp:
-        json.dump(state, tmp, indent=2)
-        tmp_path = tmp.name
-    os.replace(tmp_path, state_path)
-    print(f"✅ {state_path} -> dag_phase: phase_1_integrity")
+    store = SkillStateStore(state_path)
+    # Per SoT: only update dag phase if not beyond Phase 1
+    state = store.read()
+    current_phase = state.get("dag_phase")
+    if current_phase in (None, "uninitialized", "phase_0_foundation"):
+        store.update(dag_phase="phase_1_integrity")
+        print(f"✅ {state_path} -> dag_phase: phase_1_integrity")
+    else:
+        print(f"ℹ️  SKIP dag_phase update (current phase: {current_phase})")
 
 
 def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) -> dict:
@@ -307,12 +259,25 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
                 merged[k] = v
         final_to_write = merged
 
+    # Validate before any mutation of challenge_config.json or SKILL_STATE.json.
+    if final_to_write.get("metric") is None:
+        raise ConfigNotPopulated("Required field 'metric' is null after intake from API and fallback.")
+    if final_to_write.get("use_probabilities") is None:
+        raise ConfigNotPopulated("Derived field 'use_probabilities' is null — cannot infer from metric.")
+
     if dry_run:
         print("\n--- DRY RUN: challenge_config.json that WOULD be written ---\n")
         print(json.dumps(final_to_write, indent=2))
     else:
-        write_config(final_to_write, paths)
-        update_skill_state(slug, paths)
+        # Only write config during allowed intake phases per SoT
+        store = SkillStateStore(paths.state_path)
+        current_phase = store.read().get("dag_phase")
+        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1")
+        if current_phase in allowed_write_phases:
+            write_config(final_to_write, paths)
+            update_skill_state(slug, paths)
+        else:
+            print(f"⚠️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation.")
 
     # If merge and dry_run, show a concise diff between existing and final_to_write
     if merge and dry_run:
@@ -327,13 +292,6 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
         print("\n--- DIFF (existing -> merged) ---")
         for line in diff:
             print(line)
-
-    # After writing (or preparing to write), fail loudly if required fields are null
-    check_cfg = final_to_write
-    if check_cfg.get("metric") is None:
-        raise ConfigNotPopulated("Required field 'metric' is null after intake from API and fallback.")
-    if check_cfg.get("use_probabilities") is None:
-        raise ConfigNotPopulated("Derived field 'use_probabilities' is null — cannot infer from metric.")
 
     print(f"\n--- Config Summary ---")
     print(f"Name       : {final_to_write.get('name')}")
