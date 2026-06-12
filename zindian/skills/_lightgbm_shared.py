@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, Tuple, Protocol, runtime_checkable, cast
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Tuple,
+    Protocol,
+    runtime_checkable,
+    cast,
+)
 
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from sklearn.metrics import f1_score, roc_auc_score
-from zindian.cv import get_cv_splits, make_cv_splitter
-import numpy as np
+from sklearn.preprocessing import StandardScaler
+from zindian.cv import get_cv_splits
 
 
 @runtime_checkable
 class Splitter(Protocol):
-    def split(self, X: np.ndarray, y: np.ndarray, groups: np.ndarray | None = None) -> Iterator[Tuple[np.ndarray, np.ndarray]]: ...
-from zindian.cv import get_cv_splits
-from sklearn.preprocessing import StandardScaler
+    def split(
+        self, X: np.ndarray, y: np.ndarray, groups: np.ndarray | None = None
+    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]: ...
 
 
 @dataclass(frozen=True)
@@ -42,7 +51,13 @@ def train_lightgbm_cv(
     early_stopping_rounds: int = 50,
     scale: bool = True,
     threshold_grid: np.ndarray | None = None,
-    per_fold_feature_fn: Callable[[pd.DataFrame, pd.DataFrame, list, np.ndarray, np.ndarray | None], tuple[np.ndarray, np.ndarray]] | None = None,
+    per_fold_feature_fn: (
+        Callable[
+            [pd.DataFrame, pd.DataFrame, list, np.ndarray, np.ndarray | None],
+            tuple[np.ndarray, np.ndarray],
+        ]
+        | None
+    ) = None,
 ) -> LightGBMRunResult:
     """Train a LightGBM CV model and return OOF/test probabilities plus metrics."""
     # Resolve canonical seed if not provided
@@ -85,21 +100,22 @@ def train_lightgbm_cv(
     # Otherwise fall back to the canonical CV splitter from `zindian.cv`.
     if cv is None:
         # Obtain an iterator of (train_idx, val_idx) from the central CV helpers
-        split_iter = get_cv_splits(X, y)
+        split_iter = get_cv_splits(X, y, random_seed=random_seed)
     else:
         # If `cv` implements `split`, call it; otherwise assume it's an iterable of index pairs.
         if hasattr(cv, "split"):
             split_iter = cast(Splitter, cv).split(X, y)
         else:
-            iterable = cast(Iterable[Tuple[np.ndarray, np.ndarray]], cv)
-            split_iter = iter(iterable)
+            split_iter = iter(cv)
 
     for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
         # If per_fold_feature_fn is provided, recompute X and X_test for this fold
         if per_fold_feature_fn is not None:
             # Provide train, test DataFrames and indices to the callback. The callback
             # must return (X_full, X_test) arrays aligned to `train` and `test` rows.
-            X_full, X_test = per_fold_feature_fn(train, test, feature_cols, tr_idx, np.asarray(train[target_col].values))
+            X_full, X_test = per_fold_feature_fn(
+                train, test, feature_cols, tr_idx, np.asarray(train[target_col].values)
+            )
             if scale:
                 scaler = StandardScaler()
                 X_full = scaler.fit_transform(X_full)
@@ -132,7 +148,9 @@ def train_lightgbm_cv(
     oof_auc = float(roc_auc_score(y, oof_probs))
     if threshold_grid is None:
         threshold_grid = np.arange(0.3, 0.7, 0.01)
-    best_t = float(max(threshold_grid, key=lambda t: f1_score(y, (oof_probs >= t).astype(int))))
+    best_t = float(
+        max(threshold_grid, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+    )
     oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
 
     return LightGBMRunResult(

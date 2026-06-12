@@ -22,12 +22,12 @@ Contract (SoT §4 / §8):
   * The skill never writes to `challenge_config.json` after Phase 1.
   * The skill never writes a `human_gate_*_approved` key.
 """
+
 from __future__ import annotations
 
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
@@ -79,6 +79,7 @@ RF_PARAMS = {
 
 
 # ── Diagnostic gate (positives-count distribution check) ──────────────────────
+
 
 def check_distribution_gate(
     preds: np.ndarray | Any,
@@ -145,7 +146,10 @@ def check_distribution_gate(
 
 # ── Column / feature mask helpers ────────────────────────────────────────────
 
-def _resolve_drop_columns(config: ChallengeConfig, train_columns: Iterable[str]) -> tuple[set[str], str | None, str | None]:
+
+def _resolve_drop_columns(
+    config: ChallengeConfig, train_columns: Iterable[str]
+) -> tuple[set[str], str | None, str | None]:
     """Build the dynamic drop-column set from config accessors.
 
     Returns (drop_set, target_col, id_column). All column names are sourced
@@ -172,14 +176,24 @@ def _resolve_drop_columns(config: ChallengeConfig, train_columns: Iterable[str])
         for col in policy_filters:
             if isinstance(col, str) and col:
                 drop.add(col)
-    return drop, (str(target_col) if isinstance(target_col, str) else None), (str(id_column) if isinstance(id_column, str) else None)
+    return (
+        drop,
+        (str(target_col) if isinstance(target_col, str) else None),
+        (str(id_column) if isinstance(id_column, str) else None),
+    )
 
 
 def _resolve_threshold(config: ChallengeConfig) -> tuple[float, float, float]:
     """Return (conf_pos, conf_neg, threshold) from config or defaults."""
-    conf_pos = float(config.get("pseudo_conf_pos", CONF_POS_DEFAULT) or CONF_POS_DEFAULT)
-    conf_neg = float(config.get("pseudo_conf_neg", CONF_NEG_DEFAULT) or CONF_NEG_DEFAULT)
-    threshold = float(config.get("pseudo_threshold", THRESHOLD_DEFAULT) or THRESHOLD_DEFAULT)
+    conf_pos = float(
+        config.get("pseudo_conf_pos", CONF_POS_DEFAULT) or CONF_POS_DEFAULT
+    )
+    conf_neg = float(
+        config.get("pseudo_conf_neg", CONF_NEG_DEFAULT) or CONF_NEG_DEFAULT
+    )
+    threshold = float(
+        config.get("pseudo_threshold", THRESHOLD_DEFAULT) or THRESHOLD_DEFAULT
+    )
     if conf_pos < conf_neg:
         # Sanity: positive threshold must exceed negative threshold.
         conf_pos, conf_neg = max(conf_pos, conf_neg), min(conf_pos, conf_neg)
@@ -187,10 +201,15 @@ def _resolve_threshold(config: ChallengeConfig) -> tuple[float, float, float]:
 
 
 def _resolve_sample_weight(config: ChallengeConfig) -> float:
-    return float(config.get("pseudo_sample_weight", SAMPLE_WEIGHT_DEFAULT) or SAMPLE_WEIGHT_DEFAULT)
+    return float(
+        config.get("pseudo_sample_weight", SAMPLE_WEIGHT_DEFAULT)
+        or SAMPLE_WEIGHT_DEFAULT
+    )
 
 
-def _resolve_distribution_gate(config: ChallengeConfig) -> tuple[int | None, int | None, int | None]:
+def _resolve_distribution_gate(
+    config: ChallengeConfig,
+) -> tuple[int | None, int | None, int | None]:
     block = config.get("pseudo_distribution_gate") or {}
     if not isinstance(block, dict):
         return (None, None, None)
@@ -210,7 +229,10 @@ def get_feature_cols(df: pd.DataFrame, drop_cols: set[str]) -> list[str]:
 
 # ── Training with strict split isolation ──────────────────────────────────────
 
-def _resolve_active_cv_strategy(config: ChallengeConfig, state: dict[str, Any]) -> dict[str, Any]:
+
+def _resolve_active_cv_strategy(
+    config: ChallengeConfig, state: dict[str, Any]
+) -> dict[str, Any]:
     """Return the active CV-strategy dict (override or config)."""
     override = state.get("cv_strategy_override") or {}
     if isinstance(override, dict) and override.get("active"):
@@ -283,7 +305,6 @@ def train_ensemble_and_predict(
         X_va = X_labelled[va_idx]
         y_va = y_labelled_array[va_idx]
 
-
         if sample_weight_labelled is None:
             w_tr_lab = np.ones(len(X_tr_lab), dtype=np.float64)
         else:
@@ -295,7 +316,10 @@ def train_ensemble_and_predict(
                 [y_tr_lab, np.zeros(X_pseudo.shape[0], dtype=np.int32)]
             )
             w_tr = np.concatenate(
-                [w_tr_lab, np.full(X_pseudo.shape[0], sample_weight_pseudo, dtype=np.float64)]
+                [
+                    w_tr_lab,
+                    np.full(X_pseudo.shape[0], sample_weight_pseudo, dtype=np.float64),
+                ]
             )
         else:
             X_tr = X_tr_lab
@@ -349,6 +373,7 @@ def best_f1_threshold(
 
 # ── Guard condition flags (SoT §4) ────────────────────────────────────────────
 
+
 def _build_guard_condition_flags(
     *,
     classification: bool,
@@ -361,7 +386,8 @@ def _build_guard_condition_flags(
 ) -> dict[str, bool]:
     return {
         "gc1_classification": bool(classification),
-        "gc2_not_timeseries": bool(cv_strategy_type) and cv_strategy_type != "timeseries",
+        "gc2_not_timeseries": bool(cv_strategy_type)
+        and cv_strategy_type != "timeseries",
         "gc3_no_leaked_features": len(leaked_features or []) == 0,
         "gc4_variance_within_threshold": (
             fold_variance is not None
@@ -374,6 +400,7 @@ def _build_guard_condition_flags(
 
 
 # ── Run loop ──────────────────────────────────────────────────────────────────
+
 
 def run(dry_run: bool = False) -> dict:
     """Run the pseudo-labeling loop.
@@ -411,11 +438,9 @@ def run(dry_run: bool = False) -> dict:
     # ── Guard Condition 1: classification only ───────────────────────────────
     task_type = str(config.get("task_type", "classification"))
     if task_type != "classification":
-        print(f"SKILL 21 SKIPPED: task_type is '{task_type}', not 'classification'.")
-        return {
-            "status": "SKIPPED",
-            "reason": "guard_condition_1_classification_only",
-        }
+        msg = f"Pseudo-labeling is strictly prohibited for task_type '{task_type}'. Classification only."
+        print(f"ERROR: {msg}")
+        raise ValueError(msg)
 
     # ── Dynamic column resolution ────────────────────────────────────────────
     train_file = paths.data_processed_dir / (
@@ -430,7 +455,7 @@ def run(dry_run: bool = False) -> dict:
 
     train = pd.read_csv(train_file)
     test = pd.read_csv(test_file)
-    sample_sub = pd.read_csv(sample_sub_file)
+    pd.read_csv(sample_sub_file)
 
     drop_cols, target_col, id_column = _resolve_drop_columns(config, train.columns)
     if not target_col or target_col not in train.columns:
@@ -466,13 +491,14 @@ def run(dry_run: bool = False) -> dict:
     X_test = test[feature_cols].to_numpy(dtype=np.float32)
     test_ids = test[id_column].to_numpy()
 
-
     conf_pos, conf_neg, threshold = _resolve_threshold(config)
     sample_weight_pseudo = _resolve_sample_weight(config)
     gate_min, gate_max, anchor = _resolve_distribution_gate(config)
 
     cv_strategy = _resolve_active_cv_strategy(config, state)
-    cv_strategy_type = cv_strategy.get("type") if isinstance(cv_strategy, dict) else None
+    cv_strategy_type = (
+        cv_strategy.get("type") if isinstance(cv_strategy, dict) else None
+    )
 
     print(f"Labelled rows  : {len(X_labelled)}")
     print(f"Test rows      : {len(X_test)}")
@@ -563,9 +589,9 @@ def run(dry_run: bool = False) -> dict:
         suffix = "_augmented" if retraining_required else ""
         oof_iter_path = reports_dir / f"oof_probs_pseudo_iter{iteration}{suffix}.csv"
         test_iter_path = reports_dir / f"test_probs_pseudo_iter{iteration}{suffix}.csv"
-        pd.DataFrame({str(id_column): train[id_column].values, "oof_prob": oof_labelled}).to_csv(
-            oof_iter_path, index=False
-        )
+        pd.DataFrame(
+            {str(id_column): train[id_column].values, "oof_prob": oof_labelled}
+        ).to_csv(oof_iter_path, index=False)
         pd.DataFrame({str(id_column): test_ids, "test_prob": test_probs}).to_csv(
             test_iter_path, index=False
         )
@@ -583,7 +609,9 @@ def run(dry_run: bool = False) -> dict:
     print(f"\n{'=' * 70}")
     print("PSEUDO-LABEL ITERATION SUMMARY")
     print(f"{'=' * 70}")
-    print(f"{'Iter':>5} {'OOF AUC':>10} {'OOF F1':>10} {'Threshold':>10} {'Train rows':>12}")
+    print(
+        f"{'Iter':>5} {'OOF AUC':>10} {'OOF F1':>10} {'Threshold':>10} {'Train rows':>12}"
+    )
     print("-" * 60)
     for r in results:
         print(
@@ -666,7 +694,9 @@ def run(dry_run: bool = False) -> dict:
 
     # ── Persist the OOF record via write_oof_record ─────────────────────────
     cv_strategy_id = resolve_active_cv_strategy_id(state, config_data)
-    oof_branch_name = "pseudo_label_augmented" if retraining_required else "pseudo_label"
+    oof_branch_name = (
+        "pseudo_label_augmented" if retraining_required else "pseudo_label"
+    )
     oof_array = np.asarray(oof_probs[: len(X_labelled)], dtype=np.float64)
     write_oof_record(
         store,
@@ -689,7 +719,7 @@ def run(dry_run: bool = False) -> dict:
     )
 
     # ── Update SKILL_STATE with the canonical pseudo_label_result + summary ─
-    branch_name = state.get("current_active_branch") or state.get("anchor_git_branch") or "unknown"
+    (state.get("current_active_branch") or state.get("anchor_git_branch") or "unknown")
     store.update(
         pseudo_label_result=pseudo_label_result,
         pseudo_label_best_iteration=int(best_iteration),

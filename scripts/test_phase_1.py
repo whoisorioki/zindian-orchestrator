@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Test/Demo Script for Phase 1 Skills (Integrity + Intake + Reporter)"""
 
-import json
 import sys
 from pathlib import Path
 
@@ -43,24 +42,25 @@ print("=" * 80)
 
 try:
     from zindian.skills.skill_01_integrity import run as skill_01_run
-    
+
     result = skill_01_run(
         data_path="data/raw/train.csv",
         target_col="bank_account",
     )
-    
+
     print(f"\nStatus: {result['status']}")
-    if result['status'] == 'GO':
+    if result["status"] == "GO":
         print(f"✓ MD5 Hash: {result['md5_target_hash'][:16]}...")
         print(f"✓ Rows Locked: {result['rows_locked']}")
     else:
         print(f"✗ Error: {result['message']}")
-        if 'traceback' in result:
-            print(result['traceback'])
-    
+        if "traceback" in result:
+            print(result["traceback"])
+
 except Exception as e:
     print(f"✗ Skill 01 failed to run: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)
@@ -69,14 +69,14 @@ print("=" * 80)
 
 try:
     from zindian.skills.skill_02_intake import run as skill_02_run
-    
+
     result = skill_02_run(
         zindi_challenge_data=MOCK_ZINDI_CHALLENGE_DATA,
     )
-    
+
     print(f"\nStatus: {result['status']}")
-    if result['status'] == 'GO':
-        config = result['config']
+    if result["status"] == "GO":
+        config = result["config"]
         print(f"✓ Competition: {config['slug']}")
         print(f"✓ Metric: {config['metric']}")
         print(f"✓ Domain: {config['domain']}")
@@ -84,12 +84,13 @@ try:
         print(f"✓ Use Probabilities: {config['use_probabilities']}")
     else:
         print(f"✗ Error: {result['message']}")
-        if 'traceback' in result:
-            print(result['traceback'])
-    
+        if "traceback" in result:
+            print(result["traceback"])
+
 except Exception as e:
     print(f"✗ Skill 02 failed to run: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)
@@ -98,23 +99,24 @@ print("=" * 80)
 
 try:
     from zindian.skills.skill_15_reporter import run as skill_15_run
-    
+
     result = skill_15_run()
-    
+
     print(f"\nStatus: {result['status']}")
-    if result['status'] == 'GO':
+    if result["status"] == "GO":
         print(f"✓ Ledger: {result['ledger_path']}")
         print(f"✓ Experiments Table Rows: {result['experiments_count']}")
         print(f"✓ Submissions Table Rows: {result['submissions_count']}")
         print(f"✓ Phase 1 Summary: {result['phase_1_summary_path']}")
     else:
         print(f"✗ Error: {result['message']}")
-        if 'traceback' in result:
-            print(result['traceback'])
-    
+        if "traceback" in result:
+            print(result["traceback"])
+
 except Exception as e:
     print(f"✗ Skill 15 failed to run: {e}")
     import traceback
+
     traceback.print_exc()
 
 print("\n" + "=" * 80)

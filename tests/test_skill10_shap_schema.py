@@ -1,4 +1,3 @@
-import json
 import numpy as np
 from sklearn.datasets import make_classification
 import lightgbm as lgb
@@ -8,8 +7,12 @@ from zindian.cv import make_cv_splitter
 
 def test_skill10_shap_output_schema():
     # Create small dataset
-    X, y = make_classification(n_samples=90, n_features=5, n_informative=3, random_state=1)
-    splitter = make_cv_splitter({"type": "stratified", "n_splits": 3, "random_seed": 42})
+    X, y = make_classification(
+        n_samples=90, n_features=5, n_informative=3, random_state=1
+    )
+    splitter = make_cv_splitter(
+        {"type": "stratified", "n_splits": 3, "random_seed": 42}
+    )
 
     feature_names = [f"f{i}" for i in range(X.shape[1])]
     per_fold_feature_means = []
@@ -26,7 +29,7 @@ def test_skill10_shap_output_schema():
                 "ignore",
                 message="LightGBM binary classifier with TreeExplainer shap values output has changed",
             )
-            with np.errstate(all='ignore'):
+            with np.errstate(all="ignore"):
                 expl = shap.TreeExplainer(model)
                 sv = expl.shap_values(X[val_idx])
             if isinstance(sv, list):

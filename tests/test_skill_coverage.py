@@ -5,7 +5,6 @@ import importlib
 import pandas as pd
 import pytest
 
-
 SKILL_EXPORTS = [
     ("zindian.skills.skill_00_zindi_monitor", "run"),
     ("zindian.skills.skill_01_integrity", "run"),
@@ -35,7 +34,11 @@ def test_skill_modules_export_callables(module_name: str, export_name: str) -> N
 
 
 def test_scientist_feature_inventory_and_static_validation() -> None:
-    from zindian.skills.skill_20_scientist import get_available_columns, static_validate_hypothesis
+    from zindian.skills.skill_20_scientist import (
+        get_available_columns,
+        static_validate_hypothesis,
+    )
+
     columns = get_available_columns()
     # Don't assert exact counts — ensure it's a non-empty iterable and reasonable columns exist
     assert isinstance(columns, list)
@@ -43,13 +46,17 @@ def test_scientist_feature_inventory_and_static_validation() -> None:
     assert "Latitude" not in columns
     assert "Longitude" not in columns
 
-    ok, reason = static_validate_hypothesis({"feature_columns": ["ppt_mean"], "transformation": "raw"}, set(columns))
+    ok, reason = static_validate_hypothesis(
+        {"feature_columns": ["ppt_mean"], "transformation": "raw"}, set(columns)
+    )
     assert ok in (True, False)
     # If validation passes, reason should be a short string; otherwise provide a failure reason
     assert isinstance(reason, str)
 
 
-def test_scientist_two_stage_validation_and_ledger_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scientist_two_stage_validation_and_ledger_blocking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import zindian.skills.skill_20_scientist as scientist
 
     monkeypatch.setattr(scientist, "mutual_info_classif", lambda *args, **kwargs: [0.5])
@@ -80,7 +87,9 @@ def test_scientist_two_stage_validation_and_ledger_blocking(monkeypatch: pytest.
     assert len(failed) == 0
     assert kept[0]["validation_status"] == "passed"
 
-    blocked_ledger = [{"signature": scientist._hypothesis_signature(hypothesis), "do_not_retry": True}]
+    blocked_ledger = [
+        {"signature": scientist._hypothesis_signature(hypothesis), "do_not_retry": True}
+    ]
     kept2, failed2 = scientist.validate_hypotheses([hypothesis], frame, blocked_ledger)
     assert len(kept2) == 0
     assert len(failed2) == 1
@@ -111,12 +120,20 @@ def test_semantic_scholar_client_uses_api_key(monkeypatch: pytest.MonkeyPatch) -
             captured_headers.update(self.headers)
             return DummyResponse()
 
-    monkeypatch.setattr("zindian.clients.semantic_scholar.requests.Session", lambda: DummySession())
+    monkeypatch.setattr(
+        "zindian.clients.semantic_scholar.requests.Session", lambda: DummySession()
+    )
 
     client = SemanticScholarClient(api_key="test-key", rate_limit_per_sec=1000)
     result = client.search_papers("frog ecology", limit=3)
 
     assert result == {"data": []}
-    assert captured_url["value"] == "https://api.semanticscholar.org/graph/v1/paper/search"
-    assert captured_params["value"] == {"query": "frog ecology", "limit": 3, "fields": "title,abstract,authors,year"}
+    assert (
+        captured_url["value"] == "https://api.semanticscholar.org/graph/v1/paper/search"
+    )
+    assert captured_params["value"] == {
+        "query": "frog ecology",
+        "limit": 3,
+        "fields": "title,abstract,authors,year",
+    }
     assert captured_headers["x-api-key"] == "test-key"

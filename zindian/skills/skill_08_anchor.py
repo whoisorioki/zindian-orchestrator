@@ -16,20 +16,27 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
+
 # KFold usage is delegated to the central CV factory / shared trainer
 from zindian.cv import make_cv_splitter
 
 from zindian.config import ChallengeConfig
 from zindian.config import get_seed
 from zindian.paths import resolve_competition_paths
-from zindian.state import SkillStateStore, resolve_active_cv_strategy_id, write_oof_record
+from zindian.state import (
+    SkillStateStore,
+    resolve_active_cv_strategy_id,
+    write_oof_record,
+)
 from zindian.ledger import Ledger
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
-
 # ── Data ───────────────────────────────────────────────────────────────────────
 
-def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
+
+def load_data(
+    paths, config: ChallengeConfig
+) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     """
     Load training and test data.
     Returns (train, test, training_target_col, submission_col).
@@ -37,7 +44,7 @@ def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFram
     """
     # Load from processed features — TerraClimate columns live here
     train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
-    test  = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+    test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
 
     # Training target must be initialized during intake and read dynamically.
     training_target_col = config.get("target_col") or config.get("target_column")
@@ -50,7 +57,8 @@ def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFram
         lat_col = cols_cfg.get("latitude", "Latitude")
         lon_col = cols_cfg.get("longitude", "Longitude")
         candidate_cols = [
-            c for c in train.columns
+            c
+            for c in train.columns
             if c not in test.columns and c not in {id_col, lat_col, lon_col}
         ]
         if len(candidate_cols) == 1:
@@ -71,15 +79,27 @@ def load_data(paths, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFram
 
 # ── Training ───────────────────────────────────────────────────────────────────
 
+
 def compute_oof_predictions(
-    train:       pd.DataFrame,
-    test:        pd.DataFrame,
-    config:      ChallengeConfig,
-    target_col:  str,
-    state:       dict | None = None,
-    n_splits:    int = 5,
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    config: ChallengeConfig,
+    target_col: str,
+    state: dict | None = None,
+    n_splits: int = 5,
     random_seed: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, float, float, float, float, list[tuple[np.ndarray, np.ndarray]], list[str], str, int]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    float,
+    float,
+    float,
+    float,
+    list[tuple[np.ndarray, np.ndarray]],
+    list[str],
+    str,
+    int,
+]:
     """
     Train LightGBM with KFold cross-validation on TerraClimate features only.
     Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
@@ -103,7 +123,9 @@ def compute_oof_predictions(
     if not active_strategy:
         active_strategy = "stratified"
 
-    feature_cols = [c for c in train.columns if c not in (id_col, lat_col, lon_col, target_col)]
+    feature_cols = [
+        c for c in train.columns if c not in (id_col, lat_col, lon_col, target_col)
+    ]
     feature_count = len(feature_cols)
 
     # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
@@ -111,12 +133,22 @@ def compute_oof_predictions(
     model_family = "lightgbm"
     model_params = {"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed}
     if anchor_challenge.get("active", False):
-        model_family = str(anchor_challenge.get("model_family") or anchor_challenge.get("framework") or "lightgbm")
-        model_params.update(anchor_challenge.get("params", {}) or anchor_challenge.get("hyperparams", {}) or {})
+        model_family = str(
+            anchor_challenge.get("model_family")
+            or anchor_challenge.get("framework")
+            or "lightgbm"
+        )
+        model_params.update(
+            anchor_challenge.get("params", {})
+            or anchor_challenge.get("hyperparams", {})
+            or {}
+        )
         n_splits = int(anchor_challenge.get("n_splits") or n_splits)
 
     if model_family != "lightgbm":
-        raise RuntimeError(f"Unsupported anchor_challenge model_family '{model_family}' in skill_08; supported: 'lightgbm'")
+        raise RuntimeError(
+            f"Unsupported anchor_challenge model_family '{model_family}' in skill_08; supported: 'lightgbm'"
+        )
 
     y = np.asarray(train[target_col].values, dtype=np.int32)
     groups = None
@@ -172,6 +204,7 @@ def compute_oof_predictions(
 
 # ── Git ────────────────────────────────────────────────────────────────────────
 
+
 def create_git_branch(branch_name: str = "anchor-baseline") -> None:
     """Create and switch to the anchor git branch."""
     import subprocess
@@ -179,14 +212,16 @@ def create_git_branch(branch_name: str = "anchor-baseline") -> None:
     try:
         subprocess.run(
             ["git", "checkout", "-b", branch_name],
-            check=True, capture_output=True,
+            check=True,
+            capture_output=True,
         )
         print(f"✅ Git branch created: {branch_name}")
     except subprocess.CalledProcessError:
         try:
             subprocess.run(
                 ["git", "checkout", branch_name],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
             print(f"✓  Switched to existing branch: {branch_name}")
         except subprocess.CalledProcessError as e:
@@ -194,6 +229,7 @@ def create_git_branch(branch_name: str = "anchor-baseline") -> None:
 
 
 # ── Save Submission CSV ────────────────────────────────────────────────────────
+
 
 def next_submission_path(paths, suffix: str = "anchor") -> Path:
     """Return the next numbered submission path for this competition."""
@@ -216,29 +252,32 @@ def next_submission_path(paths, suffix: str = "anchor") -> Path:
 
 
 def save_submission(
-    test_ids:       np.ndarray,
-    predictions:    np.ndarray,
+    test_ids: np.ndarray,
+    predictions: np.ndarray,
     submission_col: str,
-    output_path:    Path,
+    output_path: Path,
 ) -> None:
     """Save predictions in Zindi submission format (probabilities or hard labels per config)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sub_df = pd.DataFrame({
-        "ID":           np.asarray(test_ids),
-        submission_col: np.asarray(predictions),
-    })
+    sub_df = pd.DataFrame(
+        {
+            "ID": np.asarray(test_ids),
+            submission_col: np.asarray(predictions),
+        }
+    )
     sub_df.to_csv(output_path, index=False)
     print(f"✅ Submission CSV saved → {output_path}")
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
+
 def run(
     *,
-    n_splits:    int  = 5,
+    n_splits: int = 5,
     random_seed: int | None = None,
-    submit:      bool = False,
+    submit: bool = False,
 ) -> dict:
     """
     Skill 08 — Anchor Baseline.
@@ -253,11 +292,11 @@ def run(
         dict with status, oof_logloss, oof_auc, submission path, git branch,
         submitted flag, and submission result if submitted.
     """
-    print(f"\n{'='*60}")
-    print(f"SKILL 08 — Anchor Baseline (LightGBM · TerraClimate only — Lat/Lon banned)")
-    print(f"{'='*60}\n")
+    print(f"\n{'=' * 60}")
+    print("SKILL 08 — Anchor Baseline (LightGBM · TerraClimate only — Lat/Lon banned)")
+    print(f"{'=' * 60}\n")
 
-    paths  = resolve_competition_paths()
+    paths = resolve_competition_paths()
     config = ChallengeConfig.load()
     state_store = SkillStateStore(paths.state_path)
     state = state_store.read()
@@ -268,14 +307,14 @@ def run(
 
     # ── Load data ──────────────────────────────────────────────
     train, test, training_target_col, submission_col = load_data(paths, config)
-    print(f"\nData loaded:")
+    print("\nData loaded:")
     print(f"  Train          : {train.shape}")
     print(f"  Test           : {test.shape}")
     print(f"  Training target: {training_target_col}")
     print(f"  Submission col : {submission_col}")
 
     # ── Train ──────────────────────────────────────────────────
-    print(f"\nTraining LightGBM anchor baseline…")
+    print("\nTraining LightGBM anchor baseline…")
     try:
         result = compute_oof_predictions(
             train,
@@ -304,12 +343,12 @@ def run(
         compat_result = cast(
             tuple[Any, ...],
             compute_oof_predictions(
-            train,
-            test,
-            config,
-            training_target_col,
-            n_splits=n_splits,
-            random_seed=random_seed,
+                train,
+                test,
+                config,
+                training_target_col,
+                n_splits=n_splits,
+                random_seed=random_seed,
             ),
         )
         if len(compat_result) >= 10:
@@ -326,13 +365,19 @@ def run(
                 feature_count,
             ) = compat_result[:10]
         elif len(compat_result) >= 6:
-            oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compat_result[:6]
+            oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compat_result[
+                :6
+            ]
             # Reconstruct required metadata in compatibility path.
             cols_cfg = config.get("columns", {}) or {}
             id_col = cols_cfg.get("id", "ID")
             lat_col = cols_cfg.get("latitude", "Latitude")
             lon_col = cols_cfg.get("longitude", "Longitude")
-            feature_cols = [c for c in train.columns if c not in (id_col, lat_col, lon_col, training_target_col)]
+            feature_cols = [
+                c
+                for c in train.columns
+                if c not in (id_col, lat_col, lon_col, training_target_col)
+            ]
             feature_count = len(feature_cols)
             cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
 
@@ -341,7 +386,9 @@ def run(
             idx = np.arange(len(train), dtype=int)
             split_iter = [(idx, idx)]
         else:
-            raise RuntimeError("compute_oof_predictions returned an unexpected tuple shape")
+            raise RuntimeError(
+                "compute_oof_predictions returned an unexpected tuple shape"
+            )
 
     # ── Save OOF predictions ───────────────────────────────────
     oof_path = paths.data_raw_dir / "oof_anchor.csv"
@@ -351,26 +398,32 @@ def run(
         oof_index[np.asarray(val_idx, dtype=int)] = np.asarray(val_idx, dtype=int)
     cols_cfg = config.get("columns", {}) or {}
     id_col = cols_cfg.get("id", "ID")
-    pd.DataFrame({
-        id_col: np.asarray(train[id_col].values),
-        "row_index": oof_index,
-        "Predicted": oof_preds,
-        training_target_col: np.asarray(train[training_target_col].values),
-    }).to_csv(oof_path, index=False)
+    pd.DataFrame(
+        {
+            id_col: np.asarray(train[id_col].values),
+            "row_index": oof_index,
+            "Predicted": oof_preds,
+            training_target_col: np.asarray(train[training_target_col].values),
+        }
+    ).to_csv(oof_path, index=False)
     print(f"✅ OOF predictions saved → {oof_path}")
 
     # ── Save submission CSV ────────────────────────────────────
-    sub_path    = next_submission_path(paths)
+    sub_path = next_submission_path(paths)
     input_files = config.get("input_files", {}) or {}
-    sample_file = input_files.get("sample", "SampleSubmission.csv")
+    input_files.get("sample", "SampleSubmission.csv")
     # Probability-aware output format from config
     if config.get("use_probabilities", True):
         predictions_to_save = np.asarray(test_preds, dtype=np.float64)
     else:
-        print(f'\nApplying optimal F1 threshold: {best_t:.2f}')
-        predictions_to_save = (np.asarray(test_preds, dtype=np.float64) >= best_t).astype(int)
+        print(f"\nApplying optimal F1 threshold: {best_t:.2f}")
+        predictions_to_save = (
+            np.asarray(test_preds, dtype=np.float64) >= best_t
+        ).astype(int)
 
-    save_submission(np.asarray(test[id_col].values), predictions_to_save, submission_col, sub_path)
+    save_submission(
+        np.asarray(test[id_col].values), predictions_to_save, submission_col, sub_path
+    )
 
     # ── Log to DuckDB ledger ───────────────────────────────────
     ledger = Ledger()
@@ -381,7 +434,9 @@ def run(
         feature_count=feature_count,
         calibration_method="none",
         gate_result="PASS",
-        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369). Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(best_t, oof_auc),
+        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369). Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
+            best_t, oof_auc
+        ),
         dag_phase="phase_2_anchor_confirmed",
         notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
     )
@@ -389,7 +444,9 @@ def run(
     print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
 
     # ── Update SKILL_STATE.json ────────────────────────────────
-    retraining_active = bool(state.get("pseudo_label_result", {}).get("retraining_required", False))
+    retraining_active = bool(
+        state.get("pseudo_label_result", {}).get("retraining_required", False)
+    )
     if retraining_active:
         f1_key = "anchor_oof_f1_augmented"
         auc_key = "anchor_oof_auc_augmented"
@@ -404,7 +461,9 @@ def run(
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    branch_name = "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    branch_name = (
+        "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    )
     write_oof_record(
         state_store,
         branch_name=branch_name,
@@ -415,10 +474,16 @@ def run(
             "feature_count": feature_count,
             "n_splits": n_splits,
             "threshold": float(best_t),
-            "active_strategy": (state.get("cv_strategy_override", {}).get("override_strategy") if state.get("cv_strategy_override", {}).get("active", False) else config.get("cv_strategy", {}).get("type")),
+            "active_strategy": (
+                state.get("cv_strategy_override", {}).get("override_strategy")
+                if state.get("cv_strategy_override", {}).get("active", False)
+                else config.get("cv_strategy", {}).get("type")
+            ),
         },
     )
-    print(f"✅ SKILL_STATE.json updated: f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}")
+    print(
+        f"✅ SKILL_STATE.json updated: f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}"
+    )
 
     # ── Create git branch ──────────────────────────────────────
     create_git_branch("anchor-baseline")
@@ -428,33 +493,36 @@ def run(
     # Submission is delegated to skill_16_submit.
     submission_result = None
     if submit:
-        print("⚠️  submit=True ignored in skill_08_anchor. Use skill_16_submit for submissions.")
+        print(
+            "⚠️  submit=True ignored in skill_08_anchor. Use skill_16_submit for submissions."
+        )
 
     print(f"""
-{'='*60}
+{"=" * 60}
 Submission NOT triggered (single-role boundary: skill_16_submit owns submissions).
 OOF Log Loss : {oof_logloss:.6f}
 OOF AUC      : {oof_auc:.6f}
 
 To submit when ready (via orchestrator flow):
   run skill_16_submit after gates and inference formatting
-{'='*60}""")
+{"=" * 60}""")
 
     return {
-        "status":            "OK",
-        "oof_logloss":       oof_logloss,
-        "oof_auc":           oof_auc,
-        "submission_path":   str(sub_path),
-        "git_branch":        state_store.read().get("current_git_branch", "anchor-baseline"),
-        "n_features":        feature_count,
-        "submitted":         submission_result is not None,
+        "status": "OK",
+        "oof_logloss": oof_logloss,
+        "oof_auc": oof_auc,
+        "submission_path": str(sub_path),
+        "git_branch": state_store.read().get("current_git_branch", "anchor-baseline"),
+        "n_features": feature_count,
+        "submitted": submission_result is not None,
         "submission_result": submission_result,
-        "message":           "Anchor baseline trained and locked (submission delegated to skill_16_submit)",
+        "message": "Anchor baseline trained and locked (submission delegated to skill_16_submit)",
     }
 
 
 if __name__ == "__main__":
     import sys
+
     submit_flag = "--submit" in sys.argv
     result = run(submit=submit_flag)
     printable = {k: v for k, v in result.items() if k != "submission_result"}

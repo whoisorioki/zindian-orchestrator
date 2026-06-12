@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 
 from zindian.skills import skill_13_oracle_fusion as fusion
 from zindian.skills import skill_16_submit as submitter
@@ -28,10 +26,13 @@ def test_fusion_dry_run(tmp_path, monkeypatch):
     (proc / "features_train.csv").write_text("ID,occ\n1,0\n2,1\n", encoding="utf-8")
 
     # test probs for branch candidate
-    (proc / "test_probs_variant-1.csv").write_text("ID,Pred\n3,0.3\n4,0.6\n", encoding="utf-8")
+    (proc / "test_probs_variant-1.csv").write_text(
+        "ID,Pred\n3,0.3\n4,0.6\n", encoding="utf-8"
+    )
 
     # minimal but schema-valid state
     from zindian.schemas import skill_state_skeleton
+
     state = skill_state_skeleton()
     state.update(
         {
@@ -50,13 +51,23 @@ def test_fusion_dry_run(tmp_path, monkeypatch):
     )
     (proc.parent / "SKILL_STATE.json").write_text(json.dumps(state), encoding="utf-8")
 
-    monkeypatch.setattr(fusion, "resolve_competition_paths", lambda require_competition=True: SimplePaths(proc))
+    monkeypatch.setattr(
+        fusion,
+        "resolve_competition_paths",
+        lambda require_competition=True: SimplePaths(proc),
+    )
+
     class FakeCfg:
         def get(self, key, default=None):
             if key == "target_column":
                 return "occ"
             return default
-    monkeypatch.setattr(fusion, "ChallengeConfig", type("C", (), {"load": staticmethod(lambda: FakeCfg())}))
+
+    monkeypatch.setattr(
+        fusion,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: FakeCfg())}),
+    )
 
     res = fusion.run(dry_run=True)
     assert res["status"] == "DRY_RUN"

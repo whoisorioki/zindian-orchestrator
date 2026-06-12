@@ -58,11 +58,12 @@ def _impute_mcar(
 
     Returns the imputed DataFrame and a dict mapping column → imputation value.
     """
-    impute_values: Dict[str, float] = {}
+    impute_values: Dict[str, Any] = {}
     for col in mcar_columns:
         if col not in df.columns:
             continue
         is_numeric = pd.api.types.is_numeric_dtype(df[col])
+        value: Any
         if is_numeric:
             # Use fold-restricted median from training data
             # (here we compute from full df as proxy; the orchestrator
@@ -72,7 +73,7 @@ def _impute_mcar(
         else:
             value = df[col].mode().iloc[0] if not df[col].mode().empty else None
             df[col] = df[col].fillna(value)
-        impute_values[col] = value  # type: ignore[assignment]
+        impute_values[col] = value
     return df, impute_values
 
 
@@ -140,7 +141,9 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
             test[col] = test[col].fillna(value)
 
     # ── Step 3: Dynamic constant column dropping ────────────────────
-    train, test, const_both, const_train_only, const_test_only = _drop_constants(train, test)
+    train, test, const_both, const_train_only, const_test_only = _drop_constants(
+        train, test
+    )
 
     # ── Write cleaning metadata to state ────────────────────────────
     state["cleaning"] = {

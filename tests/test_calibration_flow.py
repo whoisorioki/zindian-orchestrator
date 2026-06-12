@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 
 from zindian.skills import skill_09_calibration as calib
 
@@ -20,7 +18,9 @@ def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
     proc.mkdir(parents=True)
 
     # create train features with target and 2-fold stratification support
-    (proc / "features_train.csv").write_text("ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8")
+    (proc / "features_train.csv").write_text(
+        "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
+    )
 
     # create state-driven candidate records and matching test probs
     state_payload = {
@@ -45,22 +45,38 @@ def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
             "model_config": {"name": "fixture"},
         },
     }
-    (proc.parent / "SKILL_STATE.json").write_text(json.dumps(state_payload), encoding="utf-8")
+    (proc.parent / "SKILL_STATE.json").write_text(
+        json.dumps(state_payload), encoding="utf-8"
+    )
 
     # create matching test probs for the promoted variant
-    (proc / "test_probs_variant-001.csv").write_text("ID,Pred\n5,0.3\n6,0.6\n", encoding="utf-8")
+    (proc / "test_probs_variant-001.csv").write_text(
+        "ID,Pred\n5,0.3\n6,0.6\n", encoding="utf-8"
+    )
 
-    monkeypatch.setattr(calib, "resolve_competition_paths", lambda require_competition=True: SimplePaths(proc))
+    monkeypatch.setattr(
+        calib,
+        "resolve_competition_paths",
+        lambda require_competition=True: SimplePaths(proc),
+    )
 
     class FakeCfg:
         def __init__(self):
-            self._data = {"cv_strategy": {"type": "stratified", "n_splits": 2}, "task_type": "classification"}
+            self._data = {
+                "cv_strategy": {"type": "stratified", "n_splits": 2},
+                "task_type": "classification",
+            }
+
         def get(self, key, default=None):
             if key == "target_column":
                 return "target"
             return default
 
-    monkeypatch.setattr(calib, "ChallengeConfig", type("C", (), {"load": staticmethod(lambda: FakeCfg())}))
+    monkeypatch.setattr(
+        calib,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: FakeCfg())}),
+    )
 
     res = calib.run(method="isotonic", dry_run=True)
     assert res["status"] == "OK"

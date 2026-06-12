@@ -15,6 +15,7 @@ Contract (SoT §4 / §8):
     carries a valid `cv_strategy_id` matching the active CV strategy.
   * Never writes a `human_gate_*_approved` key.
 """
+
 from __future__ import annotations
 
 import ast
@@ -23,8 +24,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 # AutoML libraries forbidden by the SoT / AGENTS.md "No AutoML" rule.
 FORBIDDEN_AUTOML_MODULES: tuple[str, ...] = (
@@ -76,9 +76,7 @@ def _scan_skill_imports(skill_dir: Path) -> list[tuple[Path, int, str]]:
                 # the leaf of dotted chains.
                 if isinstance(node.value, ast.Name):
                     if node.value.id in FORBIDDEN_AUTOML_MODULES:
-                        offenders.append(
-                            (p, getattr(node, "lineno", 0), node.value.id)
-                        )
+                        offenders.append((p, getattr(node, "lineno", 0), node.value.id))
     return offenders
 
 
@@ -92,7 +90,9 @@ def _parse_requirements(text: str) -> list[str]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if stripped.startswith(("-r", "--requirement", "-e", "--editable", "-c", "--constraint")):
+        if stripped.startswith(
+            ("-r", "--requirement", "-e", "--editable", "-c", "--constraint")
+        ):
             continue
         # Strip environment markers (`; python_version < '3.10'`) and extras (`[cpu]`).
         cleaned = re.split(r"[#;\[]", stripped, maxsplit=1)[0].strip()
@@ -164,7 +164,9 @@ def _audit_oof_strategy_tags(
         issues.append("Active CV strategy id is empty; cannot validate OOF tags.")
         return (False, issues)
     for key, value in state.items():
-        if not (isinstance(key, str) and key.startswith("branch_") and key.endswith("_oof")):
+        if not (
+            isinstance(key, str) and key.startswith("branch_") and key.endswith("_oof")
+        ):
             continue
         if not isinstance(value, dict):
             issues.append(f"{key}: OOF record is not a dict")
@@ -173,7 +175,11 @@ def _audit_oof_strategy_tags(
         if not isinstance(cv_id, str) or not cv_id:
             issues.append(f"{key}: missing cv_strategy_id tag")
             continue
-        if cv_id != active_strategy_id and cv_id not in ("config:unknown", "override:unknown", "unknown"):
+        if cv_id != active_strategy_id and cv_id not in (
+            "config:unknown",
+            "override:unknown",
+            "unknown",
+        ):
             issues.append(
                 f"{key}: cv_strategy_id '{cv_id}' does not match active strategy "
                 f"'{active_strategy_id}'"
@@ -191,7 +197,9 @@ def audit_pipeline(slug: str | None = None) -> bool:
     errors_found = 0
 
     # ── Check 0: Lockfile consistency ─────────────────────────────────────────
-    print("\n[Check 0] Verifying environment lock (requirements.in vs requirements.txt)")
+    print(
+        "\n[Check 0] Verifying environment lock (requirements.in vs requirements.txt)"
+    )
     lock_ok, lock_issues = _verify_lockfile(repo_root)
     if not lock_ok:
         for issue in lock_issues:
@@ -242,7 +250,9 @@ def audit_pipeline(slug: str | None = None) -> bool:
                 "skipping per-competition checks."
             )
         else:
-            print("  NOTICE: no active competition found; skipping per-competition checks.")
+            print(
+                "  NOTICE: no active competition found; skipping per-competition checks."
+            )
     if comp_dir is not None and state_path is not None:
         if not state_path.exists():
             print(f"  ERROR: Missing critical tracking file: {state_path}")
@@ -256,7 +266,11 @@ def audit_pipeline(slug: str | None = None) -> bool:
         recorded_phase = state.get("dag_phase", "Unknown")
         print(f"  - Serialized Git Branch: {recorded_branch}")
         print(f"  - Serialized DAG Phase: {recorded_phase}")
-        if current_branch and recorded_branch != "Unknown" and current_branch != recorded_branch:
+        if (
+            current_branch
+            and recorded_branch != "Unknown"
+            and current_branch != recorded_branch
+        ):
             print(
                 f"  NOTICE: Branch tracking asymmetry — workspace is on "
                 f"'{current_branch}' but state records '{recorded_branch}'."
@@ -291,9 +305,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
             oof_count = sum(
                 1
                 for k in state.keys()
-                if isinstance(k, str)
-                and k.startswith("branch_")
-                and k.endswith("_oof")
+                if isinstance(k, str) and k.startswith("branch_") and k.endswith("_oof")
             )
             print(
                 f"  OK: All {oof_count} OOF records carry cv_strategy_id matching "
@@ -303,7 +315,9 @@ def audit_pipeline(slug: str | None = None) -> bool:
     print("\n" + "=" * 70)
     if errors_found == 0:
         print("INTEGRATION STATUS: SECURE. WORKSPACE FULLY REPRODUCIBLE.")
-        print("Lockfile, AutoML import scan, branch tracking, and OOF tags all verified.")
+        print(
+            "Lockfile, AutoML import scan, branch tracking, and OOF tags all verified."
+        )
         print("=" * 70)
         return True
 
@@ -313,6 +327,33 @@ def audit_pipeline(slug: str | None = None) -> bool:
     return False
 
 
+def run(slug: str | None = None) -> dict[str, Any]:
+    from datetime import datetime, timezone
+    from zindian.paths import resolve_competition_paths
+    from zindian.state import SkillStateStore
+
+    paths = resolve_competition_paths(require_competition=False)
+    actual_slug = slug or (
+        paths.competition_dir.name if paths.competition_dir else None
+    )
+
+    success = audit_pipeline(slug=actual_slug)
+
+    state = {}
+    if paths.state_path and paths.state_path.exists():
+        state_store = SkillStateStore(paths.state_path)
+        state = state_store.read()
+        state["reproducibility_audit"] = {
+            "success": success,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        state_store.write(state)
+
+    return {"success": success, "state": state}
+
+
 if __name__ == "__main__":
-    slug_arg = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+    slug_arg = (
+        sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+    )
     raise SystemExit(0 if audit_pipeline(slug=slug_arg) else 1)

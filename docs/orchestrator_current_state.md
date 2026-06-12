@@ -18,7 +18,7 @@ The orchestrator is now a dynamic skill runner rather than a static import list.
 
 ### Phase layout in the orchestrator
 
-The built-in phase map currently is:
+The built-in phase map for execution dispatch currently is:
 
 - Phase 1: `skill_01`, `skill_02`, `skill_15`
 - Phase 2: `skill_03`, `skill_08`
@@ -27,6 +27,16 @@ The built-in phase map currently is:
 - Phase 5: `skill_13`, `skill_14`, `skill_17`
 
 If `challenge_config.json` defines `phase_skill_map`, the orchestrator uses that instead. At import time it also validates that the configured skills exist in the discovered registry.
+
+### Canonical Validation Sequence (Three-Lens Framework)
+
+The Three-Lens engine (`zindian/three_lens.py`) evaluates pipeline checkpoints using the canonical 6-phase model defined in the Source of Truth:
+- **Phase 1**: Competition Fingerprint + Config Lock (`skill_01`, `skill_02`, `skill_15`)
+- **Phase 2A**: Data Cleaning (`skill_03`, `skill_06`)
+- **Phase 2B**: Signal Search (`skill_07`, `skill_08`)
+- **Phase 3A**: Generalisation Audit (`skill_09`, `skill_10`, `skill_12`)
+- **Phase 3B**: Promotion and Fusion (`skill_11`, `skill_13`)
+- **Phase 4**: Governance (`skill_14`, `skill_16`, `skill_17`, `skill_22`)
 
 ### Research pipeline wiring
 

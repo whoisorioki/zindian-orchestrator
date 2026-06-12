@@ -16,12 +16,19 @@ def make_anchor_comp(tmp_path: Path):
     # features_train.csv
     ft = train / "features_train.csv"
     ft.write_text("ID,Occurrence Status,feat1\n1,1,0.1\n2,0,0.2\n", encoding="utf-8")
-    (train / "features_test.csv").write_text("ID,feat1\n3,0.3\n4,0.4\n", encoding="utf-8")
+    (train / "features_test.csv").write_text(
+        "ID,feat1\n3,0.3\n4,0.4\n", encoding="utf-8"
+    )
     # sample submission
-    (raw / "SampleSubmission.csv").write_text("ID,Prediction\n3,0\n4,0\n", encoding="utf-8")
+    (raw / "SampleSubmission.csv").write_text(
+        "ID,Prediction\n3,0\n4,0\n", encoding="utf-8"
+    )
     # SKILL_STATE skeleton
     from zindian.schemas import skill_state_skeleton
-    (comp / "SKILL_STATE.json").write_text(json.dumps(skill_state_skeleton()), encoding="utf-8")
+
+    (comp / "SKILL_STATE.json").write_text(
+        json.dumps(skill_state_skeleton()), encoding="utf-8"
+    )
     # challenge_config minimal
     cfg = {
         "name": "anchor-test",
@@ -47,7 +54,7 @@ def make_anchor_comp(tmp_path: Path):
 
 
 def test_anchor_writes_oof(tmp_path, monkeypatch):
-    comp = make_anchor_comp(tmp_path)
+    make_anchor_comp(tmp_path)
     monkeypatch.chdir(tmp_path)
 
     # Mock compute_oof_predictions to avoid heavy training
@@ -57,18 +64,21 @@ def test_anchor_writes_oof(tmp_path, monkeypatch):
         return oof, testp, 0.1, 0.95, 0.6, 0.5
 
     monkeypatch.setattr(anchor, "compute_oof_predictions", fake_compute)
+
     # Replace Ledger with a lightweight fake to avoid DB operations
     class FakeLedger:
         def __init__(self, *a, **k):
             pass
+
         def log_experiment(self, *a, **k):
             return 1
+
         def close(self):
             return None
 
     monkeypatch.setattr(anchor, "Ledger", FakeLedger)
 
-    res = anchor.run(submit=False)
+    anchor.run(submit=False)
     state_path = Path("competitions") / "anchor-cmp" / "SKILL_STATE.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     # Branch name used is 'anchor-baseline'

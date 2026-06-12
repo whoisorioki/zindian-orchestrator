@@ -11,7 +11,6 @@ import importlib
 import types
 import zindian.skills as skills_pkg
 
-
 # Phase definitions (names correspond to module prefixes `skill_XX`)
 PHASE_1_SKILLS = ["skill_01", "skill_02", "skill_15"]
 PHASE_2_SKILLS = ["skill_03", "skill_08"]
@@ -33,7 +32,11 @@ def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
         full_name = f"zindian.skills.{name}"
         try:
             mod = importlib.import_module(full_name)
-            desc = (mod.__doc__ or "").strip().splitlines()[0] if getattr(mod, "__doc__", None) else name
+            desc = (
+                (mod.__doc__ or "").strip().splitlines()[0]
+                if getattr(mod, "__doc__", None)
+                else name
+            )
             registry[name] = (desc, mod)
         except Exception:
             registry[name] = (name, None)
@@ -51,6 +54,7 @@ def _validate_phase_map() -> None:
     """
     try:
         from .config import ChallengeConfig
+
         cfg = ChallengeConfig.load()
         phase_map = cfg.get("phase_skill_map", {}) or {}
     except Exception:
@@ -63,10 +67,14 @@ def _validate_phase_map() -> None:
                 missing.append((phase, s))
 
     if missing:
-        print("[orchestrator] WARNING: phase_skill_map contains skills not discovered in SKILL_REGISTRY:")
+        print(
+            "[orchestrator] WARNING: phase_skill_map contains skills not discovered in SKILL_REGISTRY:"
+        )
         for phase, s in missing:
             print(f"  - phase {phase}: {s}")
-        print("[orchestrator] Please ensure skill modules exist or update challenge_config.json.")
+        print(
+            "[orchestrator] Please ensure skill modules exist or update challenge_config.json."
+        )
 
 
 # Validate at import time so misconfigurations are visible early
@@ -139,11 +147,11 @@ def run_skill(
 ) -> Dict[str, Any]:
     """
     Run a single skill by name.
-    
+
     Args:
         skill_name: e.g., "skill_01", "skill_02", "skill_15"
         **kwargs: Arguments to pass to the skill's run() function
-    
+
     Returns:
         Result dict from skill
     """
@@ -152,19 +160,20 @@ def run_skill(
             "status": "ERROR",
             "message": f"Unknown skill: {skill_name}. Available: {list(SKILL_REGISTRY.keys())}",
         }
-    
+
     description, skill_module = SKILL_REGISTRY[skill_name]
-    
+
     if skill_module is None:
         return {
             "status": "ERROR",
             "message": f"Skill {skill_name} ({description}) not loaded",
         }
-    
+
     try:
         return skill_module.run(**kwargs)
     except Exception as e:
         import traceback
+
         return {
             "status": "ERROR",
             "message": f"Skill {skill_name} failed: {str(e)}",
@@ -178,17 +187,18 @@ def run_phase(
 ) -> Dict[str, Any]:
     """
     Run all skills for a given phase.
-    
+
     Args:
         phase: 1, 2, 3, 4, or 5
         **kwargs: Arguments to pass to each skill's run() function
-    
+
     Returns:
         Dict with results for each skill
     """
     # Prefer configured phase map if present; otherwise fall back to hardcoded lists
     try:
         from .config import ChallengeConfig
+
         cfg = ChallengeConfig.load()
         phase_map = cfg.get("phase_skill_map", None)
     except Exception:
@@ -212,7 +222,7 @@ def run_phase(
                 "status": "ERROR",
                 "message": f"Invalid phase: {phase}. Must be 1-5.",
             }
-    
+
     results = {}
     for skill_name in skills:
         if skill_name in SKILL_REGISTRY:
@@ -223,5 +233,5 @@ def run_phase(
                 "status": "SKIPPED",
                 "message": f"Skill {skill_name} not yet implemented",
             }
-    
+
     return results

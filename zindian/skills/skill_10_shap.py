@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
@@ -160,11 +159,17 @@ def _compute_shap_audit(
     )
 
     shap_total = float(ranking["mean_abs_shap"].sum()) if not ranking.empty else 0.0
-    top15_share = float(ranking.head(15)["mean_abs_shap"].sum() / shap_total) if shap_total > 0 else 0.0
+    top15_share = (
+        float(ranking.head(15)["mean_abs_shap"].sum() / shap_total)
+        if shap_total > 0
+        else 0.0
+    )
     tail_share = float(1.0 - top15_share) if shap_total > 0 else 0.0
 
     thresholds = np.arange(0.3, 0.7, 0.01)
-    best_threshold = float(max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int))))
+    best_threshold = float(
+        max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+    )
     oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
     oof_auc = float(roc_auc_score(y, oof_probs))
 
@@ -180,11 +185,15 @@ def _compute_shap_audit(
     }
 
 
-def _build_pruned_feature_set(feature_cols: list[str], ranking: pd.DataFrame, frame: pd.DataFrame) -> dict:
+def _build_pruned_feature_set(
+    feature_cols: list[str], ranking: pd.DataFrame, frame: pd.DataFrame
+) -> dict:
     corr = frame[feature_cols].corr().abs()
     corr_values = corr.to_numpy(dtype=float, copy=False)
     upper_mask = np.triu(np.ones(corr_values.shape, dtype=bool), k=1)
-    rank_lookup = {feature: rank for rank, feature in enumerate(ranking["feature"].tolist())}
+    rank_lookup = {
+        feature: rank for rank, feature in enumerate(ranking["feature"].tolist())
+    }
 
     correlated_pairs: list[dict[str, object]] = []
     drop_features: set[str] = set()
@@ -194,13 +203,17 @@ def _build_pruned_feature_set(feature_cols: list[str], ranking: pd.DataFrame, fr
                 continue
             value = float(corr_values[row_idx, col_idx])
             if value > 0.95:
-                correlated_pairs.append({"feature_a": left, "feature_b": right, "corr": value})
+                correlated_pairs.append(
+                    {"feature_a": left, "feature_b": right, "corr": value}
+                )
                 if rank_lookup.get(left, 10**9) <= rank_lookup.get(right, 10**9):
                     drop_features.add(right)
                 else:
                     drop_features.add(left)
 
-    pruned_features = [feature for feature in feature_cols if feature not in drop_features]
+    pruned_features = [
+        feature for feature in feature_cols if feature not in drop_features
+    ]
     return {
         "correlated_pairs": correlated_pairs,
         "drop_features": sorted(drop_features),
@@ -208,7 +221,9 @@ def _build_pruned_feature_set(feature_cols: list[str], ranking: pd.DataFrame, fr
     }
 
 
-def _write_outputs(paths: CompetitionPaths, report: dict, summary_lines: Iterable[str]) -> None:
+def _write_outputs(
+    paths: CompetitionPaths, report: dict, summary_lines: Iterable[str]
+) -> None:
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = paths.reports_dir / "shap_analysis.json"
     summary_path = paths.reports_dir / "shap_summary.md"
@@ -235,7 +250,9 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
     print(f"DAG phase        : {state.get('dag_phase')}")
     print("Training governed SHAP audit…")
 
-    full_audit = _compute_shap_audit(frame, feature_cols, target, n_splits=n_splits, seed=seed)
+    full_audit = _compute_shap_audit(
+        frame, feature_cols, target, n_splits=n_splits, seed=seed
+    )
     ranking = full_audit["ranking"]
     pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
 
@@ -310,7 +327,9 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         "## Top 10 SHAP Features",
     ]
     for idx, row in ranking.head(10).iterrows():
-        summary_lines.append(f"{idx + 1}. {row['feature']} — {row['mean_abs_shap']:.8f}")
+        summary_lines.append(
+            f"{idx + 1}. {row['feature']} — {row['mean_abs_shap']:.8f}"
+        )
 
     _write_outputs(paths, report, summary_lines)
 
@@ -328,7 +347,9 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         shap_completed_at=datetime.now(timezone.utc).isoformat(),
         shap_feature_count=len(feature_cols),
         shap_top_feature=ranking.iloc[0]["feature"] if not ranking.empty else None,
-        shap_top_features=[row["feature"] for row in ranking.head(10).to_dict(orient="records")],
+        shap_top_features=[
+            row["feature"] for row in ranking.head(10).to_dict(orient="records")
+        ],
         high_corr_pairs_count=len(pruning["correlated_pairs"]),
         pruning_delta_f1=pruning_delta,
         pruning_pass=pruning_pass,
@@ -348,7 +369,11 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         },
     )
 
-    print(f"Top SHAP feature : {ranking.iloc[0]['feature']}" if not ranking.empty else "Top SHAP feature : none")
+    print(
+        f"Top SHAP feature : {ranking.iloc[0]['feature']}"
+        if not ranking.empty
+        else "Top SHAP feature : none"
+    )
     print(f"Pruning delta F1 : {pruning_delta:+.6f}")
     print(f"Top-15 SHAP share : {full_audit['top15_share']:.3%}")
     print(f"Pruning gate     : {'PASS' if pruning_pass else 'PRUNE'}")
@@ -373,12 +398,17 @@ if __name__ == "__main__":
             seed = int(arg.split("=", 1)[1])
 
     result = run(n_splits=n_splits, seed=seed)
-    print(json.dumps({
-        "competition": result["competition"],
-        "target": result["target"],
-        "feature_count": result["feature_count"],
-        "full_oof_f1": result["shap"]["oof_f1"],
-        "pruned_oof_f1": result["correlation_pruning"]["pruned_oof_f1"],
-        "delta_f1": result["correlation_pruning"]["delta_f1"],
-        "pruning_gate": result["correlation_pruning"]["gate_pass"],
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "competition": result["competition"],
+                "target": result["target"],
+                "feature_count": result["feature_count"],
+                "full_oof_f1": result["shap"]["oof_f1"],
+                "pruned_oof_f1": result["correlation_pruning"]["pruned_oof_f1"],
+                "delta_f1": result["correlation_pruning"]["delta_f1"],
+                "pruning_gate": result["correlation_pruning"]["gate_pass"],
+            },
+            indent=2,
+        )
+    )

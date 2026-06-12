@@ -16,7 +16,10 @@ def test_no_direct_cross_skill_imports_outside_compatibility_shims() -> None:
         "zindian/skills/skill_00_discussion_monitor.py",
         "zindian/skills/skill_13_ensemble.py",
     }
-    pattern = re.compile(r"^(?:from|import)\s+(?:\.|zindian\.)?skills?\.(skill_[0-9]{2}_[a-z0-9_]+)", re.MULTILINE)
+    pattern = re.compile(
+        r"^(?:from|import)\s+(?:\.|zindian\.)?skills?\.(skill_[0-9]{2}_[a-z0-9_]+)",
+        re.MULTILINE,
+    )
 
     offenders: list[str] = []
     for path in repo_root.rglob("*.py"):

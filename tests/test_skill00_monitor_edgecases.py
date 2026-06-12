@@ -1,4 +1,4 @@
-from zindian.skills.skill_00_zindi_monitor import _resolve_external_banned, _parse_deadline
+from zindian.zindi_monitor_core import _resolve_external_banned, _parse_deadline
 
 
 def test_resolve_external_banned_defaults_true():

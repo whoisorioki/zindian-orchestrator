@@ -27,40 +27,44 @@ def test_run_falls_back_on_sparse_spatial(tmp_path, monkeypatch):
     base = {}
     if template_path.exists():
         base = json.loads(template_path.read_text(encoding="utf-8"))
-    base.update({
-        "name": "tmpcomp",
-        "slug": "tmpcomp",
-        "metric": "f1_score",
-        "metric_direction": "maximize",
-        "submission_format": "csv",
-        "use_probabilities": False,
-        "daily_limit": 10,
-        "total_limit": 100,
-        "public_split_pct": 20,
-        "private_split_pct": 80,
-        "team_allowed": True,
-        "code_review_tier": None,
-        "allowed_external_data": False,
-        "automl_permitted": False,
-        "data_modality": "tabular",
-        "domain": "test",
-        "task_type": "classification",
-        "target_col": "target",
-        "minority_ratio": 0.10,
-        "spatial_signal": {"present": True},
-        "latitude_column": "Latitude",
-        "longitude_column": "Longitude",
-    })
+    base.update(
+        {
+            "name": "tmpcomp",
+            "slug": "tmpcomp",
+            "metric": "f1_score",
+            "metric_direction": "maximize",
+            "submission_format": "csv",
+            "use_probabilities": False,
+            "daily_limit": 10,
+            "total_limit": 100,
+            "public_split_pct": 20,
+            "private_split_pct": 80,
+            "team_allowed": True,
+            "code_review_tier": None,
+            "allowed_external_data": False,
+            "automl_permitted": False,
+            "data_modality": "tabular",
+            "domain": "test",
+            "task_type": "classification",
+            "target_col": "target",
+            "minority_ratio": 0.10,
+            "spatial_signal": {"present": True},
+            "latitude_column": "Latitude",
+            "longitude_column": "Longitude",
+        }
+    )
     (comp / "challenge_config.json").write_text(json.dumps(base), encoding="utf-8")
 
     # features_train.csv with fewer rows than N_SPLITS (N_SPLITS=5)
-    df = pd.DataFrame({
-        "ID": [1,2,3,4],
-        "Latitude": [0.0, 1.0, 2.0, 3.0],
-        "Longitude": [0.0, 1.0, 2.0, 3.0],
-        "target": [0,1,0,1],
-        "f1": [0.1,0.2,0.3,0.4]
-    })
+    df = pd.DataFrame(
+        {
+            "ID": [1, 2, 3, 4],
+            "Latitude": [0.0, 1.0, 2.0, 3.0],
+            "Longitude": [0.0, 1.0, 2.0, 3.0],
+            "target": [0, 1, 0, 1],
+            "f1": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
     data_dir = comp / "data" / "processed"
     data_dir.mkdir(parents=True, exist_ok=True)
     df.to_csv(data_dir / "features_train.csv", index=False)

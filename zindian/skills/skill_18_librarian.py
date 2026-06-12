@@ -2,9 +2,13 @@
 Skill 18 — The Librarian
 Canonical librarian implementation for literature mining and prior-art tracking.
 """
+
 from __future__ import annotations
 
-import json, time, requests
+import json
+import time
+from typing import Any
+import requests
 from pathlib import Path
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
@@ -35,8 +39,10 @@ QUERY_TEMPLATES = [
     "precipitation temperature amphibian habitat suitability Australia",
 ]
 
+_SS_CLIENT: Any = None
 try:
     from zindian.clients.semantic_scholar import SemanticScholarClient
+
     try:
         _SS_CLIENT = SemanticScholarClient()
     except Exception:
@@ -46,14 +52,46 @@ except Exception:
 
 
 def build_queries(tc_variables: list[str]) -> list[str]:
-    queries = []
-    for tmpl in QUERY_TEMPLATES:
-        if "{var}" in tmpl:
-            for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
-                queries.append(tmpl.format(var=var))
-        else:
-            queries.append(tmpl)
-    return queries
+    comp_name = "Species distribution modelling"
+    comp_domain = "biodiversity"
+    try:
+        cfg = ChallengeConfig.load()
+        if cfg.get("name"):
+            comp_name = cfg.get("name")
+        if cfg.get("domain"):
+            comp_domain = cfg.get("domain")
+    except Exception:
+        pass
+
+    is_frog_comp = any(
+        k in comp_name.lower() or k in comp_domain.lower()
+        for k in ["frog", "amphibian", "biodiversity"]
+    )
+
+    if is_frog_comp:
+        queries = []
+        for tmpl in QUERY_TEMPLATES:
+            if "{var}" in tmpl:
+                for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
+                    queries.append(tmpl.format(var=var))
+            else:
+                queries.append(tmpl)
+        return queries
+    else:
+        queries = [
+            f"{comp_name} machine learning pipeline",
+            f"{comp_name} feature engineering techniques",
+            f"{comp_name} winning solution writeup",
+            f"{comp_name} cross validation strategy",
+        ]
+        if tc_variables:
+            queries.extend(
+                [
+                    f"{var} feature representation in {comp_name}"
+                    for var in tc_variables[:3]
+                ]
+            )
+        return queries
 
 
 def fetch_papers(query: str, limit: int = 5) -> list[dict]:
@@ -67,14 +105,16 @@ def fetch_papers(query: str, limit: int = 5) -> list[dict]:
         except Exception as e:
             print(f"[Librarian] SemanticScholar client error: {e}")
 
-    params = {"query": query, "limit": limit, "fields": FIELDS}
+    params: dict[str, Any] = {"query": query, "limit": limit, "fields": FIELDS}
     time.sleep(3.0)
     for attempt in range(MAX_RETRIES):
         try:
             r = requests.get(SEMANTIC_SCHOLAR_SEARCH, params=params, timeout=15)
             if r.status_code == 429:
                 wait = (attempt + 1) * 15
-                print(f"[Librarian] Rate limited. Cooled down requirement triggered. Waiting {wait}s...")
+                print(
+                    f"[Librarian] Rate limited. Cooled down requirement triggered. Waiting {wait}s..."
+                )
                 time.sleep(wait)
                 continue
             r.raise_for_status()
@@ -104,16 +144,45 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
 def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
     hypotheses = []
     seen_signatures = set()
-    fallback_variables = ["ppt", "tmax", "tmin", "aet", "def", "pdsi", "pet", "q", "soil", "srad", "vap", "vpd"]
+    fallback_variables = [
+        "ppt",
+        "tmax",
+        "tmin",
+        "aet",
+        "def",
+        "pdsi",
+        "pet",
+        "q",
+        "soil",
+        "srad",
+        "vap",
+        "vpd",
+    ]
 
     keyword_map = [
         ("precipitation", ["precip", "rain", "rainfall", "wet"], ["ppt"]),
         ("temperature", ["temp", "thermal", "heat", "cold"], ["tmax", "tmin", "pet"]),
-        ("moisture stress", ["moisture", "soil", "drought", "arid", "dry"], ["soil", "aet", "def", "pdsi", "q"]),
+        (
+            "moisture stress",
+            ["moisture", "soil", "drought", "arid", "dry"],
+            ["soil", "aet", "def", "pdsi", "q"],
+        ),
         ("radiation", ["radiation", "solar", "insolation", "sun"], ["srad"]),
-        ("atmospheric demand", ["vapour", "vapor", "vpd", "evap", "evapotranspiration"], ["vap", "vpd", "aet", "pet"]),
-        ("seasonality", ["season", "monthly", "temporal", "lag"], ["ppt", "tmax", "tmin", "srad"]),
-        ("habitat suitability", ["habitat", "occurrence", "distribution", "suitability", "species"], ["ppt", "tmax", "tmin", "srad", "vap", "vpd"]),
+        (
+            "atmospheric demand",
+            ["vapour", "vapor", "vpd", "evap", "evapotranspiration"],
+            ["vap", "vpd", "aet", "pet"],
+        ),
+        (
+            "seasonality",
+            ["season", "monthly", "temporal", "lag"],
+            ["ppt", "tmax", "tmin", "srad"],
+        ),
+        (
+            "habitat suitability",
+            ["habitat", "occurrence", "distribution", "suitability", "species"],
+            ["ppt", "tmax", "tmin", "srad", "vap", "vpd"],
+        ),
     ]
 
     for paper in entries:
@@ -125,7 +194,11 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
                 signals.append(signal_name)
                 variables.extend(tc_variables)
 
-        variables = [variable for variable in _dedupe_preserve_order(variables) if variable in TC_VARIABLES]
+        variables = [
+            variable
+            for variable in _dedupe_preserve_order(variables)
+            if variable in TC_VARIABLES
+        ]
         if not variables:
             variables = fallback_variables[:4]
 
@@ -139,13 +212,15 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
         seen_signatures.add(signature)
 
         abstract = paper.get("abstract") or paper.get("title") or "Domain evidence"
-        hypotheses.append({
-            "signal": signal,
-            "rationale": abstract[:240],
-            "variables_needed": variables,
-            "paper_title": paper.get("title"),
-            "year": paper.get("year"),
-        })
+        hypotheses.append(
+            {
+                "signal": signal,
+                "rationale": abstract[:240],
+                "variables_needed": variables,
+                "paper_title": paper.get("title"),
+                "year": paper.get("year"),
+            }
+        )
 
         if len(hypotheses) >= 16:
             break
@@ -163,7 +238,10 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
 
     return hypotheses
 
-def run_librarian(config_path: str | None = None, cache_path: str | None = None) -> dict:
+
+def run_librarian(
+    config_path: str | None = None, cache_path: str | None = None
+) -> dict:
     queries = build_queries(TC_VARIABLES)
     seen_ids = set()
     entries = []
@@ -178,23 +256,25 @@ def run_librarian(config_path: str | None = None, cache_path: str | None = None)
             if not abstract:
                 continue
             seen_ids.add(pid)
-            entries.append({
-                "paper_id": pid,
-                "title":    p.get("title"),
-                "year":     p.get("year"),
-                "query":    q,
-                "abstract": abstract,
-            })
+            entries.append(
+                {
+                    "paper_id": pid,
+                    "title": p.get("title"),
+                    "year": p.get("year"),
+                    "query": q,
+                    "abstract": abstract,
+                }
+            )
         time.sleep(1.2)
 
     cache = {
-        "status":      "COMPLETE",
+        "status": "COMPLETE",
         "tc_variables": TC_VARIABLES,
-        "region":      "southeastern Australia",
+        "region": "southeastern Australia",
         "temporal_window": "2017-11 to 2019-11",
         "query_count": len(queries),
         "paper_count": len(entries),
-        "entries":     entries,
+        "entries": entries,
     }
     if cache_path is None:
         paths = resolve_competition_paths(require_competition=True)
@@ -205,8 +285,12 @@ def run_librarian(config_path: str | None = None, cache_path: str | None = None)
 
     domain_hypotheses_path = Path(cache_path).with_name("domain_hypotheses.json")
     domain_hypotheses = _build_domain_hypotheses(entries)
-    domain_hypotheses_path.write_text(json.dumps(domain_hypotheses, indent=2), encoding="utf-8")
-    print(f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses → {domain_hypotheses_path}")
+    domain_hypotheses_path.write_text(
+        json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
+    )
+    print(
+        f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses → {domain_hypotheses_path}"
+    )
 
     return cache
 
@@ -214,6 +298,6 @@ def run_librarian(config_path: str | None = None, cache_path: str | None = None)
 if __name__ == "__main__":
     paths = resolve_competition_paths(require_competition=True)
     run_librarian(
-        config_path = str(paths.config_path),
-        cache_path  = str(paths.reports_dir / "literature_cache.json"),
+        config_path=str(paths.config_path),
+        cache_path=str(paths.reports_dir / "literature_cache.json"),
     )

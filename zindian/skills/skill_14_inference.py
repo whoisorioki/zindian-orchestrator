@@ -20,6 +20,7 @@ Contract (SoT §4 / §8):
     crashed run never produces a partial file.
   * The skill never writes a `human_gate_*_approved` key.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,7 +44,9 @@ def _resolve_id_column(config: ChallengeConfig, sample: pd.DataFrame) -> str:
     if isinstance(candidate, str) and candidate and candidate in sample.columns:
         return candidate
     if len(sample.columns) == 0:
-        raise ValueError("SampleSubmission.csv has no columns; cannot resolve id_column")
+        raise ValueError(
+            "SampleSubmission.csv has no columns; cannot resolve id_column"
+        )
     return str(sample.columns[0])
 
 
@@ -58,7 +61,9 @@ def _resolve_target_column(config: ChallengeConfig) -> str:
     return target
 
 
-def _ensure_format(df: pd.DataFrame, sample: pd.DataFrame, id_column: str) -> pd.DataFrame:
+def _ensure_format(
+    df: pd.DataFrame, sample: pd.DataFrame, id_column: str
+) -> pd.DataFrame:
     """Reindex the submission to match the canonical sample ordering and columns."""
     if id_column not in df.columns:
         raise ValueError(
@@ -97,14 +102,18 @@ def _enforce_binary(values: np.ndarray) -> np.ndarray:
     if values.size == 0:
         return values
     rounded = np.rint(values).astype(np.int64)
-    if not np.all((values == 0.0) | (values == 1.0) | (values == rounded.astype(np.float64))):
+    if not np.all(
+        (values == 0.0) | (values == 1.0) | (values == rounded.astype(np.float64))
+    ):
         raise ValueError(
             "Hard-label submission must contain only 0/1 values; got non-integer floats."
         )
     return values
 
 
-def _enforce_regression_bounds(values: np.ndarray, bounds: dict[str, Any]) -> np.ndarray:
+def _enforce_regression_bounds(
+    values: np.ndarray, bounds: dict[str, Any]
+) -> np.ndarray:
     """Clip regression predictions to `target_domain_bounds` and assert in-range."""
     lo_raw = bounds.get("min", None)
     hi_raw = bounds.get("max", None)
@@ -148,7 +157,9 @@ def _enforce_submission_values(
         else:
             values = _enforce_binary(values.astype(np.float64))
     elif task_type == "regression":
-        values = _enforce_regression_bounds(values.astype(np.float64), target_domain_bounds)
+        values = _enforce_regression_bounds(
+            values.astype(np.float64), target_domain_bounds
+        )
     else:
         raise ValueError(
             f"Unsupported task_type '{task_type}'. Expected 'classification' or 'regression'."
@@ -262,7 +273,9 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python -m zindian.skills.skill_14_inference <submission.csv> [--dry-run]")
+        print(
+            "Usage: python -m zindian.skills.skill_14_inference <submission.csv> [--dry-run]"
+        )
         raise SystemExit(1)
     dry = "--dry-run" in sys.argv
     arg = next(a for a in sys.argv[1:] if not a.startswith("--"))

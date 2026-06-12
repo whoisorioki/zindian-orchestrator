@@ -22,34 +22,80 @@ from sklearn.feature_selection import mutual_info_classif
 from google.genai import types
 
 from zindian.paths import resolve_competition_paths
-from zindian.config import get_seed
+from zindian.config import get_seed, ChallengeConfig
 from zindian.state import SkillStateStore
 from zindian.constants import TC_VARIABLES
 
 load_dotenv(override=False)
 _api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-http_config = types.HttpOptions(
-    client_args={
-        "timeout": 60.0,
-        "proxy": None,
-    }
-)
-if _api_key:
-    CLIENT = genai.Client(api_key=_api_key, http_options=http_config)
-    print("[Scientist] GEMINI_API_KEY found — client initialized.")
-else:
-    CLIENT = genai.Client(http_options=http_config)
-    print("[Scientist] No API key — client initialized with ADC.")
+_client: Any = None
+
+
+def _get_client():
+    global _client
+    if _client is not None:
+        return _client
+    _api_key_env = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    http_config = types.HttpOptions(
+        client_args={
+            "timeout": 60.0,
+            "proxy": None,
+        }
+    )
+    if _api_key_env:
+        _client = genai.Client(api_key=_api_key_env, http_options=http_config)
+        print("[Scientist] GEMINI_API_KEY found — client initialized.")
+    elif os.getenv("ZINDIAN_DISABLE_NETWORK") == "1":
+
+        class DummyClient:
+            pass
+
+        _client = DummyClient()
+        print("[Scientist] Network disabled — dummy client initialized.")
+    else:
+        try:
+            _client = genai.Client(http_options=http_config)
+            print("[Scientist] No API key — client initialized with ADC.")
+        except Exception as e:
+            print(
+                f"[Scientist] Client initialization failed: {e}. Fallback to lazy error client."
+            )
+
+            class ErrorClient:
+                @property
+                def models(self):
+                    raise ValueError(
+                        "No API key was provided. Please pass a valid API key. Learn how to"
+                        " create an API key at https://ai.google.dev/gemini-api/docs/api-key."
+                    )
+
+            _client = ErrorClient()
+    return _client
+
+
+class ClientProxy:
+    @property
+    def models(self):
+        return _get_client().models
+
+
+CLIENT = ClientProxy()
 MODEL_NAME = "gemini-2.5-flash"
 TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "label", "y"]
 
 
 class FeatureHypothesis(BaseModel):
     hypothesis_id: str = Field(description="Unique identifier like hyp_001")
-    source_paper_id: str = Field(description="Literature reference index or domain note")
+    source_paper_id: str = Field(
+        description="Literature reference index or domain note"
+    )
     rationale: str = Field(description="One sentence ecological justification")
-    feature_columns: list[str] = Field(description="Exact column strings from available columns")
-    transformation: str = Field(description="raw, interaction_product, ratio, threshold_binary, or polynomial_2")
+    feature_columns: list[str] = Field(
+        description="Exact column strings from available columns"
+    )
+    transformation: str = Field(
+        description="raw, interaction_product, ratio, threshold_binary, or polynomial_2"
+    )
     expected_signal: str = Field(description="positive, negative, or nonlinear")
     confidence: float = Field(description="Confidence score between 0.0 and 1.0")
 
@@ -150,7 +196,9 @@ def resolve_target_column(frame: pd.DataFrame) -> str:
     raise ValueError(f"No target column found. Tried: {TARGET_COL_CANDIDATES}")
 
 
-def static_validate_hypothesis(hypothesis: dict[str, Any], available_columns: set[str]) -> tuple[bool, str]:
+def static_validate_hypothesis(
+    hypothesis: dict[str, Any], available_columns: set[str]
+) -> tuple[bool, str]:
     feature_columns = hypothesis.get("feature_columns", [])
     if not feature_columns:
         return False, "missing feature_columns"
@@ -215,46 +263,54 @@ def validate_hypotheses(
     for hypothesis in hypotheses:
         signature = _hypothesis_signature(hypothesis)
         if signature in failed_signatures:
-            failed.append({
-                **hypothesis,
-                "validation_status": "blocked",
-                "do_not_retry": True,
-                "failure_stage": "ledger",
-                "failure_reason": "signature previously blocked",
-                "signature": signature,
-            })
+            failed.append(
+                {
+                    **hypothesis,
+                    "validation_status": "blocked",
+                    "do_not_retry": True,
+                    "failure_stage": "ledger",
+                    "failure_reason": "signature previously blocked",
+                    "signature": signature,
+                }
+            )
             continue
 
         ok, reason = static_validate_hypothesis(hypothesis, available_columns)
         if not ok:
-            failed.append({
-                **hypothesis,
-                "validation_status": "failed",
-                "do_not_retry": True,
-                "failure_stage": "static",
-                "failure_reason": reason,
-                "signature": signature,
-            })
+            failed.append(
+                {
+                    **hypothesis,
+                    "validation_status": "failed",
+                    "do_not_retry": True,
+                    "failure_stage": "static",
+                    "failure_reason": reason,
+                    "signature": signature,
+                }
+            )
             continue
 
         ok, reason = empirical_validate_hypothesis(hypothesis, feature_frame)
         if not ok:
-            failed.append({
-                **hypothesis,
-                "validation_status": "failed",
-                "do_not_retry": True,
-                "failure_stage": "empirical",
-                "failure_reason": reason,
-                "signature": signature,
-            })
+            failed.append(
+                {
+                    **hypothesis,
+                    "validation_status": "failed",
+                    "do_not_retry": True,
+                    "failure_stage": "empirical",
+                    "failure_reason": reason,
+                    "signature": signature,
+                }
+            )
             continue
 
-        kept.append({
-            **hypothesis,
-            "validation_status": "passed",
-            "do_not_retry": False,
-            "signature": signature,
-        })
+        kept.append(
+            {
+                **hypothesis,
+                "validation_status": "passed",
+                "do_not_retry": False,
+                "signature": signature,
+            }
+        )
 
     return kept, failed
 
@@ -271,6 +327,33 @@ def run_scientist(
     if competition_dir is None:
         raise RuntimeError("Competition directory is not available")
 
+    # Load config dynamically to generalise the prompt context
+    comp_name = "species distribution modelling"
+    try:
+        config = ChallengeConfig.load()
+        if config.get("name"):
+            comp_name = config.get("name")
+    except Exception:
+        pass
+
+    is_frog_comp = any(
+        k in comp_name.lower() for k in ["frog", "amphibian", "biodiversity"]
+    )
+    if is_frog_comp:
+        scientist_system_text = SCIENTIST_SYSTEM
+    else:
+        scientist_system_text = (
+            SCIENTIST_SYSTEM.replace(
+                "species distribution modelling", f"machine learning for {comp_name}"
+            )
+            .replace(
+                "predict frog occurrence in southeastern Australia",
+                f"predict the target column in {comp_name}",
+            )
+            .replace("predict frog presence", "predict the target")
+            .replace("ecological", "predictive")
+        )
+
     domain_hypotheses = load_json(Path(hypotheses_path))
     prior_art = load_json(Path(priorart_path))
 
@@ -281,11 +364,13 @@ def run_scientist(
     feature_frame = pd.read_csv(feature_frame_path)
 
     # Available columns for prompts and validation should come from the actual matrix
-    available_columns = [c for c in feature_frame.columns if c not in TARGET_COL_CANDIDATES and c != "ID"]
+    available_columns = [
+        c for c in feature_frame.columns if c not in TARGET_COL_CANDIDATES and c != "ID"
+    ]
 
     user_prompt = f"""
 System Guardrails and Constraints:
-{SCIENTIST_SYSTEM}
+{scientist_system_text}
 
 Available feature columns ({len(available_columns)} total):
 {json.dumps(available_columns, indent=2)}
@@ -299,11 +384,12 @@ ML prior art:
 Generate feature engineering hypotheses as a raw JSON array now.
 """.strip()
 
-    print(f"[Scientist] Submitting text blocks to local/cloud {MODEL_NAME} engine (3 attempts with backoff)...")
+    print(
+        f"[Scientist] Submitting text blocks to local/cloud {MODEL_NAME} engine (3 attempts with backoff)..."
+    )
     response = None
     hypotheses = None
-    last_error = None
-    
+
     for attempt in range(3):
         try:
             print(f"[Scientist] Attempt {attempt + 1}/3...")
@@ -325,17 +411,20 @@ Generate feature engineering hypotheses as a raw JSON array now.
             print(f"[Scientist] ✅ Cloud synthesis successful on attempt {attempt + 1}")
             break
         except Exception as e:
-            last_error = e
             if attempt < 2:
-                wait_time = 2 ** attempt
-                print(f"[Scientist] Attempt {attempt + 1} failed: {str(e)[:100]}. Retrying in {wait_time}s...")
+                wait_time = 2**attempt
+                print(
+                    f"[Scientist] Attempt {attempt + 1} failed: {str(e)[:100]}. Retrying in {wait_time}s..."
+                )
                 time.sleep(wait_time)
             else:
                 print(f"[Scientist] All 3 attempts failed. Last error: {str(e)[:100]}")
-    
+
     if hypotheses is None:
         # Fallback: use pre-authored domain hypotheses if model call fails
-        print(f"[Scientist] Warning: model call failed. Falling back to local hypotheses file.")
+        print(
+            "[Scientist] Warning: model call failed. Falling back to local hypotheses file."
+        )
         fallback_path = paths.reports_dir / "domain_hypotheses.json"
         if not fallback_path.exists():
             raise RuntimeError(
@@ -372,15 +461,17 @@ Generate feature engineering hypotheses as a raw JSON array now.
             mapped = [m for m in mapped if m is not None]
             if not mapped:
                 continue
-            hypotheses.append({
-                "hypothesis_id": f"fallback_{idx:03d}",
-                "source_paper_id": entry.get("paper_title", "domain_knowledge"),
-                "rationale": entry.get("rationale", "fallback generated"),
-                "feature_columns": mapped,
-                "transformation": "raw",
-                "expected_signal": "positive",
-                "confidence": 0.8,
-            })
+            hypotheses.append(
+                {
+                    "hypothesis_id": f"fallback_{idx:03d}",
+                    "source_paper_id": entry.get("paper_title", "domain_knowledge"),
+                    "rationale": entry.get("rationale", "fallback generated"),
+                    "feature_columns": mapped,
+                    "transformation": "raw",
+                    "expected_signal": "positive",
+                    "confidence": 0.8,
+                }
+            )
             idx += 1
     if not isinstance(hypotheses, list):
         raise ValueError("Scientist model did not return a JSON array")
@@ -391,7 +482,11 @@ Generate feature engineering hypotheses as a raw JSON array now.
         raise FileNotFoundError(f"Missing feature matrix: {feature_frame_path}")
     feature_frame = pd.read_csv(feature_frame_path)
 
-    failed_path = Path(failed_hypotheses_path) if failed_hypotheses_path else (paths.reports_dir / "failed_hypotheses.json")
+    failed_path = (
+        Path(failed_hypotheses_path)
+        if failed_hypotheses_path
+        else (paths.reports_dir / "failed_hypotheses.json")
+    )
     failed_ledger = load_failed_ledger(failed_path)
 
     validated, failed = validate_hypotheses(hypotheses, feature_frame, failed_ledger)
@@ -408,23 +503,36 @@ Generate feature engineering hypotheses as a raw JSON array now.
     save_failed_ledger(failed_path, combined_failed)
 
     state_store.update(
-        scientist_last_run=json.dumps({
-            "status": "OK",
-            "validated": len(validated),
-            "failed": len(failed),
-        }),
+        scientist_last_run=json.dumps(
+            {
+                "status": "OK",
+                "validated": len(validated),
+                "failed": len(failed),
+            }
+        ),
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
 
-    print(f"[Scientist] {len(validated)}/{len(hypotheses)} hypotheses passed validation → {hypothesis_path}")
+    print(
+        f"[Scientist] {len(validated)}/{len(hypotheses)} hypotheses passed validation → {hypothesis_path}"
+    )
     print(f"[Scientist] Failed hypotheses ledger → {failed_path}")
     return validated
 
 
 if __name__ == "__main__":
+    from zindian.paths import resolve_competition_paths
+
+    paths = resolve_competition_paths(require_competition=False)
+    comp_dir = (
+        paths.competition_dir
+        if paths.competition_dir
+        else Path("competitions/ey-frogs")
+    )
+    reports_dir = comp_dir / "reports"
     run_scientist(
-        hypotheses_path="competitions/ey-frogs/reports/domain_hypotheses.json",
-        priorart_path="competitions/ey-frogs/reports/ml_priorart.json",
-        hypothesis_path="competitions/ey-frogs/reports/validated_hypotheses.json",
-        failed_hypotheses_path="competitions/ey-frogs/reports/failed_hypotheses.json",
+        hypotheses_path=str(reports_dir / "domain_hypotheses.json"),
+        priorart_path=str(reports_dir / "ml_priorart.json"),
+        hypothesis_path=str(reports_dir / "validated_hypotheses.json"),
+        failed_hypotheses_path=str(reports_dir / "failed_hypotheses.json"),
     )

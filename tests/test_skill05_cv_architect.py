@@ -75,8 +75,16 @@ def test_skill05_deterministic_temporal_choice(tmp_path, monkeypatch):
         "spatial_signal": {"present": False},
         "group_signal": {"present": False},
     }
-    monkeypatch.setattr(cv_architect, "resolve_competition_paths", lambda require_competition=True: paths)
-    monkeypatch.setattr(cv_architect, "ChallengeConfig", type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}))
+    monkeypatch.setattr(
+        cv_architect,
+        "resolve_competition_paths",
+        lambda require_competition=True: paths,
+    )
+    monkeypatch.setattr(
+        cv_architect,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}),
+    )
 
     result = cv_architect.run(strategy="compare")
     assert result["status"] == "OK"
@@ -127,8 +135,16 @@ def test_skill05_spatial_choice_uses_group_col(tmp_path, monkeypatch):
         "spatial_signal": {"present": True, "group_col": "site_id"},
         "group_signal": {"present": False},
     }
-    monkeypatch.setattr(cv_architect, "resolve_competition_paths", lambda require_competition=True: paths)
-    monkeypatch.setattr(cv_architect, "ChallengeConfig", type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}))
+    monkeypatch.setattr(
+        cv_architect,
+        "resolve_competition_paths",
+        lambda require_competition=True: paths,
+    )
+    monkeypatch.setattr(
+        cv_architect,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}),
+    )
 
     result = cv_architect.run(strategy="compare")
     assert result["status"] == "OK"

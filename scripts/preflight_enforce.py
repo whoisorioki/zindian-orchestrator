@@ -4,18 +4,20 @@
 Checks (SoT Section 3 ENFORCE mode):
 - requirements.in and requirements.txt present
 - challenge_config.json contains all required SoT v2.0.1 schema fields
-- SKILL_STATE.json contains the standard 5 human gate keys
-- OOF cv_strategy_id tagging validation
-- Cross-skill import static scan
-- AutoML import static scan
+- SKILL_STATE.json contains all required human gate keys (using flat boolean format)
+- OOF cv_strategy_id tagging validation (via AST parsing)
+- Cross-skill import static scan (via AST parsing)
+- AutoML import static scan (via AST parsing)
 
 Usage:
   python scripts/preflight_enforce.py --competition competitions/ey-frogs
 
 Exits 0 on success, 1 on failure.
 """
+
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -33,22 +35,39 @@ def ok(msg: str):
 
 
 # ---------------------------------------------------------------------------
-# Static scans (run on source tree, not per-competition)
+# Configuration Completeness Checks
 # ---------------------------------------------------------------------------
 
-REQUIRED_CONFIG_FIELDS = {
-    "reproducibility": ("reproducibility", dict),
-    "reproducibility.seed": "seed",
-    "cv_strategy": ("cv_strategy", dict),
-    "cv_strategy.type": "type",
-    "cv_strategy.n_splits": "n_splits",
-    "cv_strategy.selection_reason": "selection_reason",
-    "drift_threshold": ("drift_threshold", (int, float)),
-    "use_probabilities": ("use_probabilities", bool),
-    "metric_direction": ("metric_direction", str),
-    "shap_leak_threshold": ("shap_leak_threshold", (int, float)),
-    "variance_gate_threshold": ("variance_gate_threshold", (int, float)),
-    "gate_margin": ("gate_margin", (int, float)),
+REQUIRED_CONFIG_KEYS = {
+    "name",
+    "slug",
+    "task_type",
+    "metric",
+    "metric_direction",
+    "use_probabilities",
+    "drift_threshold",
+    "submission_format",
+    "submission_budget",
+    "daily_limit",
+    "total_limit",
+    "public_split_pct",
+    "private_split_pct",
+    "team_allowed",
+    "code_review_tier",
+    "allowed_external_data",
+    "automl_permitted",
+    "data_modality",
+    "data_shape",
+    "phase_skill_map",
+    "reproducibility",
+    "shap_leak_threshold",
+    "variance_gate_threshold",
+    "gate_margin",
+    "cv_strategy",
+    "variants",
+    "community_signals",
+    "policy_filters",
+    "file_hashes",
 }
 
 VALID_METRIC_DIRECTIONS = {"maximize", "minimize"}
@@ -56,106 +75,168 @@ VALID_METRIC_DIRECTIONS = {"maximize", "minimize"}
 
 def check_config_completeness(cfg: dict) -> None:
     """Validate challenge_config.json fields per SoT v2.0.1 schema."""
-    # Nested block checks
-    for block_key, (key_path, expected_type) in [
-        ("reproducibility", ("reproducibility", dict)),
-        ("cv_strategy", ("cv_strategy", dict)),
-    ]:
-        block = cfg.get(key_path)
-        if not block or not isinstance(block, expected_type):
-            fail(f"challenge_config.json missing `{key_path}` block")
-        ok(f"challenge_config.json `{key_path}` block present")
+    # Check top-level keys
+    missing_keys = REQUIRED_CONFIG_KEYS - set(cfg.keys())
+    if missing_keys:
+        fail(f"challenge_config.json is missing required keys: {sorted(missing_keys)}")
+    ok("challenge_config.json contains all top-level keys")
 
-    # Nested field checks
-    repro = cfg.get("reproducibility", {})
+    # Nested block checks: reproducibility
+    repro = cfg.get("reproducibility")
+    if not isinstance(repro, dict):
+        fail("challenge_config.json `reproducibility` must be a dictionary")
     seed = repro.get("seed")
     if seed is None or not isinstance(seed, int):
         fail("reproducibility.seed is missing or not an int")
     ok(f"reproducibility.seed: {seed}")
 
-    cv = cfg.get("cv_strategy", {})
-    for subfield in ("type", "n_splits", "selection_reason"):
-        val = cv.get(subfield)
-        if subfield == "n_splits" and (val is None or not isinstance(val, int)):
-            fail(f"cv_strategy.{subfield} is missing or not an int")
-        elif subfield != "n_splits" and not val:
-            fail(f"cv_strategy.{subfield} is missing or empty")
-    ok(f"cv_strategy block complete ({cv.get('type', '<unknown>')})")
+    # Nested block checks: cv_strategy
+    cv = cfg.get("cv_strategy")
+    if not isinstance(cv, dict):
+        fail("challenge_config.json `cv_strategy` must be a dictionary")
+    for subfield in (
+        "type",
+        "n_splits",
+        "shuffle",
+        "random_state",
+        "group_col",
+        "stratify_col",
+        "selection_reason",
+    ):
+        if subfield not in cv:
+            fail(f"cv_strategy block is missing `{subfield}`")
+    if not isinstance(cv.get("n_splits"), int):
+        fail("cv_strategy.n_splits must be an int")
+    if not cv.get("type"):
+        fail("cv_strategy.type must be specified")
+    ok(f"cv_strategy block complete ({cv.get('type')})")
 
-    # Float threshold checks
-    for name, (key_path, expected_type) in [
-        ("drift_threshold", ("drift_threshold", (int, float))),
-        ("shap_leak_threshold", ("shap_leak_threshold", (int, float))),
-        ("variance_gate_threshold", ("variance_gate_threshold", (int, float))),
-        ("gate_margin", ("gate_margin", (int, float))),
+    # Numeric/Float checks
+    for name, expected_types in [
+        ("drift_threshold", (int, float)),
+        ("shap_leak_threshold", (int, float)),
+        ("variance_gate_threshold", (int, float)),
+        ("gate_margin", (int, float)),
     ]:
-        val = cfg.get(key_path)
-        if val is None or not isinstance(val, expected_type):
+        val = cfg.get(name)
+        if val is None or not isinstance(val, expected_types):
             fail(f"challenge_config.json `{name}` is missing or not a number")
         ok(f"challenge_config.json `{name}`: {val}")
 
-    # Bool checks
-    use_probs = cfg.get("use_probabilities")
-    if use_probs is None or not isinstance(use_probs, bool):
-        fail("challenge_config.json `use_probabilities` is missing or not a bool")
-    ok(f"challenge_config.json `use_probabilities`: {use_probs}")
+    # Boolean checks
+    for name in (
+        "use_probabilities",
+        "allowed_external_data",
+        "automl_permitted",
+        "team_allowed",
+    ):
+        val = cfg.get(name)
+        if val is None or not isinstance(val, bool):
+            fail(f"challenge_config.json `{name}` is missing or not a boolean")
+        ok(f"challenge_config.json `{name}`: {val}")
 
     # Metric direction check
     direction = cfg.get("metric_direction")
-    if not direction or not isinstance(direction, str):
-        fail("challenge_config.json `metric_direction` is missing or not a string")
     if direction not in VALID_METRIC_DIRECTIONS:
-        fail(f"challenge_config.json `metric_direction` must be one of {VALID_METRIC_DIRECTIONS}, got '{direction}'")
+        fail(
+            f"challenge_config.json `metric_direction` must be one of {VALID_METRIC_DIRECTIONS}, got '{direction}'"
+        )
     ok(f"challenge_config.json `metric_direction`: {direction}")
 
 
-HUMAN_GATE_KEYS: dict[str, type] = {
-    "human_gate_1_approved": bool,
-    "human_gate_2_by_branch": dict,
-    "human_gate_3_approved": bool,
-    "human_gate_4_approved": bool,
-    "human_gate_5_selection": list,
-}
-
-
-def check_human_gate_keys(state: dict) -> None:
-    """Validate standard 5 human gate keys and inner branch booleans."""
+def check_human_gate_keys(state: dict, cfg: dict) -> None:
+    """Validate standard 5 human gate keys and flat branch booleans."""
+    required_gates = [
+        "human_gate_1_approved",
+        "human_gate_3_approved",
+        "human_gate_4_approved",
+        "human_gate_5_selection",
+    ]
     missing = []
-    for key, expected_type in HUMAN_GATE_KEYS.items():
+    for key in required_gates:
         val = state.get(key)
         if val is None:
             missing.append(key)
-        elif not isinstance(val, expected_type):
-            fail(f"SKILL_STATE.{key} has wrong type: {type(val).__name__}, expected {expected_type.__name__}")
+        else:
+            expected_type = list if key == "human_gate_5_selection" else bool
+            if not isinstance(val, expected_type):
+                fail(
+                    f"SKILL_STATE.{key} has wrong type: {type(val).__name__}, expected {expected_type.__name__}"
+                )
+
+    # Check flat branch approvals using variants list from config
+    variants = cfg.get("variants", [])
+    if variants:
+        for branch in variants:
+            gate_key = f"human_gate_2_{branch}_approved"
+            val = state.get(gate_key)
+            if val is None:
+                missing.append(gate_key)
+            elif not isinstance(val, bool):
+                fail(
+                    f"SKILL_STATE.{gate_key} has wrong type: {type(val).__name__}, expected bool"
+                )
+    else:
+        # Fallback: scan for any keys matching human_gate_2_{branch}_approved in state
+        gate2_keys = [
+            k
+            for k in state
+            if k.startswith("human_gate_2_") and k.endswith("_approved")
+        ]
+        if not gate2_keys:
+            missing.append("human_gate_2_{branch}_approved")
+        else:
+            for gk in gate2_keys:
+                if not isinstance(state[gk], bool):
+                    fail(
+                        f"SKILL_STATE.{gk} has wrong type: {type(state[gk]).__name__}, expected bool"
+                    )
+
+    # Reject legacy human_gate_2_by_branch container
+    if "human_gate_2_by_branch" in state:
+        fail(
+            "SKILL_STATE contains legacy container 'human_gate_2_by_branch' which is prohibited"
+        )
 
     if missing:
         fail(f"Missing required human gate keys: {missing}")
 
-    # Validate inner branch booleans
-    gate2 = state.get("human_gate_2_by_branch", {})
-    for branch_key, branch_val in gate2.items():
-        if not branch_key.endswith("_approved"):
-            fail(f"human_gate_2_by_branch key '{branch_key}' does not end with '_approved'")
-        if not isinstance(branch_val, bool):
-            fail(f"human_gate_2_by_branch.{branch_key} must be a bool, got {type(branch_val).__name__}")
+    ok("SKILL_STATE.json contains all required human gate keys with correct types")
 
-    ok("SKILL_STATE.json contains all 5 human gate keys with correct types")
-    ok(f"human_gate_2_by_branch has {len(gate2)} branch entries, all bool")
+
+# ---------------------------------------------------------------------------
+# AST Static Code Auditing
+# ---------------------------------------------------------------------------
 
 
 def scan_oof_cv_strategy_tags(skills_dir: Path) -> None:
     """Scan skill modules that call write_oof_record() and assert cv_strategy_id is passed."""
     violations = []
     for skill_file in sorted(skills_dir.glob("skill_*.py")):
-        code = skill_file.read_text()
-        if "write_oof_record" not in code:
-            continue
-        # Check that cv_strategy_id= kwarg is passed in the call
-        # Simple heuristic: find write_oof_record( calls and check for cv_strategy_id=
-        calls = re.findall(r"write_oof_record\s*\([^)]*\)", code, re.DOTALL)
-        for call in calls:
-            if "cv_strategy_id=" not in call:
-                violations.append(f"{skill_file.name} calls write_oof_record() without cv_strategy_id= kwarg")
+        try:
+            tree = ast.parse(
+                skill_file.read_text(encoding="utf-8"), filename=str(skill_file)
+            )
+        except Exception as e:
+            fail(f"Failed to parse AST of {skill_file.name}: {e}")
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func_name = ""
+                if isinstance(node.func, ast.Name):
+                    func_name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    func_name = node.func.attr
+
+                if func_name == "write_oof_record":
+                    has_cv_strategy_id = any(
+                        kw.arg == "cv_strategy_id" for kw in node.keywords
+                    )
+                    if not has_cv_strategy_id:
+                        violations.append(
+                            f"{skill_file.name} calls write_oof_record() at line {node.lineno} "
+                            f"without cv_strategy_id keyword argument"
+                        )
 
     if violations:
         for v in violations:
@@ -164,69 +245,115 @@ def scan_oof_cv_strategy_tags(skills_dir: Path) -> None:
     ok("All write_oof_record() calls include cv_strategy_id= kwarg")
 
 
-CROSS_SKILL_IMPORT_PATTERNS = [
-    re.compile(r"from\s+\.skill_\d{2}"),
-    re.compile(r"from\s+zindian\.skills\.skill_\d{2}"),
-    re.compile(r"import\s+skill_\d{2}"),
-]
+def get_ast_imports(filepath: Path) -> list[tuple[int, str]]:
+    """Parse python file and extract all imported module names and their line numbers."""
+    try:
+        tree = ast.parse(filepath.read_text(encoding="utf-8"), filename=str(filepath))
+    except Exception as e:
+        fail(f"Failed to parse AST of {filepath.name}: {e}")
+
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                imports.append((node.lineno, name.name))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            level = node.level
+            if level > 0:
+                imports.append((node.lineno, f"{'.' * level}{module}"))
+            else:
+                imports.append((node.lineno, module))
+    return imports
+
+
+def check_is_cross_skill_import(module_name: str) -> bool:
+    name = module_name.lstrip(".")
+    if name.startswith("zindian.skills.skill_"):
+        return True
+    if name.startswith("skills.skill_"):
+        return True
+    if name.startswith("skill_") and re.match(r"^skill_\d{2}", name):
+        return True
+    return False
+
+
+AUTOML_PACKAGES = {
+    "autosklearn",
+    "tpot",
+    "h2o",
+    "autogluon",
+    "auto-sklearn",
+    "auto_ml",
+    "mljar",
+}
+
+
+def check_is_automl_import(module_name: str) -> bool:
+    name = module_name.lstrip(".").split(".")[0].lower()
+    name_alt = name.replace("-", "_")
+    return name in AUTOML_PACKAGES or name_alt in AUTOML_PACKAGES
 
 
 def scan_cross_skill_imports(skills_dir: Path) -> None:
-    """Flag any from .skill_NN_* or from zindian.skills.skill_NN_* import in a skill module."""
+    """Flag any cross-skill import across the skill modules using AST parsing."""
     violations = []
     for skill_file in sorted(skills_dir.glob("skill_*.py")):
-        code = skill_file.read_text()
-        for pattern in CROSS_SKILL_IMPORT_PATTERNS:
-            matches = pattern.findall(code)
-            for m in matches:
-                violations.append(f"{skill_file.name}: {m.strip()}")
+        imports = get_ast_imports(skill_file)
+        for lineno, module in imports:
+            if check_is_cross_skill_import(module):
+                violations.append(
+                    f"{skill_file.name} line {lineno}: imports '{module}'"
+                )
 
     if violations:
         for v in violations:
             print(f"  VIOLATION: {v}")
-        fail(f"Cross-skill import violations: {len(violations)}")
+        fail(f"Cross-skill import violations found: {len(violations)}")
     ok("No cross-skill imports detected")
 
 
-AUTOML_PACKAGES = ["autosklearn", "tpot", "h2o", "autogluon", "auto-sklearn", "auto_ml", "mljar"]
-
-
 def scan_automl_imports(skills_dir: Path) -> None:
-    """Flag any AutoML library import in any skill body."""
+    """Flag any AutoML library import in any skill body using AST parsing."""
     violations = []
     for skill_file in sorted(skills_dir.glob("*.py")):
-        code = skill_file.read_text()
-        for pkg in AUTOML_PACKAGES:
-            pattern = re.compile(rf"(?:^|\n)\s*(?:import|from)\s+{re.escape(pkg)}")
-            matches = pattern.findall(code)
-            if matches:
-                violations.append(f"{skill_file.name}: imports '{pkg}'")
+        imports = get_ast_imports(skill_file)
+        for lineno, module in imports:
+            if check_is_automl_import(module):
+                violations.append(
+                    f"{skill_file.name} line {lineno}: imports AutoML package '{module}'"
+                )
 
     if violations:
         for v in violations:
             print(f"  VIOLATION: {v}")
-        fail(f"AutoML import violations: {len(violations)}")
+        fail(f"AutoML import violations found: {len(violations)}")
     ok("No AutoML library imports detected")
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main Execution Flow
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--competition", default=None, help="Path to competition folder (e.g., competitions/ey-frogs)")
+    parser.add_argument(
+        "--competition",
+        default=None,
+        help="Path to competition folder (e.g., competitions/ey-frogs)",
+    )
     args = parser.parse_args()
 
     root = Path.cwd()
     skills_dir = root / "zindian" / "skills"
 
-    # Static scans (run once, not per-competition)
+    # AST Static scans
     scan_automl_imports(skills_dir)
     scan_cross_skill_imports(skills_dir)
     scan_oof_cv_strategy_tags(skills_dir)
 
-    # ── Requirements files ──
+    # Requirements files checks
     req_in = root / "requirements.in"
     req_txt = root / "requirements.txt"
     if not req_in.exists():
@@ -234,10 +361,12 @@ def main():
     ok("requirements.in present")
 
     if not req_txt.exists():
-        fail("requirements.txt missing — run: pip-compile requirements.in --output-file requirements.txt")
+        fail(
+            "requirements.txt missing — run: pip-compile requirements.in --output-file requirements.txt"
+        )
     ok("requirements.txt present")
 
-    # ── Competition directory ──
+    # Competition selection
     if args.competition:
         comp_path = Path(args.competition)
     else:
@@ -246,23 +375,23 @@ def main():
             fail("No competitions/ folder or empty")
         comp_path = comps[0]
 
-    # ── challenge_config.json ──
+    # Load and validate challenge_config.json
     config_path = comp_path / "challenge_config.json"
     if not config_path.exists():
         fail(f"challenge_config.json not found in {comp_path}")
 
-    cfg = json.loads(config_path.read_text())
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
     ok("challenge_config.json loaded")
     check_config_completeness(cfg)
 
-    # ── SKILL_STATE.json ──
+    # Load and validate SKILL_STATE.json
     state_path = comp_path / "SKILL_STATE.json"
     if not state_path.exists():
         fail(f"SKILL_STATE.json not found in {comp_path}")
 
-    state = json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     ok("SKILL_STATE.json loaded")
-    check_human_gate_keys(state)
+    check_human_gate_keys(state, cfg)
 
     print("\nPRELIGHT ENFORCE: ALL CHECKS PASSED")
     sys.exit(0)

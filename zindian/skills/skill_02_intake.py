@@ -9,7 +9,6 @@ import os
 import json
 import requests
 import tempfile
-from pathlib import Path
 from datetime import datetime, timezone
 import difflib
 
@@ -81,7 +80,9 @@ def extract_config(data: dict, slug: str) -> dict:
     domain = data.get("domain")
 
     skills_required = data.get("skills", [])
-    banned_features = data.get("banned_features", ["derived_spatial_features", "external_spatial_data"])
+    banned_features = data.get(
+        "banned_features", ["derived_spatial_features", "external_spatial_data"]
+    )
 
     config = {
         "name": name,
@@ -127,30 +128,56 @@ def extract_config(data: dict, slug: str) -> dict:
                 if config.get("metric") is None and ci.get("metric") is not None:
                     config["metric"] = ci.get("metric")
                     field_sources["metric"] = "monitor"
-                if config.get("use_probabilities") is None and ci.get("use_probabilities") is not None:
+                if (
+                    config.get("use_probabilities") is None
+                    and ci.get("use_probabilities") is not None
+                ):
                     config["use_probabilities"] = ci.get("use_probabilities")
                     field_sources["use_probabilities"] = "monitor"
                 # external_banned -> allowed_external_data (invert)
-                if config.get("allowed_external_data") is None and ci.get("external_banned") is not None:
-                    config["allowed_external_data"] = not bool(ci.get("external_banned"))
+                if (
+                    config.get("allowed_external_data") is None
+                    and ci.get("external_banned") is not None
+                ):
+                    config["allowed_external_data"] = not bool(
+                        ci.get("external_banned")
+                    )
                     field_sources["allowed_external_data"] = "monitor"
                 # automl_banned -> automl_permitted (invert)
-                if config.get("automl_permitted") is None and ci.get("automl_banned") is not None:
+                if (
+                    config.get("automl_permitted") is None
+                    and ci.get("automl_banned") is not None
+                ):
                     config["automl_permitted"] = not bool(ci.get("automl_banned"))
                     field_sources["automl_permitted"] = "monitor"
-                if config.get("daily_limit") is None and ci.get("daily_limit") is not None:
+                if (
+                    config.get("daily_limit") is None
+                    and ci.get("daily_limit") is not None
+                ):
                     config["daily_limit"] = ci.get("daily_limit")
                     field_sources["daily_limit"] = "monitor"
-                if config.get("total_limit") is None and ci.get("total_limit") is not None:
+                if (
+                    config.get("total_limit") is None
+                    and ci.get("total_limit") is not None
+                ):
                     config["total_limit"] = ci.get("total_limit")
                     field_sources["total_limit"] = "monitor"
-                if config.get("code_review_tier") is None and ci.get("code_review_tier") is not None:
+                if (
+                    config.get("code_review_tier") is None
+                    and ci.get("code_review_tier") is not None
+                ):
                     config["code_review_tier"] = ci.get("code_review_tier")
                     field_sources["code_review_tier"] = "monitor"
-                if config.get("max_team_size") is None and ci.get("team_size") is not None:
+                if (
+                    config.get("max_team_size") is None
+                    and ci.get("team_size") is not None
+                ):
                     config["max_team_size"] = ci.get("team_size")
                     field_sources["max_team_size"] = "monitor"
-                if config.get("public_split_pct") is None and ci.get("public_split_pct") is not None:
+                if (
+                    config.get("public_split_pct") is None
+                    and ci.get("public_split_pct") is not None
+                ):
                     config["public_split_pct"] = ci.get("public_split_pct")
                     field_sources["public_split_pct"] = "monitor"
 
@@ -159,7 +186,10 @@ def extract_config(data: dict, slug: str) -> dict:
                 monitor_fields = [k for k, v in field_sources.items() if v == "monitor"]
                 if monitor_fields:
                     print("\n--- Fallback Applied From zindi_monitor.json ---")
-                    print("Fields from API: ", ", ".join(api_fields) if api_fields else "(none)")
+                    print(
+                        "Fields from API: ",
+                        ", ".join(api_fields) if api_fields else "(none)",
+                    )
                     print("Fields from monitor fallback: ", ", ".join(monitor_fields))
         except Exception as e:
             # Non-fatal; we'll handle missing metric later
@@ -179,7 +209,9 @@ def extract_config(data: dict, slug: str) -> dict:
     up = config.get("use_probabilities")
     cn = []
     if up is True:
-        cn.append("use_probabilities=True: submit raw float probabilities, do NOT threshold")
+        cn.append(
+            "use_probabilities=True: submit raw float probabilities, do NOT threshold"
+        )
     elif up is False:
         cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
     else:
@@ -189,13 +221,17 @@ def extract_config(data: dict, slug: str) -> dict:
     if config.get("banned_features"):
         cn.append("Banned features: " + ", ".join(config.get("banned_features") or []))
     if config.get("code_review_tier"):
-        cn.append(f"Code review tier: {config.get('code_review_tier')} ({config.get('code_review_hours') or 'hours unspecified'})")
-    cn.extend([
-        "Final 5 days: no new team members",
-        "Must select 2 submissions before deadline",
-        "Always set random seed for reproducibility",
-        "Open source packages only — no paid services",
-    ])
+        cn.append(
+            f"Code review tier: {config.get('code_review_tier')} ({config.get('code_review_hours') or 'hours unspecified'})"
+        )
+    cn.extend(
+        [
+            "Final 5 days: no new team members",
+            "Must select 2 submissions before deadline",
+            "Always set random seed for reproducibility",
+            "Open source packages only — no paid services",
+        ]
+    )
     config["compliance_notes"] = cn
 
     return config
@@ -204,9 +240,7 @@ def extract_config(data: dict, slug: str) -> dict:
 def write_config(config: dict, paths: CompetitionPaths) -> None:
     path = paths.config_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w", delete=False, suffix=".json"
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
         json.dump(config, tmp, indent=2)
         tmp_path = tmp.name
     os.replace(tmp_path, path)
@@ -231,10 +265,10 @@ def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
 def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) -> dict:
     paths = resolve_competition_paths(slug=slug)
 
-    print(f"\n{'='*60}")
-    print(f"SKILL 02 — Challenge Intake")
+    print(f"\n{'=' * 60}")
+    print("SKILL 02 — Challenge Intake")
     print(f"Competition: {slug}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     print("Fetching competition details from API...")
     data = fetch_competition(slug, headers)
@@ -261,9 +295,13 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
 
     # Validate before any mutation of challenge_config.json or SKILL_STATE.json.
     if final_to_write.get("metric") is None:
-        raise ConfigNotPopulated("Required field 'metric' is null after intake from API and fallback.")
+        raise ConfigNotPopulated(
+            "Required field 'metric' is null after intake from API and fallback."
+        )
     if final_to_write.get("use_probabilities") is None:
-        raise ConfigNotPopulated("Derived field 'use_probabilities' is null — cannot infer from metric.")
+        raise ConfigNotPopulated(
+            "Derived field 'use_probabilities' is null — cannot infer from metric."
+        )
 
     if dry_run:
         print("\n--- DRY RUN: challenge_config.json that WOULD be written ---\n")
@@ -277,7 +315,9 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
             write_config(final_to_write, paths)
             update_skill_state(slug, paths)
         else:
-            print(f"⚠️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation.")
+            print(
+                f"⚠️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
+            )
 
     # If merge and dry_run, show a concise diff between existing and final_to_write
     if merge and dry_run:
@@ -286,16 +326,21 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
             existing_text = paths.config_path.read_text(encoding="utf-8")
         new_text = json.dumps(final_to_write, indent=2)
         diff = difflib.unified_diff(
-            existing_text.splitlines(), new_text.splitlines(),
-            fromfile=str(paths.config_path), tofile="(merged)", lineterm=""
+            existing_text.splitlines(),
+            new_text.splitlines(),
+            fromfile=str(paths.config_path),
+            tofile="(merged)",
+            lineterm="",
         )
         print("\n--- DIFF (existing -> merged) ---")
         for line in diff:
             print(line)
 
-    print(f"\n--- Config Summary ---")
+    print("\n--- Config Summary ---")
     print(f"Name       : {final_to_write.get('name')}")
-    print(f"Metric     : {final_to_write.get('metric')} ({final_to_write.get('metric_direction')})")
+    print(
+        f"Metric     : {final_to_write.get('metric')} ({final_to_write.get('metric_direction')})"
+    )
     print(f"Modality   : {final_to_write.get('data_modality')}")
     print(f"Daily limit: {final_to_write.get('daily_limit')}")
     print(f"Total limit: {final_to_write.get('total_limit')}")
@@ -304,7 +349,7 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
     print(f"Use probabilities: {final_to_write.get('use_probabilities')}")
     print(f"External data: {final_to_write.get('allowed_external_data')}")
     print(f"Banned features: {final_to_write.get('banned_features')}")
-    print(f"\nCompliance notes:")
+    print("\nCompliance notes:")
     for note in final_to_write.get("compliance_notes", []):
         print(f"  ⚠️  {note}")
 
@@ -313,10 +358,21 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Skill 02 — Challenge Intake")
     parser.add_argument("slug", help="competition slug e.g. ey-frogs")
-    parser.add_argument("--dry-run", action="store_true", dest="dry_run", help="Print config without writing it")
-    parser.add_argument("--merge", action="store_true", dest="merge", help="Merge with existing challenge_config.json without overwriting non-null fields")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Print config without writing it",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        dest="merge",
+        help="Merge with existing challenge_config.json without overwriting non-null fields",
+    )
     args = parser.parse_args()
 
     # Minimal headers placeholder — real use should provide auth in environment

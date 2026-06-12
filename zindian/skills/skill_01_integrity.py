@@ -5,12 +5,8 @@ Must run after data download and before any data transformation.
 Halts if hash shifts on re-run — indicates data tampering or corruption.
 """
 
-import os
-import json
 import hashlib
-import tempfile
 import pandas as pd
-from pandas.util import hash_pandas_object
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -18,10 +14,10 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
-
 # Default target column names (can be overridden per-competition)
 TARGET_COL = "Occurrence Status"
 SUBMISSION_TARGET_COL = "Target"
+
 
 def compute_md5(series: pd.Series) -> str:
     """Compute MD5 hash of a pandas Series values.
@@ -93,10 +89,10 @@ def run(re_verify: bool = False) -> dict:
       - Compares to locked values
       - Halts if any mismatch detected
     """
-    print(f"\n{'='*60}")
-    print(f"SKILL 01 — Integrity Audit")
+    print(f"\n{'=' * 60}")
+    print("SKILL 01 — Integrity Audit")
     print(f"Mode: {'RE-VERIFY' if re_verify else 'INITIAL LOCK'}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Resolve competition-aware paths
     paths = resolve_competition_paths()
@@ -126,14 +122,18 @@ def run(re_verify: bool = False) -> dict:
 
     # Validate expected columns exist — be permissive for generality
     if target_col not in train.columns:
-        raise AssertionError(f"❌ Target column '{target_col}' not found in Training_Data.csv")
+        raise AssertionError(
+            f"❌ Target column '{target_col}' not found in Training_Data.csv"
+        )
     if "ID" not in train.columns:
         raise AssertionError("❌ ID column missing from train")
     # Latitude/Longitude are helpful but not mandatory across competitions
     if "Latitude" not in train.columns or "Longitude" not in train.columns:
         print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
     if submission_target_col not in sub.columns:
-        raise AssertionError(f"❌ '{submission_target_col}' not found in SampleSubmission.csv")
+        raise AssertionError(
+            f"❌ '{submission_target_col}' not found in SampleSubmission.csv"
+        )
     print("✅ Required columns present (warnings may have been emitted)")
 
     # Validate target values
@@ -141,16 +141,22 @@ def run(re_verify: bool = False) -> dict:
     unique_targets = sorted(pd.unique(train[target_col].astype(str)).tolist())
     is_binary_numeric = set(train[target_col].dropna().unique()) <= {0, 1}
     if not is_binary_numeric:
-        print(f"⚠️ Target values are not strictly 0/1: {unique_targets} — will hash canonical string form")
+        print(
+            f"⚠️ Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
+        )
     else:
-        print(f"✅ Target values confirmed numeric binary: {[0,1]}")
+        print(f"✅ Target values confirmed numeric binary: {[0, 1]}")
 
     # Print class distribution
     counts = train[target_col].value_counts().to_dict()
     total = len(train)
-    print(f"\n  Class distribution:")
-    print(f"    Absent  (0): {counts.get(0, 0):,} ({counts.get(0,0)/total*100:.1f}%)")
-    print(f"    Present (1): {counts.get(1, 0):,} ({counts.get(1,0)/total*100:.1f}%)")
+    print("\n  Class distribution:")
+    print(
+        f"    Absent  (0): {counts.get(0, 0):,} ({counts.get(0, 0) / total * 100:.1f}%)"
+    )
+    print(
+        f"    Present (1): {counts.get(1, 0):,} ({counts.get(1, 0) / total * 100:.1f}%)"
+    )
 
     # Compute hashes
     print("\nComputing MD5 hashes...")
@@ -179,22 +185,30 @@ def run(re_verify: bool = False) -> dict:
         print("\nVerifying against locked hashes...")
         locked = state.get("md5_target_hash")
         if not locked:
-            raise RuntimeError("No locked md5_target_hash found in SKILL_STATE.json for verification")
+            raise RuntimeError(
+                "No locked md5_target_hash found in SKILL_STATE.json for verification"
+            )
         verify_hash(md5_target, locked, "target column")
 
         locked = state.get("md5_train_file")
         if not locked:
-            raise RuntimeError("No locked md5_train_file found in SKILL_STATE.json for verification")
+            raise RuntimeError(
+                "No locked md5_train_file found in SKILL_STATE.json for verification"
+            )
         verify_hash(md5_train_file, locked, "train file")
 
         locked = state.get("md5_test_file")
         if not locked:
-            raise RuntimeError("No locked md5_test_file found in SKILL_STATE.json for verification")
+            raise RuntimeError(
+                "No locked md5_test_file found in SKILL_STATE.json for verification"
+            )
         verify_hash(md5_test_file, locked, "test file")
 
         locked = state.get("md5_sample_sub_file")
         if not locked:
-            raise RuntimeError("No locked md5_sample_sub_file found in SKILL_STATE.json for verification")
+            raise RuntimeError(
+                "No locked md5_sample_sub_file found in SKILL_STATE.json for verification"
+            )
         verify_hash(md5_sample_sub, locked, "sample submission")
 
         print("✅ All hashes match — data integrity confirmed")
@@ -216,10 +230,10 @@ def run(re_verify: bool = False) -> dict:
         "class_distribution": counts,
         "feature_cols": raw_feature_cols,
         "note": "Do not assume raw features beyond what is present in training file",
-        **integrity
+        **integrity,
     }
 
-    print(f"\n--- Dataset Summary ---")
+    print("\n--- Dataset Summary ---")
     print(f"Task         : {summary['task']}")
     print(f"Train rows   : {summary['train_rows']:,}")
     print(f"Test rows    : {summary['test_rows']:,}")

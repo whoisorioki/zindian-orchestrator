@@ -63,3 +63,20 @@ working on Zindian skills—tick off items as you implement.
   - `zindian/skills/skill_17_governance.py` (refactored: gate keys, structural lock, no cross-skill import)
   - `docs/refactor_reports/sot_checklist.md` (this entry)
 - Commit Message: `docs(sot): Batch 24 update — final operational core hardening.`
+
+## Batch 25 — Phase 4 Governance Three-Lens Integration & Documentation Alignment (2026-06-12)
+- Commit: *(pending)*
+- Scope: Fully implement the missing Phase 4 (Governance) checks in the Three-Lens evaluation framework and align all checklists and documentation across the codebase.
+- Completed:
+  - [x] **Three-Lens Phase 4 Implementation**: Implemented `_eval_phase4_general`, `_eval_phase4_specific`, and `_eval_phase4_generalisation` in `zindian/three_lens.py` with strict checks for Gate 2 key flattening, governance report presence and schema checks, structural lock Sentinel, and shared history logs.
+  - [x] **Robust Key Access & Path Safety**: Designed safe dictionary/SkillStateStore wrapper functions (`_get_state_val`, `_get_state_keys`) and path resolution utilizing configuration-derived roots to prevent failures across varying environments.
+  - [x] **Expanded Test Suite**: Integrated 9 dedicated test cases into `tests/test_three_lens.py` to cover PASS/FAIL states for Gates 1-5 approvals, budget limits, structural lock presence, report schema corruption, and missing history logs.
+  - [x] **Checklist and Documentation Alignment**: Batch updated all checklists inside `docs/source_of_truth.md`, `AGENTS.md`, and updated `docs/orchestrator_current_state.md` to correctly represent Phase 4 checks.
+- Evidence:
+  - Phase 4 three-lens tests, supported phase lists, and the full test suite pass 100% cleanly: **161 passed, 6 skipped**
+  - Zero AutoML imports or cross-skill dependency violations.
+- Files Changed:
+  - `zindian/three_lens.py` (Phase 4 checkers and mapping updates)
+  - `tests/test_three_lens.py` (Phase 4 test cases and phase lists)
+  - `docs/refactor_reports/sot_checklist.md` (this entry)
+- Commit Message: `docs(sot): Batch 25 update — Phase 4 three-lens integration & documentation alignment`

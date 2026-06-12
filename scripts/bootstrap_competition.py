@@ -6,12 +6,11 @@ Creates the directory tree, writes templates for `challenge_config.json` and
 into the competition scope. Designed to be safe: supports dry-run and
 confirmation.
 """
+
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
-import sys
 from datetime import datetime
 
 
@@ -60,8 +59,16 @@ def find_candidates(root: Path) -> dict:
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("slug", help="competition slug (e.g. ey-frogs)")
-    parser.add_argument("--move-files", action="store_true", help="Move detected root files into competition data/raw/")
-    parser.add_argument("--yes", action="store_true", help="Assume yes for confirmations (non-interactive)")
+    parser.add_argument(
+        "--move-files",
+        action="store_true",
+        help="Move detected root files into competition data/raw/",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Assume yes for confirmations (non-interactive)",
+    )
     args = parser.parse_args(argv)
 
     slug = args.slug
@@ -120,7 +127,9 @@ def main(argv=None):
                 shutil.move(str(path), str(dest))
             print("Moves complete.")
         else:
-            print("Run with --move-files to move detected artifacts into the competition folder.")
+            print(
+                "Run with --move-files to move detected artifacts into the competition folder."
+            )
 
     print(f"Bootstrap complete for slug: {slug}")
     print(f"Competition folder: {comp_dir}")

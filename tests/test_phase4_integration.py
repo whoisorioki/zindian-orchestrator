@@ -1,6 +1,4 @@
 import json
-from pathlib import Path
-
 import pytest
 
 from zindian.skills import skill_17_governance as gov
@@ -9,7 +7,6 @@ from zindian.skills import skill_17_governance as gov
 def make_comp(tmp_path, slug="cmp-gov"):
     comp = tmp_path / "competitions" / slug
     comp.mkdir(parents=True)
-    # minimal challenge_config
     cfg = {
         "slug": slug,
         "metric": "f1",
@@ -25,43 +22,48 @@ def test_governance_runs_and_records_selection(tmp_path, monkeypatch):
     comp = make_comp(tmp_path, "cmp-gov-ok")
     monkeypatch.chdir(tmp_path)
 
-    # fake scored submissions
-    fake_scored = [
-        {"id": "s1", "score": 0.9, "filename": "sub1.csv", "date": "2026-05-01"},
-        {"id": "s2", "score": 0.8, "filename": "sub2.csv", "date": "2026-05-02"},
-    ]
+    config = {"slug": "cmp-gov-ok"}
+    state = {
+        "human_gate_1_approved": "2026-06-01T00:00:00",
+        "human_gate_2_approved": "2026-06-01T00:00:00",
+        "human_gate_3_approved": "2026-06-01T00:00:00",
+        "human_gate_4_approved": "2026-06-01T00:00:00",
+        "scored_submissions": [
+            {"filename": "sub1.csv", "score": 0.9, "date": "2026-05-01"},
+            {"filename": "sub2.csv", "score": 0.8, "date": "2026-05-02"},
+        ],
+    }
 
-    monkeypatch.setattr(gov, "fetch_scored_submissions", lambda slug: fake_scored)
     # bypass interactive selection with deterministic choices
-    monkeypatch.setattr(gov, "human_selection_gate", lambda scored, state: [fake_scored[0], fake_scored[1]])
-    # force audit to pass
-    from zindian.skills import skill_22_reproducibility_audit as audit
-    monkeypatch.setattr(audit, "audit_pipeline", lambda slug: True)
+    monkeypatch.setattr(
+        gov, "_human_selection_prompt", lambda scored, current: [scored[0], scored[1]]
+    )
 
-    res = gov.run("cmp-gov-ok")
-    assert res["status"] == "OK"
+    res_state = gov.run(config, state)
+    assert res_state.get("selected_submissions_final") is True
+    assert len(res_state.get("selected_submissions")) == 2
+    assert res_state["selected_submissions"][0]["filename"] == "sub1.csv"
+    assert res_state["selected_submissions"][1]["filename"] == "sub2.csv"
 
-    state = json.loads((Path("competitions") / "cmp-gov-ok" / "SKILL_STATE.json").read_text(encoding="utf-8"))
-    assert state.get("selected_submissions") == ["s1", "s2"]
-    assert state.get("dag_phase") == "phase_5_governance_complete"
+    # Verify report is written
+    report_file = comp / "reports" / "final_selections.json"
+    assert report_file.exists()
+    report_data = json.loads(report_file.read_text(encoding="utf-8"))
+    assert report_data["slug"] == "cmp-gov-ok"
+    assert len(report_data["selections"]) == 2
 
 
-def test_governance_aborts_on_audit_failure(tmp_path, monkeypatch):
-    comp = make_comp(tmp_path, "cmp-gov-fail")
+def test_governance_raises_on_missing_gates(tmp_path, monkeypatch):
+    make_comp(tmp_path, "cmp-gov-missing")
     monkeypatch.chdir(tmp_path)
 
-    fake_scored = [
-        {"id": "s1", "score": 0.9, "filename": "sub1.csv", "date": "2026-05-01"},
-        {"id": "s2", "score": 0.8, "filename": "sub2.csv", "date": "2026-05-02"},
-    ]
+    config = {"slug": "cmp-gov-missing"}
+    state = {
+        "human_gate_1_approved": "2026-06-01T00:00:00",
+        # human_gate_2_approved is missing!
+        "human_gate_3_approved": "2026-06-01T00:00:00",
+        "human_gate_4_approved": "2026-06-01T00:00:00",
+    }
 
-    monkeypatch.setattr(gov, "fetch_scored_submissions", lambda slug: fake_scored)
-    monkeypatch.setattr(gov, "human_selection_gate", lambda scored, state: [fake_scored[0], fake_scored[1]])
-    from zindian.skills import skill_22_reproducibility_audit as audit
-    monkeypatch.setattr(audit, "audit_pipeline", lambda slug: False)
-
-    res = gov.run("cmp-gov-fail")
-    assert res["status"] == "AUDIT_FAILED"
-
-    state = json.loads((Path("competitions") / "cmp-gov-fail" / "SKILL_STATE.json").read_text(encoding="utf-8"))
-    assert state.get("governance_audit_failed") is True
+    with pytest.raises(RuntimeError, match="Missing prerequisite human gate approvals"):
+        gov.run(config, state)

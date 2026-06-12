@@ -2,7 +2,11 @@ import json
 from pathlib import Path
 
 from zindian.schemas import skill_state_skeleton
-from zindian.skills.skill_03_legality import check_planned_features, run, synthesise_feature_policy
+from zindian.skills.skill_03_legality import (
+    check_planned_features,
+    run,
+    synthesise_feature_policy,
+)
 
 
 class FakeConfig:
@@ -11,7 +15,9 @@ class FakeConfig:
         self.slug = slug
 
 
-def _write_state(comp_dir: Path, *, phase: str, anchor_features=None, planned_features=None) -> None:
+def _write_state(
+    comp_dir: Path, *, phase: str, anchor_features=None, planned_features=None
+) -> None:
     state = skill_state_skeleton()
     state["dag_phase"] = phase
     state["last_updated"] = "2026-01-01T00:00:00Z"
@@ -32,7 +38,13 @@ def test_check_planned_features_requires_exact_ban_match():
 
     checks = check_planned_features(
         policy,
-        [{"name": "ok_feature", "transforms": ["demographic_encoding"], "uses_lat_lon": False}],
+        [
+            {
+                "name": "ok_feature",
+                "transforms": ["demographic_encoding"],
+                "uses_lat_lon": False,
+            }
+        ],
     )
 
     assert checks[0]["status"] == "PASS"
@@ -46,7 +58,11 @@ def test_synthesise_feature_policy_collects_nested_monitor_bans():
             "allowed_data_sources": ["competition_provided_only"],
         }
     }
-    config = {"banned_features": ["from_config"], "use_probabilities": True, "metric": "auc"}
+    config = {
+        "banned_features": ["from_config"],
+        "use_probabilities": True,
+        "metric": "auc",
+    }
 
     policy = synthesise_feature_policy(monitor_data, config, ["flagged title"])
 
@@ -54,7 +70,9 @@ def test_synthesise_feature_policy_collects_nested_monitor_bans():
     assert policy["source_flags"] == ["flagged title"]
 
 
-def test_run_normalizes_anchor_features_and_advances_from_phase_one_integrity(tmp_path, monkeypatch):
+def test_run_normalizes_anchor_features_and_advances_from_phase_one_integrity(
+    tmp_path, monkeypatch
+):
     slug = "cmp-legality"
     comp = tmp_path / "competitions" / slug
     (comp / "reports").mkdir(parents=True)
@@ -77,12 +95,17 @@ def test_run_normalizes_anchor_features_and_advances_from_phase_one_integrity(tm
         },
         "compliance": {"flagged_titles": []},
     }
-    (comp / "reports" / "zindi_monitor.json").write_text(json.dumps(monitor), encoding="utf-8")
+    (comp / "reports" / "zindi_monitor.json").write_text(
+        json.dumps(monitor), encoding="utf-8"
+    )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "zindian.skills.skill_03_legality.ChallengeConfig.load",
-        lambda: FakeConfig({"use_probabilities": True, "metric": "auc", "banned_features": []}, slug=slug),
+        lambda: FakeConfig(
+            {"use_probabilities": True, "metric": "auc", "banned_features": []},
+            slug=slug,
+        ),
     )
 
     out = run(slug, planned_features=None)

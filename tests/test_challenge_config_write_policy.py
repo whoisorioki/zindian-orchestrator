@@ -13,7 +13,7 @@ def test_only_skill05_writes_challenge_config():
     offenders = []
     for p in py_files:
         # Skip files under tests/ (they may mention config paths in test text)
-        if "tests/" in str(p):
+        if "tests" in p.parts:
             continue
         try:
             lines = p.read_text(encoding="utf-8").splitlines()
@@ -26,11 +26,16 @@ def test_only_skill05_writes_challenge_config():
                 if p.name not in ("skill_05_cv.py", "skill_02_intake.py"):
                     offenders.append(f"{p}:{i}")
             # direct literal path writes like Path(... 'challenge_config.json').write_text(...)
-            if "challenge_config.json" in line and ("write_text(" in line or ("open(" in line and "w" in line)):
+            if "challenge_config.json" in line and (
+                "write_text(" in line or ("open(" in line and "w" in line)
+            ):
                 if p.name not in ("skill_05_cv.py", "skill_02_intake.py"):
                     offenders.append(f"{p}:{i}")
 
     # Deduplicate
     offenders = sorted(set(offenders))
     if offenders:
-        raise AssertionError("Unauthorized challenge_config.json writes found in:\n" + "\n".join(offenders))
+        raise AssertionError(
+            "Unauthorized challenge_config.json writes found in:\n"
+            + "\n".join(offenders)
+        )

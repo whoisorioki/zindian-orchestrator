@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .schemas import skill_state_skeleton, validate_skill_state
 
@@ -19,7 +19,9 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(data, indent=2, sort_keys=False) + "\n"
 
-    with tempfile.NamedTemporaryFile("w", delete=False, dir=str(path.parent), encoding="utf-8") as tmp:
+    with tempfile.NamedTemporaryFile(
+        "w", delete=False, dir=str(path.parent), encoding="utf-8"
+    ) as tmp:
         tmp.write(serialized)
         tmp_path = Path(tmp.name)
     os.replace(tmp_path, path)
@@ -37,7 +39,9 @@ class SkillStateStore:
         obj = json.loads(self.path.read_text(encoding="utf-8"))
         return validate_skill_state(obj)
 
-    def write(self, new_state: Dict[str, Any], *, touch_timestamp: bool = True) -> Dict[str, Any]:
+    def write(
+        self, new_state: Dict[str, Any], *, touch_timestamp: bool = True
+    ) -> Dict[str, Any]:
         state = dict(new_state)
         if touch_timestamp:
             state["last_updated"] = _iso_now()
@@ -49,7 +53,7 @@ class SkillStateStore:
         state = self.read()
         state.update(patch)
         return self.write(state)
-    
+
     def increment(self, key: str, delta: int = 1) -> int:
         """Increment a numeric field and return new value."""
         state = self.read()
@@ -58,7 +62,7 @@ class SkillStateStore:
         state[key] = state[key] + delta
         self.write(state)
         return state[key]
-    
+
     def append_selected(self, submission_id: int) -> None:
         """Append submission to selected_submissions list."""
         state = self.read()
@@ -93,7 +97,11 @@ def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:
         pass
 
     try:
-        cv = (config_obj or {}).get("cv_strategy") if isinstance(config_obj, dict) else None
+        cv = (
+            (config_obj or {}).get("cv_strategy")
+            if isinstance(config_obj, dict)
+            else None
+        )
         if isinstance(cv, dict):
             return f"config:{cv.get('type', 'unknown')}"
     except Exception:
@@ -131,14 +139,20 @@ def write_oof_record(
     # Enforce SoT retraining rules: when pseudo-label retraining is active,
     # augmented outputs must use the `_augmented` suffix and original keys
     # must not be overwritten. This prevents accidental overwrites of baseline OOFs.
-    retraining_active = bool((state.get("pseudo_label_result") or {}).get("retraining_required", False))
+    retraining_active = bool(
+        (state.get("pseudo_label_result") or {}).get("retraining_required", False)
+    )
     if retraining_active and not str(branch_name).endswith("_augmented"):
         raise RuntimeError(
             "Retraining active: OOF records during retraining must use the '_augmented' suffix for branch_name"
         )
     # Prevent overwriting original non-augmented key when retraining
     original_key = f"branch_{str(branch_name).removesuffix('_augmented')}_oof"
-    if retraining_active and original_key in state and not str(branch_name).endswith("_augmented"):
+    if (
+        retraining_active
+        and original_key in state
+        and not str(branch_name).endswith("_augmented")
+    ):
         raise RuntimeError(
             f"Retraining attempted to overwrite original OOF key: {original_key}. Write to '{original_key}_augmented' instead."
         )
@@ -155,7 +169,7 @@ def is_anchor_challenge_active(state_obj: dict) -> bool:
     This protects automation from KeyError when the block is absent.
     """
     try:
-        return bool((state_obj or {}).get("anchor_challenge", {}) .get("active", False))
+        return bool((state_obj or {}).get("anchor_challenge", {}).get("active", False))
     except Exception:
         return False
 
@@ -166,4 +180,3 @@ def get_anchor_challenge_config(state_obj: dict) -> dict:
         return dict((state_obj or {}).get("anchor_challenge") or {})
     except Exception:
         return {}
-

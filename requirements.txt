@@ -25,6 +25,12 @@ click==8.4.1
     # via pip-tools
 cloudpickle==3.1.2
     # via shap
+colorama==0.4.6
+    # via
+    #   build
+    #   click
+    #   pytest
+    #   tqdm
 cryptography==48.0.0
     # via google-auth
 distro==1.9.0
@@ -46,6 +52,8 @@ idna==3.16
     #   anyio
     #   httpx
     #   requests
+iniconfig==2.3.0
+    # via pytest
 joblib==1.5.3
     # via scikit-learn
 lightgbm==4.6.0
@@ -68,14 +76,18 @@ numpy==2.4.6
 packaging==26.2
     # via
     #   build
+    #   pytest
     #   shap
     #   wheel
 pandas==3.0.3
     # via
     #   -r requirements.in
     #   shap
+    #   zindi
 pip-tools==7.5.3
     # via -r requirements.in
+pluggy==1.6.0
+    # via pytest
 pyasn1==0.6.3
     # via pyasn1-modules
 pyasn1-modules==0.4.2
@@ -83,13 +95,23 @@ pyasn1-modules==0.4.2
 pycparser==3.0
     # via cffi
 pydantic==2.13.4
-    # via google-genai
+    # via
+    #   google-genai
+    #   zindi
 pydantic-core==2.46.4
     # via pydantic
+pygments==2.20.0
+    # via pytest
 pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
+pytest==9.0.3
+    # via
+    #   -r requirements.in
+    #   pytest-mock
+pytest-mock==3.15.1
+    # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via pandas
 python-dotenv==1.2.2
@@ -99,6 +121,10 @@ requests==2.34.2
     #   -r requirements.in
     #   google-auth
     #   google-genai
+    #   requests-toolbelt
+    #   zindi
+requests-toolbelt==1.0.0
+    # via zindi
 scikit-learn==1.8.0
     # via
     #   -r requirements.in
@@ -121,7 +147,9 @@ tenacity==9.1.4
 threadpoolctl==3.6.0
     # via scikit-learn
 tqdm==4.67.3
-    # via shap
+    # via
+    #   shap
+    #   zindi
 typing-extensions==4.15.0
     # via
     #   anyio
@@ -132,12 +160,16 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
+tzdata==2026.2
+    # via pandas
 urllib3==2.7.0
     # via requests
 websockets==16.0
     # via google-genai
 wheel==0.47.0
     # via pip-tools
+zindi==0.0.4
+    # via -r requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
 # pip

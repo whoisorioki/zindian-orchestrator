@@ -7,7 +7,9 @@ from zindian.config import ConfigNotPopulated
 from zindian.skills.skill_02_intake import extract_config, run
 
 
-def test_extract_config_monitor_fallback_preserves_missing_external_flag(monkeypatch, tmp_path):
+def test_extract_config_monitor_fallback_preserves_missing_external_flag(
+    monkeypatch, tmp_path
+):
     data = {
         "name": "Test Comp",
         "metric": None,
@@ -22,7 +24,9 @@ def test_extract_config_monitor_fallback_preserves_missing_external_flag(monkeyp
     }
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True)
-    (reports_dir / "zindi_monitor.json").write_text(json.dumps(monitor), encoding="utf-8")
+    (reports_dir / "zindi_monitor.json").write_text(
+        json.dumps(monitor), encoding="utf-8"
+    )
 
     class SimplePaths:
         def __init__(self, root: Path):
@@ -60,7 +64,10 @@ def test_run_raises_before_write_when_metric_missing(tmp_path, monkeypatch):
     (comp / "data" / "raw").mkdir(parents=True)
     (comp / "data" / "processed").mkdir(parents=True)
     state_path = comp / "SKILL_STATE.json"
-    state_path.write_text(json.dumps({"dag_phase": "phase_1", "last_updated": "2026-01-01T00:00:00Z"}), encoding="utf-8")
+    state_path.write_text(
+        json.dumps({"dag_phase": "phase_1", "last_updated": "2026-01-01T00:00:00Z"}),
+        encoding="utf-8",
+    )
 
     def fake_fetch(slug_arg, headers):
         return {
@@ -80,7 +87,10 @@ def test_run_raises_before_write_when_metric_missing(tmp_path, monkeypatch):
             self.reports_dir = self.competition_dir / "reports"
             self.data_raw_dir = self.competition_dir / "data" / "raw"
 
-    monkeypatch.setattr("zindian.skills.skill_02_intake.resolve_competition_paths", lambda slug=None: SimplePaths(tmp_path))
+    monkeypatch.setattr(
+        "zindian.skills.skill_02_intake.resolve_competition_paths",
+        lambda slug=None: SimplePaths(tmp_path),
+    )
     monkeypatch.setattr("zindian.skills.skill_02_intake.fetch_competition", fake_fetch)
 
     called = {}
@@ -88,7 +98,9 @@ def test_run_raises_before_write_when_metric_missing(tmp_path, monkeypatch):
     def fake_write_config(*args, **kwargs):
         called["write_config"] = True
 
-    monkeypatch.setattr("zindian.skills.skill_02_intake.write_config", fake_write_config)
+    monkeypatch.setattr(
+        "zindian.skills.skill_02_intake.write_config", fake_write_config
+    )
 
     with pytest.raises(ConfigNotPopulated):
         run(slug, headers={}, dry_run=False, merge=False)

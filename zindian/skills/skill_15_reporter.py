@@ -32,7 +32,6 @@ from zindian.ledger import Ledger
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
-
 # ── Session-scoped event logging ────────────────────────────────────
 
 
@@ -249,7 +248,9 @@ def run(
                 {
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "event_type": "skill_15_error",
-                    "competition_id": config.slug if "config" in locals() else "unknown",
+                    "competition_id": (
+                        config.slug if "config" in locals() else "unknown"
+                    ),
                     "message": str(e),
                     "traceback": traceback.format_exc(),
                 },

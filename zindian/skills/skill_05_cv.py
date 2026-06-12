@@ -19,13 +19,12 @@ from __future__ import annotations
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, TimeSeriesSplit
+from sklearn.model_selection import GroupKFold, StratifiedKFold
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.paths import resolve_competition_paths
@@ -36,6 +35,7 @@ SPATIAL_CLUSTER_MULTIPLIER = 3
 
 
 # ── CV Strategy Builders ───────────────────────────────────────────────────────
+
 
 def _config_data(config: ChallengeConfig) -> dict[str, Any]:
     return getattr(config, "_data", {}) or {}
@@ -75,8 +75,8 @@ def build_stratified_splits(
 
 
 def build_spatial_splits(
-    X:      np.ndarray,
-    y:      np.ndarray,
+    X: np.ndarray,
+    y: np.ndarray,
     coords: np.ndarray,
     n_splits: int = N_SPLITS,
     n_clusters: int | None = None,
@@ -95,7 +95,9 @@ def build_spatial_splits(
     Returns:
         (splits, geo_groups) — splits for CV, geo_groups for inspection
     """
-    cluster_count = n_clusters or max(n_splits * SPATIAL_CLUSTER_MULTIPLIER, n_splits + 1)
+    cluster_count = n_clusters or max(
+        n_splits * SPATIAL_CLUSTER_MULTIPLIER, n_splits + 1
+    )
     cluster_count = min(cluster_count, len(coords))
     if cluster_count < n_splits:
         raise RuntimeError("Not enough spatial samples to build stable fold groups")
@@ -104,15 +106,17 @@ def build_spatial_splits(
     kmeans = KMeans(n_clusters=cluster_count, random_state=get_seed(), n_init=10)
     geo_groups = kmeans.fit_predict(projected)
 
-    print(f"\n  Geographic block distribution:")
+    print("\n  Geographic block distribution:")
     for block_id in range(cluster_count):
-        block_mask  = geo_groups == block_id
-        block_pos   = y[block_mask].sum()
+        block_mask = geo_groups == block_id
+        block_pos = y[block_mask].sum()
         block_total = block_mask.sum()
         prevalence = (block_pos / block_total * 100.0) if block_total else 0.0
-        print(f"    Block {block_id}: {block_total:4d} samples  "
-              f"({block_pos:3d} positive, "
-              f"{prevalence:.1f}% prevalence)")
+        print(
+            f"    Block {block_id}: {block_total:4d} samples  "
+            f"({block_pos:3d} positive, "
+            f"{prevalence:.1f}% prevalence)"
+        )
 
     # Construct a GroupKFold via the central CV factory and split using geo_groups
     gkf = GroupKFold(n_splits=n_splits)
@@ -121,22 +125,32 @@ def build_spatial_splits(
     return splits, geo_groups
 
 
-def _resolve_decision(config: ChallengeConfig, state: dict[str, Any], ft: pd.DataFrame) -> dict[str, Any]:
+def _resolve_decision(
+    config: ChallengeConfig, state: dict[str, Any], ft: pd.DataFrame
+) -> dict[str, Any]:
     eda = state.get("eda", {}) or {}
     raw_config = _config_data(config)
 
     temporal_confirmed = bool(eda.get("temporal_index_confirmed", False))
     group_confirmed = bool(eda.get("group_structure_confirmed", False))
-    spatial_signal = bool((raw_config.get("spatial_signal", {}) or {}).get("present", False))
-    group_signal = bool((raw_config.get("group_signal", {}) or {}).get("present", False))
-    task_type = str(raw_config.get("task_type", config.get("task_type", "classification")))
+    spatial_signal = bool(
+        (raw_config.get("spatial_signal", {}) or {}).get("present", False)
+    )
+    group_signal = bool(
+        (raw_config.get("group_signal", {}) or {}).get("present", False)
+    )
+    task_type = str(
+        raw_config.get("task_type", config.get("task_type", "classification"))
+    )
     minority_ratio = raw_config.get("minority_ratio", eda.get("minority_ratio"))
 
     if temporal_confirmed:
         return {
             "type": "TimeSeriesSplit",
             "shuffle": False,
-            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "n_splits": int(
+                raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)
+            ),
             "selection_reason": "temporal_index_confirmed",
         }
 
@@ -156,26 +170,48 @@ def _resolve_decision(config: ChallengeConfig, state: dict[str, Any], ft: pd.Dat
             return {
                 "type": "GroupKFold",
                 "shuffle": False,
-                "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+                "n_splits": int(
+                    raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)
+                ),
                 "group_col": None,
                 "selection_reason": "group_structure_requested_but_group_col_missing",
             }
         if str(group_col) not in ft.columns:
-            raise RuntimeError(f"group_col '{group_col}' not present in features_train.csv")
+            raise RuntimeError(
+                f"group_col '{group_col}' not present in features_train.csv"
+            )
         return {
             "type": "GroupKFold",
             "shuffle": False,
-            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "n_splits": int(
+                raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)
+            ),
             "group_col": str(group_col),
-            "selection_reason": "group_structure_confirmed" if group_confirmed else ("spatial_signal.present" if spatial_signal else "group_signal.present"),
+            "selection_reason": (
+                "group_structure_confirmed"
+                if group_confirmed
+                else (
+                    "spatial_signal.present"
+                    if spatial_signal
+                    else "group_signal.present"
+                )
+            ),
         }
 
-    if task_type == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15:
+    if (
+        task_type == "classification"
+        and minority_ratio is not None
+        and float(minority_ratio) < 0.15
+    ):
         return {
             "type": "StratifiedKFold",
             "shuffle": True,
-            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
-            "random_state": int(raw_config.get("reproducibility", {}).get("seed", get_seed())),
+            "n_splits": int(
+                raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)
+            ),
+            "random_state": int(
+                raw_config.get("reproducibility", {}).get("seed", get_seed())
+            ),
             "selection_reason": f"minority_ratio={float(minority_ratio):.3f} < 0.15",
         }
 
@@ -183,12 +219,15 @@ def _resolve_decision(config: ChallengeConfig, state: dict[str, Any], ft: pd.Dat
         "type": "KFold",
         "shuffle": True,
         "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
-        "random_state": int(raw_config.get("reproducibility", {}).get("seed", get_seed())),
+        "random_state": int(
+            raw_config.get("reproducibility", {}).get("seed", get_seed())
+        ),
         "selection_reason": "default regression or balanced classification fallback",
     }
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 def run(strategy: str = "compare") -> dict:
     """
@@ -200,11 +239,11 @@ def run(strategy: str = "compare") -> dict:
     Returns:
         dict with chosen strategy, OOF AUC for each, recommendation.
     """
-    print(f"\n{'='*60}")
-    print(f"SKILL 05 — CV Architect")
-    print(f"{'='*60}\n")
+    print(f"\n{'=' * 60}")
+    print("SKILL 05 — CV Architect")
+    print(f"{'=' * 60}\n")
 
-    paths  = resolve_competition_paths(require_competition=True)
+    paths = resolve_competition_paths(require_competition=True)
     config = ChallengeConfig.load()
     competition_dir = paths.competition_dir
     if competition_dir is None:
@@ -229,9 +268,17 @@ def run(strategy: str = "compare") -> dict:
     state = state_store.read()
     decision = _resolve_decision(config, state, ft)
 
-    forced_strategy = strategy if strategy in ("spatial", "stratified", "timeseries", "kfold") else None
+    forced_strategy = (
+        strategy
+        if strategy in ("spatial", "stratified", "timeseries", "kfold")
+        else None
+    )
     selected_type = forced_strategy or decision["type"]
-    selection_reason = decision["selection_reason"] if forced_strategy is None else f"forced_{forced_strategy}"
+    selection_reason = (
+        decision["selection_reason"]
+        if forced_strategy is None
+        else f"forced_{forced_strategy}"
+    )
 
     policy_blocked = _policy_filtered_columns(config)
     coord_names = {
@@ -249,43 +296,79 @@ def run(strategy: str = "compare") -> dict:
     # Use explicit np.asarray to provide concrete ndarray types for static checkers
     X = np.asarray(ft[feature_cols].values, dtype=np.float32)
     y = np.asarray(ft[target_col].values, dtype=np.int32)
-    coords = np.asarray(ft[coord_cols].values, dtype=np.float64) if len(coord_cols) == 2 else None
+    coords = (
+        np.asarray(ft[coord_cols].values, dtype=np.float64)
+        if len(coord_cols) == 2
+        else None
+    )
 
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
     if len(y) > 0:
-        print(f"Positive rate: {float(np.asarray(y, dtype=np.float64).mean())*100:.1f}%")
+        print(
+            f"Positive rate: {float(np.asarray(y, dtype=np.float64).mean()) * 100:.1f}%"
+        )
 
     # If GroupKFold was selected but no explicit group_col is available,
     # attempt a spatial clustering fallback when coordinates exist. If that
     # fails (too few points or clustering error), gracefully fall back to
     # StratifiedKFold (classification with imbalance) or KFold otherwise.
-    minority_ratio = config.get("minority_ratio") or (state.get("eda") or {}).get("minority_ratio")
+    minority_ratio = config.get("minority_ratio") or (state.get("eda") or {}).get(
+        "minority_ratio"
+    )
 
     if selected_type == "GroupKFold" and decision.get("group_col") is None:
-        print("\nGroupKFold requested but no group_col supplied — attempting spatial clustering fallback")
+        print(
+            "\nGroupKFold requested but no group_col supplied — attempting spatial clustering fallback"
+        )
         if coords is not None and len(coords) >= N_SPLITS:
             try:
-                _splits, geo_groups = build_spatial_splits(X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS)))
+                _splits, geo_groups = build_spatial_splits(
+                    X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS))
+                )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
                 selected_type = "GroupKFold"
                 selection_reason = selection_reason + "; spatial_clusters_generated"
                 # signal generated cluster group in state; concrete group_col name is an implementation detail
-                state_store.update(spatial_cluster_generated=True, spatial_cluster_count=int(max(1, len(set(geo_groups)))))
-                print("  ✅ spatial clusters generated; using GroupKFold on cluster groups")
+                state_store.update(
+                    spatial_cluster_generated=True,
+                    spatial_cluster_count=int(max(1, len(set(geo_groups)))),
+                )
+                print(
+                    "  ✅ spatial clusters generated; using GroupKFold on cluster groups"
+                )
             except Exception as exc:
-                print(f"  ⚠️  Spatial clustering failed or insufficient samples: {exc} — falling back to safer CV")
-                if (config.get("task_type") == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15):
+                print(
+                    f"  ⚠️  Spatial clustering failed or insufficient samples: {exc} — falling back to safer CV"
+                )
+                if (
+                    config.get("task_type") == "classification"
+                    and minority_ratio is not None
+                    and float(minority_ratio) < 0.15
+                ):
                     selected_type = "StratifiedKFold"
-                    selection_reason = selection_reason + "; fallback_to_stratified_due_to_sparse_spatial"
+                    selection_reason = (
+                        selection_reason
+                        + "; fallback_to_stratified_due_to_sparse_spatial"
+                    )
                 else:
                     selected_type = "KFold"
-                    selection_reason = selection_reason + "; fallback_to_kfold_due_to_sparse_spatial"
+                    selection_reason = (
+                        selection_reason + "; fallback_to_kfold_due_to_sparse_spatial"
+                    )
         else:
-            print("  ⚠️  No coordinate columns available or too few rows for spatial clustering — falling back to safer CV")
-            if (config.get("task_type") == "classification" and minority_ratio is not None and float(minority_ratio) < 0.15):
+            print(
+                "  ⚠️  No coordinate columns available or too few rows for spatial clustering — falling back to safer CV"
+            )
+            if (
+                config.get("task_type") == "classification"
+                and minority_ratio is not None
+                and float(minority_ratio) < 0.15
+            ):
                 selected_type = "StratifiedKFold"
-                selection_reason = selection_reason + "; fallback_to_stratified_no_coords"
+                selection_reason = (
+                    selection_reason + "; fallback_to_stratified_no_coords"
+                )
             else:
                 selected_type = "KFold"
                 selection_reason = selection_reason + "; fallback_to_kfold_no_coords"
@@ -308,7 +391,13 @@ def run(strategy: str = "compare") -> dict:
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
     current_phase = state.get("dag_phase")
-    if current_phase in (None, "uninitialized", "phase_0_foundation", "phase_1_complete", "phase_2_legality_checked"):
+    if current_phase in (
+        None,
+        "uninitialized",
+        "phase_0_foundation",
+        "phase_1_complete",
+        "phase_2_legality_checked",
+    ):
         state_update["dag_phase"] = "phase_3_features"
     state_store.update(**state_update)
     print(f"\n✅ SKILL_STATE.json updated: cv_strategy={selected_type}")
@@ -334,10 +423,15 @@ def run(strategy: str = "compare") -> dict:
 
             if cfg_data.get("cv_strategy") != cv_block:
                 cfg_data["cv_strategy"] = cv_block
-                cfg_path.write_text(json.dumps(cfg_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                cfg_path.write_text(
+                    json.dumps(cfg_data, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
                 print(f"✅ challenge_config.json updated with cv_strategy: {cv_block}")
         else:
-            print(f"ℹ️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation.")
+            print(
+                f"ℹ️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
+            )
     except Exception as exc:  # pragma: no cover - defensive
         print(f"⚠️  Failed to write cv_strategy to challenge_config.json: {exc}")
 
@@ -358,8 +452,10 @@ if __name__ == "__main__":
             strategy = sys.argv[sys.argv.index(arg) + 1]
 
     if strategy not in ("compare", "spatial", "stratified", "timeseries", "kfold"):
-        print(f"❌ Unknown strategy '{strategy}'. "
-              f"Use: compare, spatial, stratified, timeseries, kfold")
+        print(
+            f"❌ Unknown strategy '{strategy}'. "
+            f"Use: compare, spatial, stratified, timeseries, kfold"
+        )
         sys.exit(1)
 
     result = run(strategy=strategy)

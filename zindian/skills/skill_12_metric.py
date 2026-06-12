@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
@@ -23,13 +22,19 @@ from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 
-def run() -> Dict[str, Any]:
-    paths = resolve_competition_paths(require_competition=True)
-    if paths.state_path is None:
-        raise FileNotFoundError("State path could not be resolved")
+def run(
+    config: Dict[str, Any] | None = None, state: Dict[str, Any] | None = None
+) -> Dict[str, Any]:
+    in_memory = state is not None
+    if not in_memory:
+        paths = resolve_competition_paths(require_competition=True)
+        if paths.state_path is None:
+            raise FileNotFoundError("State path could not be resolved")
 
-    state_store = SkillStateStore(paths.state_path)
-    state = state_store.read()
+        state_store = SkillStateStore(paths.state_path)
+        state = state_store.read()
+    else:
+        assert state is not None
 
     eda = state.get("eda", {})
     fold_scores = eda.get("fold_scores")
@@ -39,16 +44,21 @@ def run() -> Dict[str, Any]:
     }
 
     if not fold_scores:
-        metric_analysis.update({
-            "error": "missing_fold_scores",
-            "message": (
-                "SKILL_STATE.json missing 'eda.fold_scores'. "
-                "Ensure Skill 05 or the EDA writes per-fold scores before running Skill 12."
-            ),
-        })
-        state_store.update(metric_analysis=metric_analysis)
+        metric_analysis.update(
+            {
+                "error": "missing_fold_scores",
+                "message": (
+                    "SKILL_STATE.json missing 'eda.fold_scores'. "
+                    "Ensure Skill 05 or the EDA writes per-fold scores before running Skill 12."
+                ),
+            }
+        )
+        if not in_memory:
+            state_store.update(metric_analysis=metric_analysis)
+        else:
+            state["metric_analysis"] = metric_analysis
         print("⚠️  metric_analysis written with diagnostic: missing fold_scores")
-        return metric_analysis
+        return state if in_memory else metric_analysis
 
     # Ensure numeric array
     arr = np.asarray(fold_scores, dtype=np.float64)
@@ -62,9 +72,12 @@ def run() -> Dict[str, Any]:
         }
     )
 
-    state_store.update(metric_analysis=metric_analysis)
+    if not in_memory:
+        state_store.update(metric_analysis=metric_analysis)
+    else:
+        state["metric_analysis"] = metric_analysis
     print(f"✅ metric_analysis written (variance ddof=1 = {fold_score_variance:.6g})")
-    return metric_analysis
+    return state if in_memory else metric_analysis
 
 
 if __name__ == "__main__":

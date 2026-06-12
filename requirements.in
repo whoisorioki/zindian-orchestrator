@@ -4,6 +4,7 @@
 # Core runtime
 python-dotenv
 requests
+zindi
 
 # Data science stack
 numpy
@@ -18,3 +19,5 @@ google-genai
 
 # Dev tools
 pip-tools
+pytest
+pytest-mock

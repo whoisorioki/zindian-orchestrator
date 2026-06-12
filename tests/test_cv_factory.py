@@ -20,7 +20,9 @@ def test_get_cv_splits_counts():
     X = rng.randn(50, 5)
     y = rng.randint(0, 2, size=50)
 
-    splits = list(get_cv_splits(X, y, cv_strategy={"type": "stratified", "n_splits": 5}))
+    splits = list(
+        get_cv_splits(X, y, cv_strategy={"type": "stratified", "n_splits": 5})
+    )
     assert len(splits) == 5
     # each split partition covers all indices exactly once across val sets
     val_union = set()

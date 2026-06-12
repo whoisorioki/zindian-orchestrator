@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping
 
 from zindian.paths import resolve_competition_paths, CompetitionPaths
 
@@ -69,7 +69,9 @@ def _extract_explicit_encoding_rules(config_data: Mapping[str, Any]) -> dict[str
                 elif isinstance(item, Mapping):
                     name = item.get("name") or item.get("column") or item.get("feature")
                     if name:
-                        rules[str(name)] = str(item.get("encoding") or item.get("type") or default_encoding)
+                        rules[str(name)] = str(
+                            item.get("encoding") or item.get("type") or default_encoding
+                        )
 
     add_rules(config_data.get("feature_encoding", {}), "categorical")
     add_rules(config_data.get("categorical_columns", []), "categorical")
@@ -78,7 +80,9 @@ def _extract_explicit_encoding_rules(config_data: Mapping[str, Any]) -> dict[str
     return rules
 
 
-def _high_correlation_pairs(corr: pd.DataFrame, thresh: float = 0.95) -> list[tuple[str, str, float]]:
+def _high_correlation_pairs(
+    corr: pd.DataFrame, thresh: float = 0.95
+) -> list[tuple[str, str, float]]:
     pairs: list[tuple[str, str, float]] = []
     labels = list(corr.index)
     positions = {label: idx for idx, label in enumerate(labels)}
@@ -94,11 +98,15 @@ def _high_correlation_pairs(corr: pd.DataFrame, thresh: float = 0.95) -> list[tu
 
 
 def _outlier_summary(series: pd.Series, total_rows: int) -> dict[str, Any]:
-    numeric_values = pd.to_numeric(series, errors="coerce").dropna().astype(float).to_numpy()
+    numeric_values = (
+        pd.to_numeric(series, errors="coerce").dropna().astype(float).to_numpy()
+    )
     if numeric_values.size == 0:
         return {"outlier_pct": 0.0, "flag": False, "method": "empty", "skewness": 0.0}
 
-    skew_value: Any = pd.Series(numeric_values).skew() if numeric_values.size >= 3 else 0.0
+    skew_value: Any = (
+        pd.Series(numeric_values).skew() if numeric_values.size >= 3 else 0.0
+    )
     skewness = float(skew_value) if not pd.isna(skew_value) else 0.0
     if pd.isna(skewness):
         skewness = 0.0
@@ -137,22 +145,32 @@ def _outlier_summary(series: pd.Series, total_rows: int) -> dict[str, Any]:
     }
 
 
-def _build_categorical_columns(df: pd.DataFrame, feature_cols: list[str], explicit_rules: Mapping[str, str]) -> list[dict[str, Any]]:
+def _build_categorical_columns(
+    df: pd.DataFrame, feature_cols: list[str], explicit_rules: Mapping[str, str]
+) -> list[dict[str, Any]]:
     categorical_columns: list[dict[str, Any]] = []
     for column in feature_cols:
         column_rules = explicit_rules.get(column)
-        if pd.api.types.is_object_dtype(df[column]) or pd.api.types.is_string_dtype(df[column]) or str(df[column].dtype) == "category":
-            categorical_columns.append({
-                "name": column,
-                "cardinality": int(df[column].nunique(dropna=False)),
-                "encoding": column_rules or "one-hot or ordinal",
-            })
+        if (
+            pd.api.types.is_object_dtype(df[column])
+            or pd.api.types.is_string_dtype(df[column])
+            or str(df[column].dtype) == "category"
+        ):
+            categorical_columns.append(
+                {
+                    "name": column,
+                    "cardinality": int(df[column].nunique(dropna=False)),
+                    "encoding": column_rules or "one-hot or ordinal",
+                }
+            )
         elif column_rules is not None:
-            categorical_columns.append({
-                "name": column,
-                "cardinality": int(df[column].nunique(dropna=False)),
-                "encoding": column_rules,
-            })
+            categorical_columns.append(
+                {
+                    "name": column,
+                    "cardinality": int(df[column].nunique(dropna=False)),
+                    "encoding": column_rules,
+                }
+            )
     return categorical_columns
 
 
@@ -176,7 +194,9 @@ def run():
     paths = resolve_competition_paths(require_competition=True)
     competition_dir = paths.competition_dir
     if competition_dir is None:
-        raise FileNotFoundError("resolve_competition_paths did not return a competition_dir")
+        raise FileNotFoundError(
+            "resolve_competition_paths did not return a competition_dir"
+        )
     reports_dir = paths.reports_dir
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,7 +208,9 @@ def run():
         df = pd.read_csv(proc_train)
     else:
         if not raw_train.exists():
-            raise FileNotFoundError(f"Training data not found at {proc_train} or {raw_train}")
+            raise FileNotFoundError(
+                f"Training data not found at {proc_train} or {raw_train}"
+            )
         df = pd.read_csv(raw_train)
 
     config_data = _load_eda_config(paths)
@@ -197,7 +219,9 @@ def run():
     # Detect target column
     target = detect_target(paths)
     if target not in df.columns:
-        raise ValueError(f"Resolved target column '{target}' is not present in the training data")
+        raise ValueError(
+            f"Resolved target column '{target}' is not present in the training data"
+        )
 
     # Exclude ID, coords, and target
     exclude_lower = {"id", "id_number", "latitude", "longitude", target.lower()}
@@ -253,7 +277,11 @@ def run():
         if snum.empty:
             continue
         range_span = float(snum.quantile(0.95) - snum.quantile(0.05))
-        scale_ratio = float(snum.std(ddof=1) / max(snum.abs().median(), 1e-12)) if len(snum) > 1 else 0.0
+        scale_ratio = (
+            float(snum.std(ddof=1) / max(snum.abs().median(), 1e-12))
+            if len(snum) > 1
+            else 0.0
+        )
         if range_span > 1000 or scale_ratio > 10:
             scaling_needed.append(c)
 
@@ -265,7 +293,7 @@ def run():
     std_verdict = {
         "trees_ok": True,
         "linear_nn_need_scaling": len(scaling_needed) > 0,
-        "recommendation": "Use tree ensembles with minimal scaling; apply scaling if training linear/NN models."
+        "recommendation": "Use tree ensembles with minimal scaling; apply scaling if training linear/NN models.",
     }
 
     report = {
@@ -292,7 +320,7 @@ def run():
             "scaling_needed": scaling_needed,
             "outlier_assessment": outlier_flags,
             "standardisation_verdict": std_verdict,
-        }
+        },
     }
 
     # Write JSON report
@@ -302,7 +330,9 @@ def run():
     # Write human-readable summary
     md_lines = []
     md_lines.append(f"# EDA Summary — {datetime.now(timezone.utc).isoformat()}\n")
-    md_lines.append(f"**Data shape**: {n_rows} rows, {n_cols} cols ({feature_count} features)")
+    md_lines.append(
+        f"**Data shape**: {n_rows} rows, {n_cols} cols ({feature_count} features)"
+    )
     md_lines.append(f"**Target**: {target} — distribution: {target_balance}")
     md_lines.append(f"**Total nulls**: {total_nulls}; null columns: {len(null_cols)}")
     md_lines.append(f"**Zero variance**: {zero_variance}")
@@ -311,10 +341,14 @@ def run():
     md_lines.append(f"**High-correlation pairs (>0.95)**: {len(high_corr_pairs)}")
     md_lines.append(f"**PII risk columns**: {pii_risk}")
     md_lines.append("\n## Preprocessing notes")
-    md_lines.append(f"Missingness pattern examples (first 10): {dict(list(missingness_pattern.items())[:10])}")
+    md_lines.append(
+        f"Missingness pattern examples (first 10): {dict(list(missingness_pattern.items())[:10])}"
+    )
     md_lines.append(f"Categorical candidates: {categorical_columns}")
     md_lines.append(f"Scaling needed (range>1000): {scaling_needed}")
-    md_lines.append(f"Outlier flags (features >5% outliers): {[k for k,v in outlier_flags.items() if v['flag']]} ")
+    md_lines.append(
+        f"Outlier flags (features >5% outliers): {[k for k, v in outlier_flags.items() if v['flag']]} "
+    )
     md_lines.append(f"Standardisation verdict: {std_verdict['recommendation']}")
 
     summary_path = reports_dir / "eda_summary.md"

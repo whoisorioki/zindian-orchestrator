@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from zindian.paths import resolve_competition_paths
@@ -30,17 +29,31 @@ def _normalize_policy_token(value: Any) -> str:
     return "_".join(token.replace("-", "_").split())
 
 
-def _collect_banned_features(monitor_data: Mapping[str, Any], config: Mapping[str, Any]) -> List[str]:
+def _collect_banned_features(
+    monitor_data: Mapping[str, Any], config: Mapping[str, Any]
+) -> List[str]:
     banned: List[str] = []
 
-    monitor_root = monitor_data.get("banned_features", []) if isinstance(monitor_data, Mapping) else []
+    monitor_root = (
+        monitor_data.get("banned_features", [])
+        if isinstance(monitor_data, Mapping)
+        else []
+    )
     if isinstance(monitor_root, list):
         banned.extend(monitor_root)
     elif monitor_root:
         banned.append(monitor_root)
 
-    competition_intel = monitor_data.get("competition_intel", {}) if isinstance(monitor_data, Mapping) else {}
-    nested_monitor = competition_intel.get("banned_features", []) if isinstance(competition_intel, Mapping) else []
+    competition_intel = (
+        monitor_data.get("competition_intel", {})
+        if isinstance(monitor_data, Mapping)
+        else {}
+    )
+    nested_monitor = (
+        competition_intel.get("banned_features", [])
+        if isinstance(competition_intel, Mapping)
+        else []
+    )
     if isinstance(nested_monitor, list):
         banned.extend(nested_monitor)
     elif nested_monitor:
@@ -69,12 +82,14 @@ def _normalize_planned_feature_entries(entries: Any) -> List[Dict[str, Any]]:
             normalized.append({"name": entry, "transforms": [], "uses_lat_lon": False})
             return
         if isinstance(entry, Mapping):
-            normalized.append({
-                "name": entry.get("name") or entry.get("feature") or str(entry),
-                "source": entry.get("source", ""),
-                "transforms": entry.get("transforms", []),
-                "uses_lat_lon": entry.get("uses_lat_lon", False),
-            })
+            normalized.append(
+                {
+                    "name": entry.get("name") or entry.get("feature") or str(entry),
+                    "source": entry.get("source", ""),
+                    "transforms": entry.get("transforms", []),
+                    "uses_lat_lon": entry.get("uses_lat_lon", False),
+                }
+            )
             return
         normalized.append({"name": str(entry), "transforms": [], "uses_lat_lon": False})
 
@@ -82,15 +97,23 @@ def _normalize_planned_feature_entries(entries: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
-def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]) -> Dict[str, Any]:
+def synthesise_feature_policy(
+    monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]
+) -> Dict[str, Any]:
     """Derive a generic feature policy from monitor output and config.
 
     The policy is intentionally generic and avoids naming specific datasets.
     """
-    comp = monitor_data.get("competition_intel", {}) if isinstance(monitor_data, dict) else {}
+    comp = (
+        monitor_data.get("competition_intel", {})
+        if isinstance(monitor_data, dict)
+        else {}
+    )
 
     # Allowed external sources (from data page hints) — keep as advisory
-    allowed_data_sources = comp.get("allowed_data_sources", ["competition_provided_only"])
+    allowed_data_sources = comp.get(
+        "allowed_data_sources", ["competition_provided_only"]
+    )
 
     # Banned transformations and features: combine monitor and config
     banned_transformations = _collect_banned_features(monitor_data, config)
@@ -98,12 +121,18 @@ def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str,
     # Lat/Lon permitted if no spatial bans mention 'derived_spatial' or 'spatial'
     lat_lon_permitted = True
     low = [_normalize_policy_token(b) for b in banned_transformations]
-    if any("spatial" in s for s in low) or any("latitude" in s or "longitude" in s for s in low):
+    if any("spatial" in s for s in low) or any(
+        "latitude" in s or "longitude" in s for s in low
+    ):
         lat_lon_permitted = False
 
     external_data_permitted = not comp.get("external_banned", True)
     automl_permitted = not comp.get("automl_banned", False)
-    use_probabilities = comp.get("use_probabilities") if comp.get("use_probabilities") is not None else config.get("use_probabilities")
+    use_probabilities = (
+        comp.get("use_probabilities")
+        if comp.get("use_probabilities") is not None
+        else config.get("use_probabilities")
+    )
     metric = comp.get("metric") or config.get("metric")
 
     policy = {
@@ -124,7 +153,9 @@ def synthesise_feature_policy(monitor_data: Dict[str, Any], config: Mapping[str,
     return policy
 
 
-def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def check_planned_features(
+    policy: Dict[str, Any], planned_features: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """Check each planned feature against the policy.
 
     planned_features: list of dicts with keys: `name`, `source` (optional),
@@ -135,14 +166,19 @@ def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[s
 
     allowed_sources = {
         _normalize_policy_token(source)
-        for source in policy.get("allowed_data_sources", policy.get("allowed_sources", []))
+        for source in policy.get(
+            "allowed_data_sources", policy.get("allowed_sources", [])
+        )
     }
     external_ok = policy.get("external_data_permitted", True)
     banned_trans = {
         _normalize_policy_token(transform)
         for transform in policy.get("banned_transformations", [])
     }
-    lat_ok = policy.get("coordinate_features_permitted", policy.get("lat_lon_permitted_as_feature", True))
+    lat_ok = policy.get(
+        "coordinate_features_permitted",
+        policy.get("lat_lon_permitted_as_feature", True),
+    )
 
     for f in planned_features:
         name = f.get("name")
@@ -175,19 +211,29 @@ def check_planned_features(policy: Dict[str, Any], planned_features: List[Dict[s
             blocks = True
 
         # Warnings: using unknown sources when external allowed but not listed
-        if not blocks and source and external_ok and allowed_sources and source not in allowed_sources:
+        if (
+            not blocks
+            and source
+            and external_ok
+            and allowed_sources
+            and source not in allowed_sources
+        ):
             status = "WARN"
-            reason = f"Source '{source}' not explicitly listed in allowed sources (advisory)"
+            reason = (
+                f"Source '{source}' not explicitly listed in allowed sources (advisory)"
+            )
 
-        results.append({
-            "name": name,
-            "source": source,
-            "transforms": transforms,
-            "uses_lat_lon": uses_lat_lon,
-            "status": status,
-            "reason": reason,
-            "blocks": blocks,
-        })
+        results.append(
+            {
+                "name": name,
+                "source": source,
+                "transforms": transforms,
+                "uses_lat_lon": uses_lat_lon,
+                "status": status,
+                "reason": reason,
+                "blocks": blocks,
+            }
+        )
 
     return results
 
@@ -199,21 +245,41 @@ def _write_feature_policy(paths, policy: Dict[str, Any]) -> None:
     print(f"  ✅ feature_policy.json written -> {p}")
 
 
-def _write_legality_report(paths, checks: List[Dict[str, Any]], policy: Dict[str, Any]) -> None:
+def _write_legality_report(
+    paths, checks: List[Dict[str, Any]], policy: Dict[str, Any]
+) -> None:
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
     p = paths.reports_dir / "legality_report.md"
-    lines = ["# Legality Report", "", f"Generated: {datetime.now(timezone.utc).isoformat()}", "", "## Policy", "", json.dumps(policy, indent=2), "", "## Feature Checks", ""]
+    lines = [
+        "# Legality Report",
+        "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "## Policy",
+        "",
+        json.dumps(policy, indent=2),
+        "",
+        "## Feature Checks",
+        "",
+    ]
     for c in checks:
-        lines += [f"- **{c['name']}**: {c['status']}  ", f"  - reason: {c['reason']}", f"  - blocks: {c['blocks']}", ""]
+        lines += [
+            f"- **{c['name']}**: {c['status']}  ",
+            f"  - reason: {c['reason']}",
+            f"  - blocks: {c['blocks']}",
+            "",
+        ]
 
     p.write_text("\n".join(lines), encoding="utf-8")
     print(f"  ✅ legality_report.md written -> {p}")
 
 
-def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-    print(f"\n{'='*60}")
+def run(
+    slug: Optional[str] = None, planned_features: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    print(f"\n{'=' * 60}")
     print("SKILL 03 — Legality Gate")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     paths = resolve_competition_paths(slug=slug)
     # Load monitor output if available
@@ -225,7 +291,9 @@ def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, An
         flagged_titles = monitor_data.get("compliance", {}).get("flagged_titles", [])
         print(f"  Loaded monitor data from {monitor_path}")
     else:
-        print(f"  ⚠️  zindi_monitor.json not found at {monitor_path} — proceeding with config only")
+        print(
+            f"  ⚠️  zindi_monitor.json not found at {monitor_path} — proceeding with config only"
+        )
 
     # Load config
     try:
@@ -236,7 +304,9 @@ def run(slug: Optional[str] = None, planned_features: Optional[List[Dict[str, An
         print("  ⚠️  challenge_config.json not available or invalid")
 
     # Synthesise feature policy
-    policy = synthesise_feature_policy(monitor_data, cfg._data if cfg is not None else {}, flagged_titles)
+    policy = synthesise_feature_policy(
+        monitor_data, cfg._data if cfg is not None else {}, flagged_titles
+    )
     _write_feature_policy(paths, policy)
 
     # Decide planned_features source

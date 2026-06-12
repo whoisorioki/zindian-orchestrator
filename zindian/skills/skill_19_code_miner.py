@@ -34,7 +34,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
@@ -43,6 +43,7 @@ from zindian.state import SkillStateStore
 genai: Any = None
 try:
     import google.genai as genai
+
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
@@ -51,68 +52,65 @@ MODEL_NAME = "gemini-2.5-flash"
 
 
 SEARCH_TEMPLATES = {
-
     "geospatial": [
         (
             "species distribution model spatial autocorrelation Kaggle solution "
             "geospatial tabular features winning approach",
-            "Geospatial SDM — validation and feature tricks"
+            "Geospatial SDM — validation and feature tricks",
         ),
         (
             "Kaggle geospatial competition spatial cross-validation block CV "
             "geographic leakage winning solution writeup",
-            "Spatial CV strategies from competition winners"
+            "Spatial CV strategies from competition winners",
         ),
         (
             "tabular binary classification imbalanced geospatial presence absence "
             "LightGBM Random Forest ensemble top solution",
-            "Ensemble strategies for presence/absence classification"
+            "Ensemble strategies for presence/absence classification",
         ),
         (
             "environmental feature engineering climate variables species occurrence "
             "temporal lag window features predictive model",
-            "Temporal feature engineering for climate-species models"
+            "Temporal feature engineering for climate-species models",
         ),
         (
             "TerraClimate WorldClim bioclimatic variables species distribution "
             "machine learning feature importance SHAP",
-            "Climate variable feature selection for SDMs"
+            "Climate variable feature selection for SDMs",
         ),
     ],
-
     "tabular": [
         (
             "Kaggle tabular competition winning solution feature engineering "
             "LightGBM CatBoost ensemble stacking approach",
-            "General tabular ML winning strategies"
+            "General tabular ML winning strategies",
         ),
         (
             "tabular binary classification threshold optimization F1 score "
             "imbalanced dataset handling top solution",
-            "F1 optimization and threshold calibration"
+            "F1 optimization and threshold calibration",
         ),
         (
             "Kaggle solution cross-validation strategy leakage prevention "
             "out-of-fold predictions ensemble",
-            "CV strategy and OOF ensemble patterns"
+            "CV strategy and OOF ensemble patterns",
         ),
     ],
-
     "frog_ecology": [
         (
             "frog species occurrence prediction southeastern Australia "
             "environmental predictors machine learning",
-            "Frog ecology ML — Australia specific"
+            "Frog ecology ML — Australia specific",
         ),
         (
             "amphibian habitat suitability model climate variables "
             "precipitation temperature breeding trigger",
-            "Amphibian habitat modeling signals"
+            "Amphibian habitat modeling signals",
         ),
         (
             "FrogID citizen science species distribution model "
             "TerraClimate environmental predictors",
-            "FrogID-specific modeling approaches"
+            "FrogID-specific modeling approaches",
         ),
     ],
 }
@@ -172,9 +170,9 @@ def _extract_json_from_response(raw_text: str) -> dict | None:
     """Extract valid JSON from Gemini response, handling markdown fences."""
     if not raw_text:
         return None
-    
+
     raw_text = raw_text.strip()
-    
+
     # Try 1: If wrapped in markdown fences, strip them
     if raw_text.startswith("```"):
         # Split by backticks and try to find JSON
@@ -186,13 +184,13 @@ def _extract_json_from_response(raw_text: str) -> dict | None:
             if part.startswith("{"):
                 raw_text = part
                 break
-    
+
     # Try 2: Find JSON object via regex (from { to matching })
     if not raw_text.startswith("{"):
-        match = re.search(r'\{[\s\S]*\}', raw_text)
+        match = re.search(r"\{[\s\S]*\}", raw_text)
         if match:
             raw_text = match.group(0)
-    
+
     # Try 3: Parse the JSON
     try:
         return json.loads(raw_text)
@@ -228,33 +226,33 @@ def query_gemini(
 
         # Use robust JSON extraction
         parsed = _extract_json_from_response(raw_text)
-        
+
         if parsed is None:
-            entry["status"]      = "parse_error"
+            entry["status"] = "parse_error"
             entry["raw_summary"] = raw_text[:500] if raw_text else None
-            entry["warnings"]    = ["Failed to extract JSON from response"]
-            entry["tricks"]      = []
+            entry["warnings"] = ["Failed to extract JSON from response"]
+            entry["tricks"] = []
             entry["validation_strategies"] = []
             entry["feature_ideas"] = []
             entry["ensemble_patterns"] = []
-            print(f"  ⚠️  JSON extraction failed on '{query_label}' — using empty result")
+            print(
+                f"  ⚠️  JSON extraction failed on '{query_label}' — using empty result"
+            )
             return entry
 
-        entry["tricks"]                = parsed.get("tricks", [])
+        entry["tricks"] = parsed.get("tricks", [])
         entry["validation_strategies"] = parsed.get("validation_strategies", [])
-        entry["feature_ideas"]         = parsed.get("feature_ideas", [])
-        entry["ensemble_patterns"]     = parsed.get("ensemble_patterns", [])
-        entry["warnings"]              = parsed.get("warnings", [])
-        entry["raw_summary"]           = parsed.get("sources", [])
-        entry["status"]                = "success"
-        entry["confidence"]            = parsed.get("confidence", "unknown")
-        entry["relevance"]             = parsed.get(
-            "relevance_to_geospatial_species", "unknown"
-        )
+        entry["feature_ideas"] = parsed.get("feature_ideas", [])
+        entry["ensemble_patterns"] = parsed.get("ensemble_patterns", [])
+        entry["warnings"] = parsed.get("warnings", [])
+        entry["raw_summary"] = parsed.get("sources", [])
+        entry["status"] = "success"
+        entry["confidence"] = parsed.get("confidence", "unknown")
+        entry["relevance"] = parsed.get("relevance_to_geospatial_species", "unknown")
         print(f"  ✓ {query_label}: {len(entry['tricks'])} tricks found")
 
     except Exception as e:
-        entry["status"]   = "error"
+        entry["status"] = "error"
         entry["warnings"] = [f"API error: {e}"]
         print(f"  ❌ API error on '{query_label}': {e}")
 
@@ -318,9 +316,14 @@ def synthesize_results(
 ) -> dict:
     if dry_run:
         return {
-            "top_3_actionable_tricks": [{"trick": "[dry run]", "expected_impact": "unknown",
-                                          "implementation_complexity": "unknown",
-                                          "relevant_to_tc_only_features": True}],
+            "top_3_actionable_tricks": [
+                {
+                    "trick": "[dry run]",
+                    "expected_impact": "unknown",
+                    "implementation_complexity": "unknown",
+                    "relevant_to_tc_only_features": True,
+                }
+            ],
             "feature_hypotheses": [],
             "validation_recommendation": "[dry run]",
             "ensemble_recommendation": "[dry run]",
@@ -333,17 +336,97 @@ def synthesize_results(
 
     trimmed = []
     for e in successful:
-        trimmed.append({
-            "label":                e["query_label"],
-            "tricks":               e["tricks"][:3],
-            "validation":           e["validation_strategies"][:2],
-            "features":             e["feature_ideas"][:3],
-            "ensemble":             e["ensemble_patterns"][:2],
-            "warnings":             e["warnings"][:2],
-        })
+        trimmed.append(
+            {
+                "label": e["query_label"],
+                "tricks": e["tricks"][:3],
+                "validation": e["validation_strategies"][:2],
+                "features": e["feature_ideas"][:3],
+                "ensemble": e["ensemble_patterns"][:2],
+                "warnings": e["warnings"][:2],
+            }
+        )
 
     try:
-        prompt   = SYNTHESIS_PROMPT.format(results_json=json.dumps(trimmed, indent=2))
+        comp_name = "Species distribution model"
+        domain_name = "geospatial"
+        target_col = "target"
+        task_type = "binary classification"
+        metric = "F1"
+        metric_dir = "maximize"
+        extra_ctx = ""
+        try:
+            config = ChallengeConfig.load()
+            if config.get("name"):
+                comp_name = config.get("name")
+            if config.domain:
+                domain_name = config.domain
+            if config.get("target_col"):
+                target_col = config.get("target_col")
+            if config.get("task_type"):
+                task_type = config.get("task_type")
+            if config.metric:
+                metric = config.metric
+            if config.metric_direction:
+                metric_dir = config.metric_direction
+
+            if "frog" in comp_name.lower() or "frog" in config.slug.lower():
+                extra_ctx = (
+                    "- Features: 52 TerraClimate climate variables (no lat/lon allowed)\n"
+                    "- Dataset: 6312 training rows, SE Australia, Nov 2017 - Nov 2019\n"
+                    "- Current best LB: 0.8846\n"
+                    "- Gap to top 10: ~0.08"
+                )
+            else:
+                shape = config.get("data_shape", {}) or {}
+                extra_ctx = f"- Dataset: {shape.get('n_train', 0)} training rows, {shape.get('n_cols', 0)} columns"
+        except Exception:
+            pass
+
+        prompt = f"""You are a senior ML competition strategist.
+
+Below are search results from multiple queries about winning ML competition approaches
+for a {domain_name} problem ({comp_name}).
+
+Competition context:
+- Target: {target_col} ({task_type})
+- Metric: {metric} ({metric_dir})
+{extra_ctx}
+
+Search results:
+{json.dumps(trimmed, indent=2)}
+
+Synthesize into a JSON object with exactly these fields:
+
+{{
+  "top_3_actionable_tricks": [
+    {{
+      "trick": "Concrete thing to implement",
+      "expected_impact": "high|medium|low",
+      "implementation_complexity": "high|medium|low",
+      "relevant_to_tc_only_features": true
+    }}
+  ],
+  "feature_hypotheses": [
+    {{
+      "hypothesis": "Specific new feature to create",
+      "ecological_basis": "Why this should predict the target",
+      "variables_needed": ["list of variables or features needed"],
+      "complexity": "simple|moderate|complex"
+    }}
+  ],
+  "validation_recommendation": "One concrete CV strategy recommendation",
+  "ensemble_recommendation": "One concrete ensembling recommendation",
+  "do_not_attempt": [
+    "Things that repeatedly failed in similar competitions"
+  ]
+}}
+
+Rules:
+- Only synthesize from the provided search results
+- Mark relevance to the feature constraints explicitly
+- Return ONLY valid JSON, no preamble, no markdown fences
+"""
         response = gemini_client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
@@ -370,7 +453,12 @@ def _confidence_from_impact(impact: str) -> float:
     return mapping.get(str(impact).strip().lower(), 0.5)
 
 
-def _build_code_miner_cache(entries: list[dict], queries: list[tuple[str, str, str]], domain: str, synthesis: dict) -> dict:
+def _build_code_miner_cache(
+    entries: list[dict],
+    queries: list[tuple[str, str, str]],
+    domain: str,
+    synthesis: dict,
+) -> dict:
     query_texts = [query for query, _, _ in queries]
     successful = sum(1 for entry in entries if entry.get("status") == "success")
     return {
@@ -390,7 +478,9 @@ def _build_code_miner_cache(entries: list[dict], queries: list[tuple[str, str, s
     }
 
 
-def _build_code_miner_patterns(entries: list[dict], synthesis: dict, domain: str) -> dict:
+def _build_code_miner_patterns(
+    entries: list[dict], synthesis: dict, domain: str
+) -> dict:
     patterns = []
 
     for index, trick in enumerate(synthesis.get("top_3_actionable_tricks", []), 1):
@@ -423,7 +513,9 @@ def _build_code_miner_patterns(entries: list[dict], synthesis: dict, domain: str
             "technique_name": hypothesis.get("hypothesis", "unknown"),
             "problem_shape": f"{domain.title()} binary classification",
             "implementation_steps": [
-                hypothesis.get("ecological_basis", "Use the synthesized basis to shape features"),
+                hypothesis.get(
+                    "ecological_basis", "Use the synthesized basis to shape features"
+                ),
                 f"Construct features from: {', '.join(variables) if variables else 'available TC variables'}",
             ],
             "leakage_risk": "low",
@@ -441,7 +533,7 @@ def _build_code_miner_patterns(entries: list[dict], synthesis: dict, domain: str
 
 
 def write_markdown_report(
-    entries:   list[dict],
+    entries: list[dict],
     synthesis: dict,
     report_path: Path,
     domain: str,
@@ -464,7 +556,9 @@ def write_markdown_report(
             lines.append(f"### {i}. {t.get('trick', 'unknown')}")
             lines.append(f"- **Impact**: {t.get('expected_impact', '?')}")
             lines.append(f"- **Complexity**: {t.get('implementation_complexity', '?')}")
-            lines.append(f"- **TC-only compatible**: {t.get('relevant_to_tc_only_features', '?')}")
+            lines.append(
+                f"- **TC-only compatible**: {t.get('relevant_to_tc_only_features', '?')}"
+            )
             lines.append("")
     else:
         lines.append("*No tricks extracted*")
@@ -523,16 +617,16 @@ def write_markdown_report(
 
 
 def run(
-    domain:  str  = "geospatial",
+    domain: str = "geospatial",
     dry_run: bool = False,
 ) -> dict:
-    print(f"\n{'='*60}")
-    print(f"SKILL 19 — The Code Miner")
-    print(f"{'='*60}\n")
+    print(f"\n{'=' * 60}")
+    print("SKILL 19 — The Code Miner")
+    print(f"{'=' * 60}\n")
     print(f"Domain  : {domain}")
     print(f"Dry run : {dry_run}")
 
-    paths  = resolve_competition_paths()
+    paths = resolve_competition_paths()
     config = ChallengeConfig.load()
 
     if not GEMINI_AVAILABLE and not dry_run:
@@ -549,26 +643,38 @@ def run(
             return {"status": "ERROR", "message": "GEMINI_API_KEY not set"}
 
         gemini_model = genai.Client(api_key=api_key)
-        print(f"✅ Gemini Flash initialized")
+        print("✅ Gemini Flash initialized")
     else:
         gemini_model = None
 
-    if domain == "all":
+    # Dynamically select tabular or other template if domain is default or generic
+    active_domain = domain
+    if active_domain == "geospatial" or active_domain is None:
+        try:
+            cfg_domain = config.domain
+            if cfg_domain in SEARCH_TEMPLATES:
+                active_domain = cfg_domain
+            elif config.get("data_modality") == "tabular":
+                active_domain = "tabular"
+        except Exception:
+            pass
+
+    if active_domain == "all":
         queries = []
         for d, q_list in SEARCH_TEMPLATES.items():
             queries.extend([(q, label, d) for q, label in q_list])
     else:
-        template = SEARCH_TEMPLATES.get(domain, SEARCH_TEMPLATES["geospatial"])
-        queries  = [(q, label, domain) for q, label in template]
+        template = SEARCH_TEMPLATES.get(active_domain, SEARCH_TEMPLATES["geospatial"])
+        queries = [(q, label, active_domain) for q, label in template]
 
     print(f"\nRunning {len(queries)} queries…\n")
 
     entries = []
     for i, (query, label, q_domain) in enumerate(queries):
-        print(f"  [{i+1}/{len(queries)}] {label}")
+        print(f"  [{i + 1}/{len(queries)}] {label}")
 
-        entry    = query_gemini(gemini_model, query, label, q_domain, dry_run)
-        entry["id"] = f"CM_{i+1:03d}"
+        entry = query_gemini(gemini_model, query, label, q_domain, dry_run)
+        entry["id"] = f"CM_{i + 1:03d}"
 
         entries.append(entry)
 
@@ -591,13 +697,13 @@ def run(
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     output = {
-        "skill":      "skill_19_code_miner",
+        "skill": "skill_19_code_miner",
         "competition": config.slug,
-        "domain":     domain,
-        "generated":  datetime.now(timezone.utc).isoformat(),
+        "domain": domain,
+        "generated": datetime.now(timezone.utc).isoformat(),
         "query_count": len(queries),
-        "entries":    entries,
-        "synthesis":  synthesis,
+        "entries": entries,
+        "synthesis": synthesis,
     }
     json_path = reports_dir / "ml_priorart.json"
     json_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
@@ -608,7 +714,9 @@ def run(
     legacy_cache = _build_code_miner_cache(entries, queries, domain, synthesis)
     legacy_patterns = _build_code_miner_patterns(entries, synthesis, domain)
     legacy_cache_path.write_text(json.dumps(legacy_cache, indent=2), encoding="utf-8")
-    legacy_patterns_path.write_text(json.dumps(legacy_patterns, indent=2), encoding="utf-8")
+    legacy_patterns_path.write_text(
+        json.dumps(legacy_patterns, indent=2), encoding="utf-8"
+    )
     print(f"✅ Legacy cache saved → {legacy_cache_path}")
     print(f"✅ Legacy patterns saved → {legacy_patterns_path}")
 
@@ -623,25 +731,27 @@ def run(
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("SYNTHESIS — TOP ACTIONABLE TRICKS")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for i, trick in enumerate(synthesis.get("top_3_actionable_tricks", []), 1):
         print(f"  {i}. {trick.get('trick', '?')}")
-        print(f"     Impact: {trick.get('expected_impact', '?')} | "
-              f"Complexity: {trick.get('implementation_complexity', '?')}")
+        print(
+            f"     Impact: {trick.get('expected_impact', '?')} | "
+            f"Complexity: {trick.get('implementation_complexity', '?')}"
+        )
 
     print(f"\nValidation: {synthesis.get('validation_recommendation', '?')}")
     print(f"Ensemble  : {synthesis.get('ensemble_recommendation', '?')}")
 
     return {
-        "status":        "OK",
-        "domain":        domain,
-        "queries_run":   len(queries),
-        "entries":       len(entries),
-        "synthesis":     synthesis,
-        "json_path":     str(json_path),
-        "report_path":   str(report_path),
+        "status": "OK",
+        "domain": domain,
+        "queries_run": len(queries),
+        "entries": len(entries),
+        "synthesis": synthesis,
+        "json_path": str(json_path),
+        "report_path": str(report_path),
     }
 
 
@@ -653,7 +763,7 @@ def run_code_miner(
 
 
 if __name__ == "__main__":
-    domain  = "geospatial"
+    domain = "geospatial"
     dry_run = False
 
     for arg in sys.argv[1:]:
@@ -668,6 +778,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     result = run_code_miner(domain=domain, dry_run=dry_run)
-    printable = {k: v for k, v in result.items()
-                 if k not in ("entries", "synthesis")}
+    printable = {k: v for k, v in result.items() if k not in ("entries", "synthesis")}
     print(json.dumps(printable, indent=2))

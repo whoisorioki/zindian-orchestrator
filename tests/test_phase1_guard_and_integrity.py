@@ -1,7 +1,5 @@
 import json
-from pathlib import Path
 
-import pytest
 
 from zindian.skills import skill_02_intake as intake
 from zindian.skills import skill_01_integrity as integrity
@@ -22,7 +20,7 @@ def make_competition_dir(tmp_path, slug: str, state_phase: str | None):
 
 def test_intake_skips_write_when_phase_prohibits(tmp_path, monkeypatch):
     slug = "cmp-skip"
-    comp = make_competition_dir(tmp_path, slug, "phase_2_legality_checked")
+    make_competition_dir(tmp_path, slug, "phase_2_legality_checked")
 
     # Monkeypatch cwd to tmp_path so resolve_competition_paths finds our comp
     monkeypatch.chdir(tmp_path)
@@ -34,7 +32,7 @@ def test_intake_skips_write_when_phase_prohibits(tmp_path, monkeypatch):
     monkeypatch.setattr(intake, "fetch_competition", fake_fetch)
 
     # Run intake; should skip writing challenge_config.json due to phase
-    res = intake.run(slug, headers={}, dry_run=False, merge=False)
+    intake.run(slug, headers={}, dry_run=False, merge=False)
     cfg_path = resolve_competition_paths(slug=slug).config_path
     assert not cfg_path.exists()
 
@@ -54,7 +52,7 @@ def test_intake_merge_preserves_existing_nonnull(tmp_path, monkeypatch):
 
     monkeypatch.setattr(intake, "fetch_competition", fake_fetch)
 
-    res = intake.run(slug, headers={}, dry_run=False, merge=True)
+    intake.run(slug, headers={}, dry_run=False, merge=True)
     final = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert final["name"] == "Existing"
     assert final["metric"] == "auc"
@@ -65,6 +63,7 @@ def test_integrity_update_writes_state(tmp_path):
     comp.mkdir(parents=True)
     state_path = comp / "SKILL_STATE.json"
     from zindian.schemas import skill_state_skeleton
+
     state_path.write_text(json.dumps(skill_state_skeleton()), encoding="utf-8")
 
     sample_integrity = {

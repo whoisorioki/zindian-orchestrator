@@ -9,14 +9,15 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from zindian.state import SkillStateStore
 
-
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LensResult:
@@ -52,7 +53,9 @@ class ThreeLensReport:
         return asdict(self)
 
 
-def _derive_overall(general: LensResult, specific: LensResult, generalisation: LensResult) -> str:
+def _derive_overall(
+    general: LensResult, specific: LensResult, generalisation: LensResult
+) -> str:
     verdicts = (general.verdict, specific.verdict, generalisation.verdict)
     if all(v == "PASS" for v in verdicts):
         return "PASS"
@@ -69,17 +72,21 @@ def _now_iso() -> str:
 # Supported phases
 # ---------------------------------------------------------------------------
 
-SUPPORTED_PHASES = frozenset([
-    "phase_1",
-    "phase_2a",
-    "phase_2b",
-    "phase_3a",
-    "phase_3b",
-])
+SUPPORTED_PHASES = frozenset(
+    [
+        "phase_1",
+        "phase_2a",
+        "phase_2b",
+        "phase_3a",
+        "phase_3b",
+        "phase_4",
+    ]
+)
 
 # ---------------------------------------------------------------------------
 # Phase 1 evaluators
 # ---------------------------------------------------------------------------
+
 
 def _eval_phase1_general(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
@@ -87,7 +94,9 @@ def _eval_phase1_general(config: dict, state: dict) -> LensResult:
     task_type = config.get("task_type")
     valid_task_types = {"classification", "regression", "ranking"}
     if task_type not in valid_task_types:
-        findings.append(f"task_type must be one of {valid_task_types}, got '{task_type}'")
+        findings.append(
+            f"task_type must be one of {valid_task_types}, got '{task_type}'"
+        )
 
     metric = config.get("metric")
     if not metric:
@@ -96,7 +105,9 @@ def _eval_phase1_general(config: dict, state: dict) -> LensResult:
     direction = config.get("metric_direction")
     valid_directions = {"maximize", "minimize"}
     if direction not in valid_directions:
-        findings.append(f"metric_direction must be one of {valid_directions}, got '{direction}'")
+        findings.append(
+            f"metric_direction must be one of {valid_directions}, got '{direction}'"
+        )
 
     # CV strategy consistency with dataset signals
     cv_type = config.get("cv_strategy", {}).get("type", "")
@@ -106,12 +117,22 @@ def _eval_phase1_general(config: dict, state: dict) -> LensResult:
     minority_ratio = config.get("minority_ratio")
 
     if temporal and cv_type != "TimeSeriesSplit":
-        findings.append(f"temporal signal detected but cv_strategy.type is '{cv_type}', expected 'TimeSeriesSplit'")
+        findings.append(
+            f"temporal signal detected but cv_strategy.type is '{cv_type}', expected 'TimeSeriesSplit'"
+        )
     elif (group or spatial) and cv_type != "GroupKFold":
-        findings.append(f"group/spatial signal detected but cv_strategy.type is '{cv_type}', expected 'GroupKFold'")
-    elif (task_type == "classification" and minority_ratio is not None and minority_ratio < 0.15
-          and cv_type not in ("StratifiedKFold", "GroupKFold", "TimeSeriesSplit")):
-        findings.append(f"imbalanced classification (minority_ratio={minority_ratio}) but cv_strategy.type is '{cv_type}', expected 'StratifiedKFold'")
+        findings.append(
+            f"group/spatial signal detected but cv_strategy.type is '{cv_type}', expected 'GroupKFold'"
+        )
+    elif (
+        task_type == "classification"
+        and minority_ratio is not None
+        and minority_ratio < 0.15
+        and cv_type not in ("StratifiedKFold", "GroupKFold", "TimeSeriesSplit")
+    ):
+        findings.append(
+            f"imbalanced classification (minority_ratio={minority_ratio}) but cv_strategy.type is '{cv_type}', expected 'StratifiedKFold'"
+        )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="general", verdict=verdict, findings=findings)
@@ -126,7 +147,12 @@ def _eval_phase1_specific(config: dict, state: dict) -> LensResult:
         return LensResult(lens="specific", verdict="FAIL", findings=findings)
 
     # Required EDA fields (target_std is regression-only)
-    for field in ("mnar_columns", "mcar_columns", "group_structure_confirmed", "temporal_index_confirmed"):
+    for field in (
+        "mnar_columns",
+        "mcar_columns",
+        "group_structure_confirmed",
+        "temporal_index_confirmed",
+    ):
         if field not in eda:
             findings.append(f"state['eda']['{field}'] is missing")
 
@@ -134,8 +160,14 @@ def _eval_phase1_specific(config: dict, state: dict) -> LensResult:
     task_type = config.get("task_type")
     if task_type == "regression":
         target_std = eda.get("target_std")
-        if target_std is None or not isinstance(target_std, (int, float)) or target_std <= 0:
-            findings.append(f"target_std must be a float > 0 for regression, got '{target_std}'")
+        if (
+            target_std is None
+            or not isinstance(target_std, (int, float))
+            or target_std <= 0
+        ):
+            findings.append(
+                f"target_std must be a float > 0 for regression, got '{target_std}'"
+            )
 
     # CV type matches actual signals
     cv_type = config.get("cv_strategy", {}).get("type", "")
@@ -144,15 +176,21 @@ def _eval_phase1_specific(config: dict, state: dict) -> LensResult:
     spatial = config.get("spatial_signal", {}).get("present", False)
 
     if temporal and cv_type != "TimeSeriesSplit":
-        findings.append(f"temporal_index_confirmed=true but cv_strategy.type is '{cv_type}', expected 'TimeSeriesSplit'")
+        findings.append(
+            f"temporal_index_confirmed=true but cv_strategy.type is '{cv_type}', expected 'TimeSeriesSplit'"
+        )
     if (group or spatial) and cv_type != "GroupKFold":
-        findings.append(f"group_structure_confirmed=true or spatial_signal.present=true but cv_strategy.type is '{cv_type}', expected 'GroupKFold'")
+        findings.append(
+            f"group_structure_confirmed=true or spatial_signal.present=true but cv_strategy.type is '{cv_type}', expected 'GroupKFold'"
+        )
 
     # Spatial group_col populated when spatial present and group absent
     if spatial and not config.get("group_signal", {}).get("present", False):
         group_col = config.get("spatial_signal", {}).get("group_col")
         if not group_col:
-            findings.append("spatial_signal.present=true and group_signal.present=false but spatial_signal.group_col is not populated")
+            findings.append(
+                "spatial_signal.present=true and group_signal.present=false but spatial_signal.group_col is not populated"
+            )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="specific", verdict=verdict, findings=findings)
@@ -181,7 +219,15 @@ def _eval_phase1_generalisation(config: dict, state: dict) -> LensResult:
     if not isinstance(cv, dict):
         findings.append("cv_strategy block must be a dict")
     else:
-        required_cv_fields = ["type", "n_splits", "shuffle", "random_state", "group_col", "stratify_col", "selection_reason"]
+        required_cv_fields = [
+            "type",
+            "n_splits",
+            "shuffle",
+            "random_state",
+            "group_col",
+            "stratify_col",
+            "selection_reason",
+        ]
         for field in required_cv_fields:
             if field not in cv:
                 findings.append(f"cv_strategy missing required field '{field}'")
@@ -198,16 +244,21 @@ def _eval_phase1_generalisation(config: dict, state: dict) -> LensResult:
 # Phase 2A evaluators
 # ---------------------------------------------------------------------------
 
+
 def _eval_phase2a_general(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
     policy_filters = config.get("policy_filters")
     if policy_filters is None or not isinstance(policy_filters, list):
-        findings.append("policy_filters must be present and a list (config lock confirmed)")
+        findings.append(
+            "policy_filters must be present and a list (config lock confirmed)"
+        )
 
     direction = config.get("metric_direction")
     if direction not in ("maximize", "minimize"):
-        findings.append("metric_direction still present and valid (config read-only check)")
+        findings.append(
+            "metric_direction still present and valid (config read-only check)"
+        )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="general", verdict=verdict, findings=findings)
@@ -218,13 +269,19 @@ def _eval_phase2a_specific(config: dict, state: dict) -> LensResult:
 
     eda = state.get("eda", {})
     if "mnar_columns" not in eda:
-        findings.append("state['eda']['mnar_columns'] missing — cleaning uninformed by MNAR profile")
+        findings.append(
+            "state['eda']['mnar_columns'] missing — cleaning uninformed by MNAR profile"
+        )
     if "mcar_columns" not in eda:
-        findings.append("state['eda']['mcar_columns'] missing — cleaning uninformed by MCAR profile")
+        findings.append(
+            "state['eda']['mcar_columns'] missing — cleaning uninformed by MCAR profile"
+        )
 
     cleaning_complete = state.get("cleaning_complete")
     if not cleaning_complete:
-        findings.append("state['cleaning_complete'] not set or false — cleaning may not be complete")
+        findings.append(
+            "state['cleaning_complete'] not set or false — cleaning may not be complete"
+        )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="specific", verdict=verdict, findings=findings)
@@ -236,13 +293,17 @@ def _eval_phase2a_generalisation(config: dict, state: dict) -> LensResult:
     # MNAR indicator-before-fill order check
     mnar_order = state.get("mnar_indicator_before_fill")
     if mnar_order is False:
-        findings.append("MNAR indicators were NOT generated before fills — order violation")
+        findings.append(
+            "MNAR indicators were NOT generated before fills — order violation"
+        )
 
     # Policy gate: blocked columns absent from post-cleaning feature matrix
     # (the actual feature matrix isn't available here; we check state flags)
     policy_gate_passed = state.get("policy_gate_passed")
     if policy_gate_passed is False:
-        findings.append("policy gate did not pass — blocked columns still present in feature matrix")
+        findings.append(
+            "policy gate did not pass — blocked columns still present in feature matrix"
+        )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="generalisation", verdict=verdict, findings=findings)
@@ -252,6 +313,7 @@ def _eval_phase2a_generalisation(config: dict, state: dict) -> LensResult:
 # Phase 2B evaluators
 # ---------------------------------------------------------------------------
 
+
 def _eval_phase2b_general(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
@@ -259,16 +321,27 @@ def _eval_phase2b_general(config: dict, state: dict) -> LensResult:
     if anchor_oof is None:
         findings.append("anchor OOF score not present in state")
 
-    direction = config.get("metric_direction")
+    config.get("metric_direction")
 
     # Check cv_strategy_id tag on anchor OOF entry
-    anchor_key = next((k for k in state if k.startswith("branch_") and k.endswith("_oof") and "anchor" in k), None)
+    anchor_key = next(
+        (
+            k
+            for k in state
+            if k.startswith("branch_") and k.endswith("_oof") and "anchor" in k
+        ),
+        None,
+    )
     if anchor_key:
         oof_entry = state.get(anchor_key, {})
         if not oof_entry.get("cv_strategy_id"):
-            findings.append(f"anchor OOF entry '{anchor_key}' is missing cv_strategy_id tag")
+            findings.append(
+                f"anchor OOF entry '{anchor_key}' is missing cv_strategy_id tag"
+            )
     else:
-        findings.append("no branch_anchor_oof entry found in state to verify cv_strategy_id tag")
+        findings.append(
+            "no branch_anchor_oof entry found in state to verify cv_strategy_id tag"
+        )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="general", verdict=verdict, findings=findings)
@@ -288,7 +361,11 @@ def _eval_phase2b_specific(config: dict, state: dict) -> LensResult:
             findings.append(f"anchor OOF score is not a finite float: {anchor_oof}")
 
     # At least one feature variant OOF score present
-    variant_oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof") and "anchor" not in k]
+    variant_oof_keys = [
+        k
+        for k in state
+        if k.startswith("branch_") and k.endswith("_oof") and "anchor" not in k
+    ]
     if not variant_oof_keys:
         findings.append("no feature variant OOF scores present in state")
 
@@ -300,7 +377,9 @@ def _eval_phase2b_specific(config: dict, state: dict) -> LensResult:
         if not entry_cv:
             findings.append(f"OOF entry '{key}' missing cv_strategy_id tag")
         elif active_cv_id and entry_cv != active_cv_id:
-            findings.append(f"OOF entry '{key}' has cv_strategy_id='{entry_cv}', expected '{active_cv_id}'")
+            findings.append(
+                f"OOF entry '{key}' has cv_strategy_id='{entry_cv}', expected '{active_cv_id}'"
+            )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="specific", verdict=verdict, findings=findings)
@@ -315,14 +394,20 @@ def _eval_phase2b_generalisation(config: dict, state: dict) -> LensResult:
 
     # Preflight confirmed
     if state.get("preflight_confirmed") is not True:
-        findings.append("preflight_confirmed is not true — static checks may not have passed")
+        findings.append(
+            "preflight_confirmed is not true — static checks may not have passed"
+        )
 
     # CV strategy override safe access
     override_active = state.get("cv_strategy_override", {}).get("active", False)
     if override_active:
-        override_strategy = state.get("cv_strategy_override", {}).get("override_strategy")
+        override_strategy = state.get("cv_strategy_override", {}).get(
+            "override_strategy"
+        )
         if not override_strategy:
-            findings.append("cv_strategy_override.active=true but override_strategy not set")
+            findings.append(
+                "cv_strategy_override.active=true but override_strategy not set"
+            )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="generalisation", verdict=verdict, findings=findings)
@@ -346,6 +431,7 @@ def _resolve_active_cv_id_for_check(state: dict, config: dict) -> Optional[str]:
 # Phase 3A evaluators
 # ---------------------------------------------------------------------------
 
+
 def _eval_phase3a_general(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
@@ -353,10 +439,14 @@ def _eval_phase3a_general(config: dict, state: dict) -> LensResult:
     if task_type == "classification":
         calib = state.get("calibration_complete")
         if not calib:
-            findings.append("task_type=classification but calibration_complete is not true in state")
+            findings.append(
+                "task_type=classification but calibration_complete is not true in state"
+            )
 
     # Fold score variance written for all candidate branches
-    branch_oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof")]
+    branch_oof_keys = [
+        k for k in state if k.startswith("branch_") and k.endswith("_oof")
+    ]
     if not branch_oof_keys:
         findings.append("no branch OOF entries found in state")
 
@@ -367,7 +457,9 @@ def _eval_phase3a_general(config: dict, state: dict) -> LensResult:
 def _eval_phase3a_specific(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
-    branch_oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof")]
+    branch_oof_keys = [
+        k for k in state if k.startswith("branch_") and k.endswith("_oof")
+    ]
 
     for key in branch_oof_keys:
         entry = state.get(key, {})
@@ -379,16 +471,22 @@ def _eval_phase3a_specific(config: dict, state: dict) -> LensResult:
         # Fold count matches n_splits
         n_splits = config.get("cv_strategy", {}).get("n_splits", 5)
         if len(scores) != n_splits:
-            findings.append(f"OOF entry '{key}' has {len(scores)} fold scores, expected {n_splits}")
+            findings.append(
+                f"OOF entry '{key}' has {len(scores)} fold scores, expected {n_splits}"
+            )
 
         # SHAP audit: leaked_features key should be written
-        branch_name = entry.get("branch_name", key.replace("branch_", "").replace("_oof", ""))
+        branch_name = entry.get(
+            "branch_name", key.replace("branch_", "").replace("_oof", "")
+        )
         shap_audit_key = f"shap_leaked_features_{branch_name}"
         if shap_audit_key not in state:
             # Check for leaked_features block by branch scan in state
             leaked = state.get("leaked_features", {})
             if isinstance(leaked, dict) and branch_name not in leaked:
-                findings.append(f"SHAP leak audit not found for branch '{branch_name}' (expected key '{shap_audit_key}')")
+                findings.append(
+                    f"SHAP leak audit not found for branch '{branch_name}' (expected key '{shap_audit_key}')"
+                )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="specific", verdict=verdict, findings=findings)
@@ -397,7 +495,9 @@ def _eval_phase3a_specific(config: dict, state: dict) -> LensResult:
 def _eval_phase3a_generalisation(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
-    branch_oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof")]
+    branch_oof_keys = [
+        k for k in state if k.startswith("branch_") and k.endswith("_oof")
+    ]
 
     for key in branch_oof_keys:
         entry = state.get(key, {})
@@ -410,7 +510,9 @@ def _eval_phase3a_generalisation(config: dict, state: dict) -> LensResult:
     if isinstance(leaked, dict):
         for branch_name, features in leaked.items():
             if features and len(features) > 0:
-                findings.append(f"branch '{branch_name}' has leaked features: {features} — should be blocked")
+                findings.append(
+                    f"branch '{branch_name}' has leaked features: {features} — should be blocked"
+                )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="generalisation", verdict=verdict, findings=findings)
@@ -419,6 +521,7 @@ def _eval_phase3a_generalisation(config: dict, state: dict) -> LensResult:
 # ---------------------------------------------------------------------------
 # Phase 3B evaluators
 # ---------------------------------------------------------------------------
+
 
 def _eval_phase3b_general(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
@@ -440,15 +543,16 @@ def _eval_phase3b_general(config: dict, state: dict) -> LensResult:
 def _eval_phase3b_specific(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
-    gate2 = state.get("human_gate_2_by_branch", {})
     promoted = state.get("promoted_branches", [])
 
     for branch in promoted:
-        branch_key = f"{branch}_approved"
-        if branch_key not in gate2:
-            findings.append(f"human_gate_2_by_branch missing entry for promoted branch '{branch}'")
-        elif gate2[branch_key] is not True:
-            findings.append(f"human_gate_2_by_branch.{branch_key} is not true")
+        gate_key = f"human_gate_2_{branch}_approved"
+        if gate_key not in state:
+            findings.append(
+                f"Missing flat gate key '{gate_key}' for promoted branch '{branch}'"
+            )
+        elif state.get(gate_key) is not True:
+            findings.append(f"Flat gate key '{gate_key}' is not approved")
 
     if state.get("human_gate_3_approved") is not True:
         findings.append("human_gate_3_approved is not true — fusion not authorized")
@@ -457,7 +561,9 @@ def _eval_phase3b_specific(config: dict, state: dict) -> LensResult:
     diversity = state.get("diversity_check")
     if diversity is not None:
         if isinstance(diversity, dict) and diversity.get("max_correlation", 0) > 0.95:
-            findings.append(f"diversity check max_correlation={diversity['max_correlation']} exceeds 0.95 threshold")
+            findings.append(
+                f"diversity check max_correlation={diversity['max_correlation']} exceeds 0.95 threshold"
+            )
 
     verdict = "PASS" if not findings else "FAIL"
     return LensResult(lens="specific", verdict=verdict, findings=findings)
@@ -466,23 +572,265 @@ def _eval_phase3b_specific(config: dict, state: dict) -> LensResult:
 def _eval_phase3b_generalisation(config: dict, state: dict) -> LensResult:
     findings: List[str] = []
 
+    # Check for legacy dictionary container
+    if "human_gate_2_by_branch" in state:
+        findings.append(
+            "human_gate_2_by_branch container discovered — legacy dictionary formats are rejected"
+        )
+
     # Pseudo-label retraining: augmented OOF namespace check
     pseudo = state.get("pseudo_label_result", {})
     if pseudo.get("retraining_required") is True:
         # Check augmented anchor OOF is present
-        anchor_augmented = state.get("branch_anchor_oof_augmented") or state.get("branch_anchor_oof_augmented_score")
+        state.get("branch_anchor_oof_augmented") or state.get(
+            "branch_anchor_oof_augmented_score"
+        )
         if not any(k for k in state if k.endswith("_augmented")):
-            findings.append("pseudo_label retraining required but no augmented OOF entries found in state")
+            findings.append(
+                "pseudo_label retraining required but no augmented OOF entries found in state"
+            )
 
     # Fusion uses most recent OOF arrays only — check timestamp ordering
     fusion = state.get("fusion_strategy", {})
     if isinstance(fusion, dict) and fusion.get("oof_source") == "augmented":
         # If fusion uses augmented, ensure non-augmented originals exist
-        branch_oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof") and not k.endswith("_augmented")]
+        branch_oof_keys = [
+            k
+            for k in state
+            if k.startswith("branch_")
+            and k.endswith("_oof")
+            and not k.endswith("_augmented")
+        ]
         if not branch_oof_keys:
-            findings.append("fusion uses augmented OOF but no original (non-augmented) OOF entries found")
+            findings.append(
+                "fusion uses augmented OOF but no original (non-augmented) OOF entries found"
+            )
 
     verdict = "PASS" if not findings else "FAIL"
+    return LensResult(lens="generalisation", verdict=verdict, findings=findings)
+
+
+def _get_state_val(state: Any, key: str, default: Any = None) -> Any:
+    if isinstance(state, dict):
+        return state.get(key, default)
+    if hasattr(state, "read"):
+        try:
+            return state.read().get(key, default)
+        except Exception:
+            pass
+    if hasattr(state, "get"):
+        return state.get(key, default)
+    return default
+
+
+def _get_state_keys(state: Any) -> List[str]:
+    if isinstance(state, dict):
+        return list(state.keys())
+    if hasattr(state, "read"):
+        try:
+            return list(state.read().keys())
+        except Exception:
+            pass
+    if hasattr(state, "keys"):
+        return list(state.keys())
+    if hasattr(state, "_state") and isinstance(state._state, dict):
+        return list(state._state.keys())
+    return []
+
+
+def _eval_phase4_general(config: dict, state: dict) -> LensResult:
+    findings: List[str] = []
+    verdict = "PASS"
+
+    # 1. Verify Standardized 5-Gate Sequence (Enforcing Flat-Key Format Only)
+    # Check Gate 1, 3, 4
+    for gate in [
+        "human_gate_1_approved",
+        "human_gate_3_approved",
+        "human_gate_4_approved",
+    ]:
+        val = _get_state_val(state, gate)
+        is_app = False
+        if val:
+            if isinstance(val, dict):
+                is_app = bool(val.get("approved", False))
+            elif isinstance(val, str):
+                is_app = len(val) > 0
+            elif isinstance(val, bool):
+                is_app = val
+        if not is_app:
+            findings.append(f"Hard block: {gate} is not approved.")
+            verdict = "FAIL"
+
+    # Check Gate 5
+    gate5_val = _get_state_val(state, "human_gate_5_selection")
+    is_gate5_app = False
+    if gate5_val:
+        if isinstance(gate5_val, dict):
+            is_gate5_app = bool(gate5_val.get("approved", False))
+        elif isinstance(gate5_val, str):
+            is_gate5_app = len(gate5_val) > 0
+        elif isinstance(gate5_val, bool):
+            is_gate5_app = gate5_val
+        elif isinstance(gate5_val, list):
+            is_gate5_app = len(gate5_val) > 0
+
+    if not is_gate5_app:
+        findings.append("Hard block: human_gate_5_selection array is empty or missing.")
+        verdict = "FAIL"
+
+    # Strict Check for Gate 2 flat boolean format across active branches
+    state_keys = _get_state_keys(state)
+
+    if "human_gate_2_by_branch" in state_keys:
+        findings.append(
+            "Contract Violation: Legacy 'human_gate_2_by_branch' dict detected. "
+            "Migrate to flat keys. Please rerun the schema migration script."
+        )
+        verdict = "FAIL"
+
+    # Check for nested dictionary structure under any human_gate_2_ key
+    for k in state_keys:
+        if k.startswith("human_gate_2_"):
+            val = _get_state_val(state, k)
+            if isinstance(val, dict):
+                findings.append(
+                    f"Contract Violation: Nested dictionary found in gate key '{k}'. "
+                    "Migrate to flat keys. Please rerun the schema migration script."
+                )
+                verdict = "FAIL"
+
+    flat_gate2_found = any(
+        k.startswith("human_gate_2_") and k.endswith("_approved") for k in state_keys
+    )
+    if not flat_gate2_found:
+        findings.append(
+            "Hard block: No valid flat human_gate_2_{branch}_approved keys found in state."
+        )
+        verdict = "FAIL"
+    else:
+        # Check that all discovered branch keys are explicitly true
+        for k in state_keys:
+            if k.startswith("human_gate_2_") and k.endswith("_approved"):
+                if not _get_state_val(state, k, False):
+                    findings.append(
+                        f"Hard block: Branch authorization key '{k}' evaluates to False."
+                    )
+                    verdict = "FAIL"
+
+    # 2. Verify Governance Report Existence and Schema Structure
+    w_root = config.get("workspace_root", "")
+    if w_root:
+        report_path = Path(w_root) / "reports" / "final_selections.json"
+    else:
+        from zindian.paths import resolve_competition_paths
+
+        paths = resolve_competition_paths(config.get("slug"))
+        report_path = paths.reports_dir / "final_selections.json"
+
+    if not report_path.exists():
+        findings.append(f"Missing Governance Report at path: {report_path.as_posix()}")
+        verdict = "FAIL"
+    else:
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                report_data = json.load(f)
+            required_keys = {"slug", "locked_at", "selections", "rationale"}
+            if not required_keys.issubset(report_data.keys()):
+                missing = required_keys - report_data.keys()
+                findings.append(
+                    f"Schema violation in final_selections.json. Missing keys: {missing}"
+                )
+                verdict = "FAIL"
+            if not report_data.get("selections") or not report_data.get("rationale"):
+                findings.append(
+                    "Governance Report content failure: 'selections' or 'rationale' blocks are empty."
+                )
+                verdict = "FAIL"
+        except json.JSONDecodeError:
+            findings.append(
+                "Governance Report file corruption: 'final_selections.json' is invalid JSON."
+            )
+            verdict = "FAIL"
+        except Exception as e:
+            findings.append(f"Governance Report read failure: {e}")
+            verdict = "FAIL"
+
+    # 3. Verify Budget Restrictions
+    if _get_state_val(state, "submission_blocked", False):
+        findings.append(
+            "Hard block: 'submission_blocked' flag is active in execution state."
+        )
+        verdict = "FAIL"
+
+    return LensResult(lens="general", verdict=verdict, findings=findings)
+
+
+def _eval_phase4_specific(config: dict, state: dict) -> LensResult:
+    findings: List[str] = []
+    verdict = "PASS"
+
+    # 1. Verify Permanent Structural State Lock
+    if not _get_state_val(state, "selected_submissions_final", False):
+        findings.append(
+            "Hard block: Structural lock 'selected_submissions_final' is absent or False."
+        )
+        verdict = "FAIL"
+
+    # 2. Verify Selection Array Boundary Limits
+    selections = _get_state_val(state, "selected_submissions", [])
+    if not isinstance(selections, list) or len(selections) != 2:
+        findings.append(
+            f"Validation failure: 'selected_submissions' must contain exactly 2 entries (found: {len(selections) if isinstance(selections, list) else 0})."
+        )
+        verdict = "FAIL"
+    else:
+        for idx, entry in enumerate(selections):
+            if not isinstance(entry, dict) or (
+                "file" not in entry and "filename" not in entry
+            ):
+                findings.append(
+                    f"Schema anomaly in 'selected_submissions' index {idx}: missing file identifiers."
+                )
+                verdict = "FAIL"
+
+    return LensResult(lens="specific", verdict=verdict, findings=findings)
+
+
+def _eval_phase4_generalisation(config: dict, state: dict) -> LensResult:
+    findings: List[str] = []
+    verdict = "PASS"
+
+    # 1. Verify Reproducibility Audit Completion Status
+    audit_res = _get_state_val(state, "reproducibility_audit")
+    audit_success = False
+    if isinstance(audit_res, dict):
+        audit_success = audit_res.get("success", False)
+    elif isinstance(audit_res, bool):
+        audit_success = audit_res
+
+    if not audit_success:
+        findings.append(
+            "Hard block: 'reproducibility_audit.success' token is absent or evaluating to False."
+        )
+        verdict = "FAIL"
+
+    # 2. Verify Long-Term Shared Repository History Logs
+    w_root = config.get("workspace_root", "")
+    if w_root:
+        history_path = Path(w_root) / "competition_history" / "history_log.jsonl"
+    else:
+        from zindian.paths import resolve_competition_paths
+
+        paths = resolve_competition_paths(config.get("slug"))
+        history_path = paths.root / "competition_history" / "history_log.jsonl"
+
+    if not history_path.exists():
+        findings.append(
+            f"Verification failure: Cross-competition track file missing at '{history_path.as_posix()}'."
+        )
+        verdict = "FAIL"
+
     return LensResult(lens="generalisation", verdict=verdict, findings=findings)
 
 
@@ -491,18 +839,46 @@ def _eval_phase3b_generalisation(config: dict, state: dict) -> LensResult:
 # ---------------------------------------------------------------------------
 
 _PHASE_EVALUATORS = {
-    "phase_1": (_eval_phase1_general, _eval_phase1_specific, _eval_phase1_generalisation),
-    "phase_2a": (_eval_phase2a_general, _eval_phase2a_specific, _eval_phase2a_generalisation),
-    "phase_2b": (_eval_phase2b_general, _eval_phase2b_specific, _eval_phase2b_generalisation),
-    "phase_3a": (_eval_phase3a_general, _eval_phase3a_specific, _eval_phase3a_generalisation),
-    "phase_3b": (_eval_phase3b_general, _eval_phase3b_specific, _eval_phase3b_generalisation),
+    "phase_1": (
+        _eval_phase1_general,
+        _eval_phase1_specific,
+        _eval_phase1_generalisation,
+    ),
+    "phase_2a": (
+        _eval_phase2a_general,
+        _eval_phase2a_specific,
+        _eval_phase2a_generalisation,
+    ),
+    "phase_2b": (
+        _eval_phase2b_general,
+        _eval_phase2b_specific,
+        _eval_phase2b_generalisation,
+    ),
+    "phase_3a": (
+        _eval_phase3a_general,
+        _eval_phase3a_specific,
+        _eval_phase3a_generalisation,
+    ),
+    "phase_3b": (
+        _eval_phase3b_general,
+        _eval_phase3b_specific,
+        _eval_phase3b_generalisation,
+    ),
+    "phase_4": (
+        _eval_phase4_general,
+        _eval_phase4_specific,
+        _eval_phase4_generalisation,
+    ),
 }
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def evaluate_three_lenses(phase: str, config: dict, state: SkillStateStore) -> ThreeLensReport:
+
+def evaluate_three_lenses(
+    phase: str, config: dict, state: SkillStateStore
+) -> ThreeLensReport:
     """Evaluate all three lenses for a given phase.
 
     Args:
@@ -516,7 +892,16 @@ def evaluate_three_lenses(phase: str, config: dict, state: SkillStateStore) -> T
     Raises:
         ValueError: If phase is not in SUPPORTED_PHASES.
     """
-    phase_norm = phase.lower()
+    phase_norm = phase.lower().replace("_", "")
+    mapping = {
+        "phase1": "phase_1",
+        "phase2a": "phase_2a",
+        "phase2b": "phase_2b",
+        "phase3a": "phase_3a",
+        "phase3b": "phase_3b",
+        "phase4": "phase_4",
+    }
+    phase_norm = mapping.get(phase_norm, phase_norm)
 
     if phase_norm not in SUPPORTED_PHASES:
         raise ValueError(

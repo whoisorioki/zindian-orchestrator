@@ -23,20 +23,20 @@ from zindian.config import ChallengeConfig
 
 
 def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
+    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
+    if tiff_path.exists():
+        return tiff_path
+
+    if os.environ.get("ZINDIAN_DISABLE_NETWORK") or not allow_network:
+        raise RuntimeError("Network fetch disabled and TerraClimate tiff missing")
+
     import pystac_client
     import planetary_computer
     import xarray as xr
     import rasterio
     from rasterio.transform import from_bounds
 
-    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
     cache_dir = paths.data_processed_dir / "tc_cache"
-
-    if tiff_path.exists():
-        return tiff_path
-
-    if os.environ.get("ZINDIAN_DISABLE_NETWORK") or not allow_network:
-        raise RuntimeError("Network fetch disabled and TerraClimate tiff missing")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     tiff_path.parent.mkdir(parents=True, exist_ok=True)

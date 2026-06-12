@@ -7,9 +7,10 @@ competition `challenge_config.json` `cv_strategy` block.
 The helpers do NOT write to `challenge_config.json` — they only read
 and return splitter objects or split iterators.
 """
+
 from __future__ import annotations
 
-from typing import Iterable, Iterator, Tuple
+from typing import Iterator, Tuple
 
 import numpy as np
 from sklearn.model_selection import (
@@ -45,12 +46,12 @@ def make_cv_splitter(
     n = n_splits or strat.get("n_splits", 5)
     # Resolve seed: prefer caller-provided `random_seed`, then strategy values,
     # finally fall back to the canonical `reproducibility.seed` via `get_seed()`.
+    seed: int
     if random_seed is not None:
         seed = random_seed
     else:
-        seed = strat.get("random_seed", strat.get("seed", None))
-        if seed is None:
-            seed = get_seed()
+        val = strat.get("random_seed", strat.get("seed", None))
+        seed = int(val) if val is not None else get_seed()
 
     if ctype in ("stratified", "strat", "stratify"):
         return StratifiedKFold(n_splits=int(n), shuffle=True, random_state=int(seed))
@@ -64,12 +65,13 @@ def get_cv_splits(
     y: np.ndarray,
     groups: np.ndarray | None = None,
     cv_strategy: dict | None = None,
+    random_seed: int | None = None,
 ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
     """Yield (train_idx, val_idx) pairs according to the cv strategy.
 
     If `cv_strategy` indicates a group CV, `groups` must be provided.
     """
-    splitter = make_cv_splitter(cv_strategy=cv_strategy)
+    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=random_seed)
     if isinstance(splitter, GroupKFold) and groups is None:
         raise ValueError("Group CV requires `groups` to be provided")
     return splitter.split(X, y, groups) if groups is not None else splitter.split(X, y)

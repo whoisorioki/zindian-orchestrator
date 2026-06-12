@@ -24,27 +24,30 @@ import subprocess
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import pandas as pd
 
-ROOT      = Path(__file__).parent.parent
-COMP_DIR  = ROOT / "competitions" / "ey-frogs"
-DATA_RAW  = COMP_DIR / "data" / "raw"
+ROOT = Path(__file__).parent.parent
+COMP_DIR = ROOT / "competitions" / "ey-frogs"
+DATA_RAW = COMP_DIR / "data" / "raw"
 DATA_PROC = COMP_DIR / "data" / "processed"
-SUBS_DIR  = COMP_DIR / "submissions"
-SKILLS    = ROOT / "zindian" / "skills"
+SUBS_DIR = COMP_DIR / "submissions"
+SKILLS = ROOT / "zindian" / "skills"
 
 PASS = "✅"
 FAIL = "❌"
 WARN = "⚠️ "
 
-errors   = []
+errors = []
 warnings = []
 
 
 def section(title: str):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 def ok(msg: str):
@@ -69,7 +72,7 @@ if not config_path.exists():
     fail(f"challenge_config.json not found at {config_path}")
     config = {}
 else:
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     ok(f"Found: {config_path}")
 
     slug = config.get("slug")
@@ -85,8 +88,10 @@ else:
     print(f"  allowed_external  : {allowed_ext}")
 
     if slug == "ey-frogs":
-        warn("slug='ey-frogs' — internal folder name, not real Zindi slug. "
-             "Should be 'ey-biodiversity-challenge'")
+        warn(
+            "slug='ey-frogs' — internal folder name, not real Zindi slug. "
+            "Should be 'ey-biodiversity-challenge'"
+        )
     elif slug == "ey-biodiversity-challenge":
         ok("slug = 'ey-biodiversity-challenge' ✓")
     else:
@@ -105,7 +110,9 @@ else:
     if use_probs is True and metric in ("f1", "F1", "f1_score"):
         fail("CONFLICT: use_probabilities=True but metric=F1 requires hard 0/1 labels")
     if use_probs is False and metric in ("logloss", "log_loss", "auc"):
-        fail(f"CONFLICT: use_probabilities=False but metric={metric} needs probabilities")
+        fail(
+            f"CONFLICT: use_probabilities=False but metric={metric} needs probabilities"
+        )
 
 
 # ── 2. SKILL_STATE.json ────────────────────────────────────────────────────────
@@ -116,18 +123,18 @@ if not state_path.exists():
     fail(f"SKILL_STATE.json not found at {state_path}")
     state = {}
 else:
-    state = json.loads(state_path.read_text())
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     ok(f"Found: {state_path}")
 
-    dag_phase    = state.get("dag_phase")
-    branch       = state.get("current_git_branch")
-    anchor_rmse  = state.get("anchor_oof_rmse")
-    anchor_auc   = state.get("anchor_oof_auc")
-    anchor_lb    = state.get("anchor_lb_score")
-    subs_today   = state.get("submissions_used_today")
-    subs_total   = state.get("submissions_used_total")
-    remaining    = state.get("remaining_submissions")
-    selected     = state.get("selected_submissions", [])
+    dag_phase = state.get("dag_phase")
+    branch = state.get("current_git_branch")
+    anchor_rmse = state.get("anchor_oof_rmse")
+    anchor_auc = state.get("anchor_oof_auc")
+    anchor_lb = state.get("anchor_lb_score")
+    subs_today = state.get("submissions_used_today")
+    subs_total = state.get("submissions_used_total")
+    remaining = state.get("remaining_submissions")
+    selected = state.get("selected_submissions", [])
     use_probs_st = state.get("use_probabilities")
 
     print(f"\n  dag_phase            : {dag_phase}")
@@ -163,14 +170,13 @@ else:
     print(f"\n  Shape   : {sample.shape}")
     print(f"  Columns : {list(sample.columns)}")
     print(f"  Dtypes  :\n{sample.dtypes.to_string()}")
-    print(f"\n  First 3 rows:")
+    print("\n  First 3 rows:")
     print(sample.head(3).to_string(index=False))
 
     pred_col = [c for c in sample.columns if c.upper() != "ID"]
     if pred_col:
         vals = sample[pred_col[0]]
-        print(f"\n  Prediction col '{pred_col[0]}' range: "
-              f"[{vals.min()}, {vals.max()}]")
+        print(f"\n  Prediction col '{pred_col[0]}' range: [{vals.min()}, {vals.max()}]")
         unique = set(vals.unique())
         if unique.issubset({0, 1, 0.0, 1.0}):
             ok("SampleSubmission values are 0/1 — hard labels expected")
@@ -195,10 +201,23 @@ else:
     else:
         ok("No ws columns found ✓")
 
-    spatial_derived = [c for c in ft.columns
-                       if any(x in c.lower() for x in
-                              ["distance", "cluster", "bin", "h3", "poly",
-                               "interact", "lat_lon", "lon_lat"])]
+    spatial_derived = [
+        c
+        for c in ft.columns
+        if any(
+            x in c.lower()
+            for x in [
+                "distance",
+                "cluster",
+                "bin",
+                "h3",
+                "poly",
+                "interact",
+                "lat_lon",
+                "lon_lat",
+            ]
+        )
+    ]
     if spatial_derived:
         fail(f"Derived spatial columns detected — BANNED: {spatial_derived}")
     else:
@@ -228,11 +247,12 @@ else:
 
     # Column parity with train (excluding target)
     if ft_path.exists():
-        train_non_target = [c for c in ft.columns
-                            if c not in ("Occurrence Status", "Target")]
+        train_non_target = [
+            c for c in ft.columns if c not in ("Occurrence Status", "Target")
+        ]
         test_cols = list(ftest.columns)
         missing_in_test = set(train_non_target) - set(test_cols)
-        extra_in_test   = set(test_cols) - set(train_non_target)
+        extra_in_test = set(test_cols) - set(train_non_target)
         if missing_in_test:
             fail(f"Columns in train but not test: {missing_in_test}")
         if extra_in_test:
@@ -263,9 +283,7 @@ else:
 
             # Row count
             if len(sub) != len(sample):
-                sub_errors.append(
-                    f"rows {len(sub)} ≠ expected {len(sample)}"
-                )
+                sub_errors.append(f"rows {len(sub)} ≠ expected {len(sample)}")
 
         # Value check
         pred_col = [c for c in sub.columns if c.upper() != "ID"]
@@ -280,7 +298,9 @@ else:
                         "thresholded (0/1 only) but use_probabilities=True"
                     )
                 if vals.min() < 0 or vals.max() > 1:
-                    sub_errors.append(f"values out of [0,1]: [{vals.min():.4f}, {vals.max():.4f}]")
+                    sub_errors.append(
+                        f"values out of [0,1]: [{vals.min():.4f}, {vals.max():.4f}]"
+                    )
             else:
                 # Expect hard labels
                 invalid = unique - {0, 1, 0.0, 1.0}
@@ -302,15 +322,14 @@ skill08 = SKILLS / "skill_08_anchor.py"
 if not skill08.exists():
     fail(f"skill_08_anchor.py not found at {skill08}")
 else:
-    src = skill08.read_text()
+    src = skill08.read_text(encoding="utf-8")
 
     # Check if Check 8 is use_probabilities aware
     if "use_probabilities" in src and "issubset" in src:
         # Check if it's inside a use_probabilities conditional
         lines = src.splitlines()
         check8_lines = [
-            (i, l) for i, l in enumerate(lines, 1)
-            if "issubset" in l
+            (i, line) for i, line in enumerate(lines, 1) if "issubset" in line
         ]
         for lineno, line in check8_lines:
             print(f"\n  Check 8 found at line {lineno}:")
@@ -326,11 +345,15 @@ else:
             if "use_probabilities=False" in src or "hard" in src.lower():
                 ok("Check 8 appears use_probabilities aware (has else branch)")
             else:
-                fail("Check 8 blocks thresholded submissions regardless of "
-                     "use_probabilities — will block F1 submissions (hard 0/1 labels)")
+                fail(
+                    "Check 8 blocks thresholded submissions regardless of "
+                    "use_probabilities — will block F1 submissions (hard 0/1 labels)"
+                )
         else:
-            fail("Check 8 not inside use_probabilities conditional — "
-                 "will block correct F1 submissions")
+            fail(
+                "Check 8 not inside use_probabilities conditional — "
+                "will block correct F1 submissions"
+            )
     else:
         warn("Could not find Check 8 (issubset) in skill_08_anchor.py")
 
@@ -340,14 +363,12 @@ section("8. Git Branch State")
 
 try:
     branch_out = subprocess.run(
-        ["git", "branch", "-v"],
-        capture_output=True, text=True, cwd=ROOT
+        ["git", "branch", "-v"], capture_output=True, text=True, cwd=ROOT
     ).stdout
     print(branch_out)
 
     log_out = subprocess.run(
-        ["git", "log", "--oneline", "-5"],
-        capture_output=True, text=True, cwd=ROOT
+        ["git", "log", "--oneline", "-5"], capture_output=True, text=True, cwd=ROOT
     ).stdout
     print(log_out)
 except Exception as e:

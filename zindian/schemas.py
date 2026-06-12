@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Tuple
 
 
 @dataclass(frozen=False)
@@ -85,13 +85,22 @@ def validate_challenge_config(obj: Any) -> Dict[str, Any]:
 
     # Minimal sanity checks; do not over-constrain (Zindi pages vary).
     if obj.get("metric_direction") not in (None, "minimize", "maximize"):
-        raise ValidationError("must be 'minimize' or 'maximize' or null", path="challenge_config.metric_direction")
+        raise ValidationError(
+            "must be 'minimize' or 'maximize' or null",
+            path="challenge_config.metric_direction",
+        )
     if not isinstance(obj.get("use_probabilities"), bool):
-        raise ValidationError("must be boolean", path="challenge_config.use_probabilities")
+        raise ValidationError(
+            "must be boolean", path="challenge_config.use_probabilities"
+        )
     if not isinstance(obj.get("allowed_external_data"), bool):
-        raise ValidationError("must be boolean", path="challenge_config.allowed_external_data")
+        raise ValidationError(
+            "must be boolean", path="challenge_config.allowed_external_data"
+        )
     if not isinstance(obj.get("automl_permitted"), bool):
-        raise ValidationError("must be boolean", path="challenge_config.automl_permitted")
+        raise ValidationError(
+            "must be boolean", path="challenge_config.automl_permitted"
+        )
     return obj
 
 
@@ -110,4 +119,3 @@ def skill_state_skeleton() -> Dict[str, Any]:
         "selected_submissions": [],
         "last_updated": None,
     }
-

@@ -14,7 +14,7 @@ def _find_state_subscript_reads(path: Path):
                 # its ctx will be ast.Load when used in expressions
                 # We treat any Subscript as potentially unsafe read; assignments
                 # to state[...] are allowed (they appear as targets elsewhere).
-                parent = getattr(node, 'ctx', None)
+                getattr(node, "ctx", None)
                 # Conservative: treat all Subscript uses as reads unless it's
                 # directly inside an Assign target list. We'll detect load
                 # context by checking ancestor usage via AST nodes.

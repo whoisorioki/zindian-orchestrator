@@ -30,17 +30,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from zindian.paths import resolve_competition_paths
-from zindian.state import SkillStateStore
-
-
 # ── Prerequisite gate keys ──────────────────────────────────────────
 
 PREREQUISITE_GATES = [
-    "human_gate_1_approved",         # Anchor evaluation before variant generation
-    "human_gate_2_approved",         # Per-branch promotion approvals
-    "human_gate_3_approved",         # Before skill_13 oracle fusion
-    "human_gate_4_approved",         # Before skill_14 inference formatting
+    "human_gate_1_approved",  # Anchor evaluation before variant generation
+    "human_gate_2_approved",  # Per-branch promotion approvals
+    "human_gate_3_approved",  # Before skill_13 oracle fusion
+    "human_gate_4_approved",  # Before skill_14 inference formatting
 ]
 
 FINAL_GATE_KEY = "human_gate_5_selection"  # Final private LB pair
@@ -57,9 +53,7 @@ def _apply_structural_lock(state: Dict[str, Any]) -> Dict[str, Any]:
     sentinel keyed at state["selected_submissions_final"].
     """
     state["selected_submissions_final"] = True
-    state["selected_submissions_locked_at"] = datetime.now(
-        timezone.utc
-    ).isoformat()
+    state["selected_submissions_locked_at"] = datetime.now(timezone.utc).isoformat()
     return state
 
 
@@ -117,9 +111,9 @@ def _human_selection_prompt(
 
     Returns the selected submissions list, or empty if cancelled.
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("HUMAN GATE 5 — Select exactly 2 submissions for private judging")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Current selections: {current_selections}")
     print()
     print(f"{'#':<4} {'Score':<18} {'Date':<12} {'File'}")
@@ -130,9 +124,9 @@ def _human_selection_prompt(
             f"{str(s.get('date', ''))[:10]:<12} {s.get('filename', '')[:35]}"
         )
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Enter two indices separated by space (e.g. '0 1') or CANCEL")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     while True:
         try:
@@ -159,14 +153,13 @@ def _human_selection_prompt(
             print(f"❌ {e}. Try again.")
             continue
 
-        print(f"\nYou selected:")
+        print("\nYou selected:")
         for i, s in enumerate(sel, 1):
-            print(
-                f"  {i}. {s.get('filename', '?')} "
-                f"(score: {s.get('score', 0):.9f})"
-            )
+            print(f"  {i}. {s.get('filename', '?')} (score: {s.get('score', 0):.9f})")
 
-        confirm = input("\nType YES to lock these as final selections: ").strip().upper()
+        confirm = (
+            input("\nType YES to lock these as final selections: ").strip().upper()
+        )
         if confirm == "YES":
             return sel
         print("Re-selecting...")
@@ -260,7 +253,9 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Write selection report
     slug = config.get("slug", "unknown")
-    report_dir = Path("reports") if slug == "unknown" else Path(f"competitions/{slug}/reports")
+    report_dir = (
+        Path("reports") if slug == "unknown" else Path(f"competitions/{slug}/reports")
+    )
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "final_selections.json"
 
@@ -269,17 +264,17 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         "locked_at": state.get("selected_submissions_locked_at", "unknown"),
         "selections": selections,
         "rationale": "Highest two public scores selected by human via Gate 5. "
-                      "Both submissions verified compliant before selection.",
+        "Both submissions verified compliant before selection.",
     }
     report_path.write_text(
         json.dumps(report, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
     )
 
-    print(f"✅ SKILL 17 COMPLETE")
+    print("✅ SKILL 17 COMPLETE")
     print(f"   Selected: {[s.get('filename') for s in selections]}")
     print(f"   Report : {report_path}")
-    print(f"   Structural lock applied — selected_submissions is final.")
+    print("   Structural lock applied — selected_submissions is final.")
 
     return state
 

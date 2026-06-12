@@ -22,6 +22,7 @@ Contract (SoT §4 / §8):
   * The skill never writes to `challenge_config.json` after Phase 1.
   * The skill never writes a `human_gate_*_approved` key.
 """
+
 from __future__ import annotations
 
 import io
@@ -38,8 +39,8 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
-
 # ── Value validation (mirrors skill_14 semantics) ─────────────────────────────
+
 
 def _validate_probability_interval(values: np.ndarray) -> list[str]:
     if values.size == 0:
@@ -66,7 +67,9 @@ def _validate_binary(values: np.ndarray) -> list[str]:
     return []
 
 
-def _validate_regression_bounds(values: np.ndarray, bounds: dict[str, Any]) -> list[str]:
+def _validate_regression_bounds(
+    values: np.ndarray, bounds: dict[str, Any]
+) -> list[str]:
     if values.size == 0:
         return []
     if not bool(np.isfinite(values).all()):
@@ -74,7 +77,9 @@ def _validate_regression_bounds(values: np.ndarray, bounds: dict[str, Any]) -> l
     lo = bounds.get("min", None)
     hi = bounds.get("max", None)
     if lo is None or hi is None:
-        return ["Regression requires target_domain_bounds.{min,max} in challenge_config.json."]
+        return [
+            "Regression requires target_domain_bounds.{min,max} in challenge_config.json."
+        ]
     if float(values.min()) < float(lo) or float(values.max()) > float(hi):
         return [
             f"Regression column out of domain bounds; got range "
@@ -109,6 +114,7 @@ def _value_validation_errors(
 
 
 # ── Public surface ─────────────────────────────────────────────────────────────
+
 
 def validate(
     sub_path: Path,
@@ -154,7 +160,9 @@ def validate(
 
     # Task-aware value validation
     if config is not None and not errors:
-        target_col = config.get("target_col") or config.get("target_column") or id_column
+        target_col = (
+            config.get("target_col") or config.get("target_column") or id_column
+        )
         target_col = str(target_col)
         task_type = str(config.get("task_type", "classification"))
         use_probs = bool(config.get("use_probabilities", False))
@@ -254,6 +262,7 @@ def _calibration_method_from_state(state: dict[str, Any], branch: str) -> str:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+
 def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
     print("\n" + "=" * 60)
     print("SKILL 16 — Submission Governance")
@@ -329,7 +338,9 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
 
     cached_remaining = int(skill_state.get("remaining_submissions") or 10)
     used_today = int(skill_state.get("submissions_used_today") or 0)
-    print(f"\nBudget (cached state): {cached_remaining} remaining | {used_today} used today")
+    print(
+        f"\nBudget (cached state): {cached_remaining} remaining | {used_today} used today"
+    )
     if cached_remaining <= 2:
         return {
             "status": "BLOCKED",
@@ -347,11 +358,10 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
     calibration_method = _calibration_method_from_state(skill_state, branch)
     git_branch = skill_state.get("current_git_branch", "unknown")
 
-    print(
-        f"""
-{'=' * 60}
+    print(f"""
+{"=" * 60}
 === HUMAN GATE: Skill 16 — Submit ===
-{'=' * 60}
+{"=" * 60}
 File              : {sub_path.name}
 Branch            : {git_branch}
 OOF F1            : {best_f1}
@@ -359,12 +369,11 @@ Reference ROC-AUC : {best_auc}
 Metric source     : {metric_source}
 Feature count     : {feature_count}
 Calibration       : {calibration_method}
-Live remaining    : {live_remaining if live_remaining >= 0 else 'unknown'}
+Live remaining    : {live_remaining if live_remaining >= 0 else "unknown"}
 Validation        : ✅ PASSED
 
 Type YES to submit or NO to abort.
-{'=' * 60}"""
-    )
+{"=" * 60}""")
     response = input("Submit? [YES/NO]: ").strip().upper()
     if response != "YES":
         print("🛑 Submission aborted by user.")
@@ -384,7 +393,8 @@ Type YES to submit or NO to abort.
     try:
         store.update(
             submissions_used_today=used_today + 1,
-            submissions_used_total=int(skill_state.get("submissions_used_total") or 0) + 1,
+            submissions_used_total=int(skill_state.get("submissions_used_total") or 0)
+            + 1,
             remaining_submissions=live_remaining - 1 if live_remaining > 0 else None,
             last_updated=now_iso,
             last_submission_comment=comment,

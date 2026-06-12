@@ -9,6 +9,8 @@ def test_planned_feature_transform_not_blocked_on_substring():
         "external_data_permitted": False,
     }
 
-    planned = [{"name": "feat1", "transforms": ["academic_demand"], "uses_lat_lon": False}]
+    planned = [
+        {"name": "feat1", "transforms": ["academic_demand"], "uses_lat_lon": False}
+    ]
     results = check_planned_features(policy, planned)
     assert results[0]["status"] != "BLOCK"

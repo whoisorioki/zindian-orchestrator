@@ -1,15 +1,18 @@
 import numpy as np
 from sklearn.datasets import make_classification
-from sklearn.ensemble import RandomForestClassifier
 import lightgbm as lgb
 import shap
 from zindian.cv import make_cv_splitter
 
 
 def test_shap_computed_per_fold():
-    X, y = make_classification(n_samples=120, n_features=6, n_informative=3, random_state=0)
+    X, y = make_classification(
+        n_samples=120, n_features=6, n_informative=3, random_state=0
+    )
     n_splits = 3
-    splitter = make_cv_splitter({"type": "stratified", "n_splits": n_splits, "random_seed": 42})
+    splitter = make_cv_splitter(
+        {"type": "stratified", "n_splits": n_splits, "random_seed": 42}
+    )
 
     per_fold_means = []
     import warnings

@@ -10,6 +10,7 @@ def test_extract_config_missing_fields_preserves_none(monkeypatch, tmp_path):
         "name": "example",
         # metric intentionally omitted
     }
+
     # Monkeypatch resolve_competition_paths to a tmp reports dir to avoid repo monitor fallback
     class DummyPaths:
         def __init__(self, reports_dir):
@@ -17,7 +18,11 @@ def test_extract_config_missing_fields_preserves_none(monkeypatch, tmp_path):
 
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir()
-    monkeypatch.setattr(skill_02_intake, "resolve_competition_paths", lambda slug=None: DummyPaths(reports_dir))
+    monkeypatch.setattr(
+        skill_02_intake,
+        "resolve_competition_paths",
+        lambda slug=None: DummyPaths(reports_dir),
+    )
 
     cfg = extract_config(data, slug="example")
     # When metric not present in API and no monitor fallback, use_probabilities should remain None

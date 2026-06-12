@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -50,11 +49,19 @@ def test_categorical_columns_follow_config_rules_without_cardinality_ceiling():
     )
     rules = {"encoded_int": "ordinal"}
 
-    categorical = _build_categorical_columns(frame, ["encoded_int", "object_col", "numeric_col"], rules)
+    categorical = _build_categorical_columns(
+        frame, ["encoded_int", "object_col", "numeric_col"], rules
+    )
 
     assert {item["name"] for item in categorical} == {"encoded_int", "object_col"}
-    assert next(item for item in categorical if item["name"] == "encoded_int")["encoding"] == "ordinal"
-    assert next(item for item in categorical if item["name"] == "object_col")["encoding"] == "one-hot or ordinal"
+    assert (
+        next(item for item in categorical if item["name"] == "encoded_int")["encoding"]
+        == "ordinal"
+    )
+    assert (
+        next(item for item in categorical if item["name"] == "object_col")["encoding"]
+        == "one-hot or ordinal"
+    )
 
 
 def test_run_raises_before_guessing_target(tmp_path, monkeypatch):

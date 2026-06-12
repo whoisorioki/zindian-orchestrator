@@ -6,11 +6,13 @@ from zindian.skills import skill_07_features as features
 
 def test_train_variant_calls_shared_trainer(monkeypatch):
     # small synthetic train/test
-    train = pd.DataFrame({
-        "ID": [1, 2, 3, 4],
-        "Occurrence Status": [0, 1, 0, 1],
-        "f1": [0.1, 0.2, 0.3, 0.4],
-    })
+    train = pd.DataFrame(
+        {
+            "ID": [1, 2, 3, 4],
+            "Occurrence Status": [0, 1, 0, 1],
+            "f1": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
     test = pd.DataFrame({"ID": [5, 6], "f1": [0.5, 0.6]})
 
     class FakeResult:
@@ -26,7 +28,9 @@ def test_train_variant_calls_shared_trainer(monkeypatch):
 
     monkeypatch.setattr(features, "train_lightgbm_cv", fake_trainer)
 
-    res = features.train_variant(train, test, ["f1"], "variant-06", anchor_f1=0.5, seed=42)
+    res = features.train_variant(
+        train, test, ["f1"], "variant-06", anchor_f1=0.5, seed=42
+    )
     assert res["variant"] == "variant-06"
     assert "oof_f1" in res and res["oof_f1"] == 0.7
     assert res["gate"] in {"PASS", "PRUNE"}

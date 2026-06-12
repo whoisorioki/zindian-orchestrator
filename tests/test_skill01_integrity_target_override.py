@@ -35,16 +35,25 @@ def test_skill01_uses_configured_target_column(tmp_path, monkeypatch):
     state_path = tmp_path / "SKILL_STATE.json"
     state_path.write_text(json.dumps(skill_state_skeleton()), encoding="utf-8")
 
-    monkeypatch.setattr(integrity, "resolve_competition_paths", lambda: SimplePaths(tmp_path))
+    monkeypatch.setattr(
+        integrity, "resolve_competition_paths", lambda: SimplePaths(tmp_path)
+    )
 
     class FakeCfg:
         def __init__(self):
-            self._data = {"target_column": "custom_target", "submission_target_column": "Prediction"}
+            self._data = {
+                "target_column": "custom_target",
+                "submission_target_column": "Prediction",
+            }
 
         def get(self, key, default=None):
             return self._data.get(key, default)
 
-    monkeypatch.setattr(integrity, "ChallengeConfig", type("C", (), {"load": staticmethod(lambda: FakeCfg())}))
+    monkeypatch.setattr(
+        integrity,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: FakeCfg())}),
+    )
 
     result = integrity.run(re_verify=False)
     assert result["target_col"] == "custom_target"

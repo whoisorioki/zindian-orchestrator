@@ -13,26 +13,23 @@ load_dotenv()
 
 
 class ZindiClient:
-
     BASE_URL = "https://api.zindi.africa/v1/competitions"
 
     def __init__(self):
         self._user = Zindian(
             username=os.getenv("ZINDI_USERNAME"),
-            fixed_password=os.getenv("ZINDI_PASSWORD")
+            fixed_password=os.getenv("ZINDI_PASSWORD"),
         )
         self._auth_token = self._user._Zindian__auth_data["auth_token"]
-        self._headers = {
-            **self._user._Zindian__headers,
-            "token": self._auth_token
-        }
+        self._headers = {**self._user._Zindian__headers, "token": self._auth_token}
         self._challenge_id = None
         print(f"✅ Logged in as: {os.getenv('ZINDI_USERNAME')}")
 
     # ── Competition Discovery ──────────────────────────────────────
 
-    def list_competitions(self, kind="competition", active=True,
-                          beginner_friendly=False) -> list:
+    def list_competitions(
+        self, kind="competition", active=True, beginner_friendly=False
+    ) -> list:
         """
         Fetch competitions directly from the API.
         Returns a list of competition dicts with keys:
@@ -53,8 +50,7 @@ class ZindiClient:
 
         # Optionally filter beginner friendly
         if beginner_friendly:
-            competitions = [c for c in competitions
-                           if c.get("is_beginner_friendly")]
+            competitions = [c for c in competitions if c.get("is_beginner_friendly")]
 
         return competitions
 
@@ -130,10 +126,7 @@ class ZindiClient:
         print(f"📝 Comment: {comment}")
         print(f"📊 Remaining before submit: {remaining}")
 
-        self._user.submit(
-            filepaths=[filepath],
-            comments=[comment]
-        )
+        self._user.submit(filepaths=[filepath], comments=[comment])
 
         rank = self._user.my_rank
         print(f"✅ Submitted. Current rank: {rank}")
@@ -155,6 +148,5 @@ class ZindiClient:
         """Download competition dataset to destination folder."""
         os.makedirs(destination, exist_ok=True)
         return self._user.download_dataset(
-            destination=destination,
-            make_destination=True
+            destination=destination, make_destination=True
         )

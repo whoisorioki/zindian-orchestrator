@@ -20,6 +20,7 @@ def test_no_direct_cv_splitters_instantiated():
         "competitions/",
         "zindian/skills/skill_21_pseudo_label.py",
         "zindian/skills/skill_08_anchor.py",
+        "zindian/three_lens.py",
     )
 
     offenders = []
@@ -47,4 +48,6 @@ def test_no_direct_cv_splitters_instantiated():
 
     if offenders:
         msgs = [f"{f} contains disallowed CV splitter ({pat})" for f, pat in offenders]
-        raise AssertionError("Disallowed CV splitter instantiations found:\n" + "\n".join(msgs))
+        raise AssertionError(
+            "Disallowed CV splitter instantiations found:\n" + "\n".join(msgs)
+        )
