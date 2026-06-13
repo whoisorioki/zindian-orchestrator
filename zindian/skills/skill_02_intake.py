@@ -15,6 +15,7 @@ import difflib
 from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.config import ConfigNotPopulated
 from zindian.state import SkillStateStore
+from zindian.schemas import validate_challenge_config
 
 BASE_URL = "https://api.zindi.africa/v1/competitions"
 
@@ -50,16 +51,36 @@ def extract_config(data: dict, slug: str) -> dict:
     metric = data.get("metric")
     metric_direction = data.get("metric_direction")
 
-    # Derive use_probabilities from metric when possible.
-    use_probabilities = None
-    if metric is not None:
+    # Determine task_type dynamically if possible
+    task_type = data.get("task_type") or data.get("type")
+    if task_type is None and metric is not None:
         m = str(metric).lower()
-        if m in ("log_loss", "logloss", "cross_entropy", "auc"):
-            use_probabilities = True
-        elif m in ("f1_score", "f1", "accuracy", "rmse", "mae"):
-            use_probabilities = False
+        if m in ("rmse", "mae", "mse", "mape", "rmsle"):
+            task_type = "regression"
+        elif m in (
+            "auc",
+            "f1_score",
+            "f1",
+            "accuracy",
+            "log_loss",
+            "logloss",
+            "cross_entropy",
+        ):
+            task_type = "classification"
         else:
-            use_probabilities = None
+            task_type = None
+
+    # Derive use_probabilities from metric when possible.
+    use_probabilities = data.get("use_probabilities")
+    if use_probabilities is None:
+        if metric is not None:
+            m = str(metric).lower()
+            if m in ("log_loss", "logloss", "cross_entropy", "auc"):
+                use_probabilities = True
+            elif m in ("f1_score", "f1", "accuracy", "rmse", "mae"):
+                use_probabilities = False
+            else:
+                use_probabilities = None
 
     # Limits and splits: take from API when provided, otherwise leave null.
     daily_limit = data.get("daily_limit")
@@ -69,7 +90,7 @@ def extract_config(data: dict, slug: str) -> dict:
 
     # Team information from the API; do NOT hardcode EY-specific overrides here.
     team_allowed = data.get("team_allowed")
-    max_team_size = data.get("max_team_size")
+    max_team_size = data.get("max_team_size") or data.get("team_size")
 
     code_review_tier = data.get("code_review_tier")
     code_review_hours = data.get("code_review_hours")
@@ -84,11 +105,21 @@ def extract_config(data: dict, slug: str) -> dict:
         "banned_features", ["derived_spatial_features", "external_spatial_data"]
     )
 
+    target_col = data.get("target_col") or data.get("target_column")
+    target_domain_bounds = data.get("target_domain_bounds") or {
+        "min": None,
+        "max": None,
+    }
+    reproducibility = data.get("reproducibility") or {"seed": 42}
+
     config = {
         "name": name,
         "slug": slug,
         "subtitle": subtitle,
         "end_time": end_time,
+        "task_type": task_type,
+        "target_col": target_col,
+        "target_domain_bounds": target_domain_bounds,
         "metric": metric,
         "metric_direction": metric_direction,
         "submission_format": data.get("submission_format"),
@@ -108,6 +139,7 @@ def extract_config(data: dict, slug: str) -> dict:
         "skills_required": skills_required,
         "banned_features": banned_features,
         "compliance_notes": [],
+        "reproducibility": reproducibility,
         "populated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -194,6 +226,29 @@ def extract_config(data: dict, slug: str) -> dict:
         except Exception as e:
             # Non-fatal; we'll handle missing metric later
             print(f"Warning: monitor fallback failed: {e}")
+
+    # Derive task_type and use_probabilities after fallback if still None
+    if config.get("task_type") is None and config.get("metric") is not None:
+        m = str(config.get("metric")).lower()
+        if m in ("rmse", "mae", "mse", "mape", "rmsle"):
+            config["task_type"] = "regression"
+        elif m in (
+            "auc",
+            "f1_score",
+            "f1",
+            "accuracy",
+            "log_loss",
+            "logloss",
+            "cross_entropy",
+        ):
+            config["task_type"] = "classification"
+
+    if config.get("use_probabilities") is None and config.get("metric") is not None:
+        m = str(config.get("metric")).lower()
+        if m in ("log_loss", "logloss", "cross_entropy", "auc"):
+            config["use_probabilities"] = True
+        elif m in ("f1_score", "f1", "accuracy", "rmse", "mae"):
+            config["use_probabilities"] = False
 
     # Derive metric_direction from metric when not provided
     if config.get("metric_direction") is None and config.get("metric") is not None:
@@ -303,6 +358,12 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
             "Derived field 'use_probabilities' is null — cannot infer from metric."
         )
 
+    # Ensure allowed_external_data and automl_permitted default to False if still None/missing
+    if final_to_write.get("allowed_external_data") is None:
+        final_to_write["allowed_external_data"] = False
+    if final_to_write.get("automl_permitted") is None:
+        final_to_write["automl_permitted"] = False
+
     if dry_run:
         print("\n--- DRY RUN: challenge_config.json that WOULD be written ---\n")
         print(json.dumps(final_to_write, indent=2))
@@ -313,7 +374,19 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
         allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1")
         if current_phase in allowed_write_phases:
             write_config(final_to_write, paths)
-            update_skill_state(slug, paths)
+            # Operator-agreed validation before advancing the DAG phase
+            try:
+                validate_challenge_config(final_to_write)
+                if final_to_write.get("task_type") and final_to_write.get("target_col"):
+                    update_skill_state(slug, paths)
+                else:
+                    print(
+                        "ℹ️  Skipping dag_phase update because task_type or target_col is still null/unconfigured."
+                    )
+            except Exception as e:
+                print(
+                    f"ℹ️  Skipping dag_phase update because config is not fully validated: {e}"
+                )
         else:
             print(
                 f"⚠️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."

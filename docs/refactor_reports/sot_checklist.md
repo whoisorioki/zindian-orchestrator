@@ -80,3 +80,29 @@ working on Zindian skills—tick off items as you implement.
   - `tests/test_three_lens.py` (Phase 4 test cases and phase lists)
   - `docs/refactor_reports/sot_checklist.md` (this entry)
 - Commit Message: `docs(sot): Batch 25 update — Phase 4 three-lens integration & documentation alignment`
+
+## Batch 26 — Wave 2 Regression Support & 5 Core Surgeries (2026-06-12)
+- Commit: *(pending)*
+- Scope: Implementation of the 5 core surgeries for Wave 2 / Regression Support.
+- Completed:
+  - [x] **Surgery 1: Phase 1 State Restructuring (Skill 04 & 06)**: Nested `target_std`, `dead_features`, and `high_corr_pairs_count` under `state["eda"]` rather than at root. Added target presence check guard before standard deviation computation.
+  - [x] **Surgery 2: Cross-Fold Telemetry Core Integration (Skill 07, 08, 12)**: Injected `fold_scores` into model_config OOF schema. Refactored Skill 12 to resolve fold score variance and OOF-to-LB delta.
+  - [x] **Surgery 3: Coercion-Safe Gate Approvals (Skill 14 & 17)**: Replaced strict string checks with coercion-safe checks that accept boolean `True`, dictionary approvals, and ISO timestamp strings.
+  - [x] **Surgery 4: Semi-Supervised Execution Optimization (Skill 21)**: Moved all guard checks (`gc1`–`gc6`) to the script entry point for fast failure. Redirected variance checks to `state["metric_analysis"]["fold_score_variance"]`.
+  - [x] **Surgery 5: Continuous Ingestion Logs (Skill 01)**: Continuous target distributions bypass binary/categorical loop and output raw continuous summary statistics.
+- Evidence:
+  - All 162 tests passed successfully under pytest.
+- Commit Message: `docs(sot): Batch 26 update — Wave 2 Regression Support & 5 Core Surgeries`
+
+## Batch 27 — Remaining Gaps & Cleanups (2026-06-13)
+- Commit: *(pending)*
+- Scope: Address remaining gaps in Intake, CV Architect, Zindi Submission, and Reproducibility Audit.
+- Completed:
+  - [x] **Skill 02 (Intake)**: Dynamically map `metric`, `use_probabilities`, `team_allowed`, and `max_team_size` from Zindi API response. Automatically default `allowed_external_data` and `automl_permitted` to `False`. Validate config before writing to disk. Restructure DAG phase advancement gate.
+  - [x] **Skill 05 (CV)**: Load continuous labels as `np.float32` to avoid casting loss. Update selection reason. Log mean/range instead of positive rate for continuous targets.
+  - [x] **Skill 16 (Zindi Submission)**: Resolve header title collision. Update validation sequence to execute the canonical 8-check structural alignment sequence (adding duplicate ID check).
+  - [x] **Skill 22 (Reproducibility)**: Normalize CV strategy prefixes (strip `config:` or `override:`) inside strategy checker to prevent false-positive mismatch warnings.
+- Evidence:
+  - Verified with `ruff format`, `ruff check`, and `mypy` type-safety.
+  - Extended test suite with `tests/test_skill22_audit.py` and submission duplicate check assertions. All 168 tests passed under pytest.
+- Commit Message: `docs(sot): Batch 27 update — Remaining Gaps & Cleanups`

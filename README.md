@@ -6,27 +6,6 @@ An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
 Every action should declare which problem it serves: Problem 1 (generic Zindian agent) or Problem 2 (EY Biodiversity execution).
 
----
-
-## 📋 Quick Status
-
-| Metric | Value |
-|--------|-------|
-| **Phase Completion** | Phase 0-1 (95%) ✅ |
-| **Code Status** | Production-ready ✅ |
-| **Skills Implemented** | 3/17 (Phase 1) ✅ |
-| **Architecture** | Competition-agnostic ✅ |
-| **External Review** | READY ✅ |
-| **MVP Timeline** | ~20-24 hours |
-
-### EY-frogs Performance History
-
-| Reference | OOF F1 | Threshold | LB |
-|-----------|--------|-----------|----|
-| Verified multi-seed blend | 0.84110 | 0.426 | 0.88350 |
-
----
-
 ## 🏗️ Architecture Overview
 
 ### Core Principles
@@ -40,14 +19,14 @@ Every action should declare which problem it serves: Problem 1 (generic Zindian 
 ### Phases
 
 ```
-Phase 0: Foundation (Wiring + Auth)              ✅ 95%
+Phase 0: Foundation (Wiring + Auth)              ✅ 100%
 Phase 1: Integrity + Intake (MD5 Lock + Config) ✅ 100%
-Phase 2: Anchor Baseline (LightGBM)             ❌ Not started
-Phase 3: Features + Calibration                 ❌ Not started
-Phase 4: Branch Gating                          ❌ Not started
-Phase 5: Fusion + Final Submit                  ❌ Not started
-Phase 6: Tabula Init CLI                        ❌ Not started
-Phase 7: Multi-competition Validation           ❌ Not started
+Phase 2: Anchor Baseline (Legality + Anchor)     ✅ 100%
+Phase 3: Features + Calibration + SHAP           ✅ 100%
+Phase 4: Gating & Submission                     ✅ 100%
+Phase 5: Fusion + Final Submit + Governance      ✅ 100%
+Phase 6: Tabula Init CLI                        ✅ 100%
+Phase 7: Multi-competition Validation           🔄 In Progress
 ```
 
 ---
@@ -55,7 +34,7 @@ Phase 7: Multi-competition Validation           ❌ Not started
 ## 📁 Project Structure
 
 ```
-zindian_orchestrator/
+zindian-orchestrator/
 ├── competitions/                     ← per-competition workspace (challenge_config + SKILL_STATE + data/)
 │   └── <slug>/
 │       ├── challenge_config.json
@@ -64,8 +43,6 @@ zindian_orchestrator/
 │       ├── notebooks/
 │       └── reports/
 ├── AGENTS.md                        Master specification (600 lines)
-├── AUDIT_REPORT.md                  Complete project audit
-├── VALIDATION_SUMMARY.md            External review checklist
 ├── CLEANUP_GUIDE.md                 Guide to remove per-competition files
 │
 ├── specs/                           Durable specifications
@@ -73,22 +50,58 @@ zindian_orchestrator/
 │   ├── design.md                    Architecture + data flow
 │   └── tasks.md                     Phase 0-5 checklist
 │
-├── zindian_orchestrator/            Python package (core logic)
+├── zindian/                         Python package (core logic)
 │   ├── state.py                     SKILL_STATE.json reader/writer
 │   ├── config.py                    challenge_config.json reader
 │   ├── ledger.py                    DuckDB wrapper
+│   ├── cv.py                        CV splits generator
+│   ├── paths.py                     Path resolver
+│   ├── schemas.py                   Schema validator
 │   ├── zindi_client.py              Zindi API wrapper (agent-mode)
 │   ├── orchestrator.py              Skill orchestration
-│   └── skills/
-│       ├── skill_01_integrity.py    ✅ MD5 hash lock
-│       ├── skill_02_intake_new.py   ✅ Config population
-│       └── skill_15_reporter.py     ✅ DuckDB init
+│   └── skills/                      All 22 implemented skills
+│       ├── skill_00_discussion_monitor.py
+│       ├── skill_00_zindi_monitor.py
+│       ├── skill_01_integrity.py
+│       ├── skill_02_intake.py
+│       ├── skill_03_legality.py
+│       ├── skill_04_eda.py
+│       ├── skill_05_cv.py
+│       ├── skill_06_cleaning.py
+│       ├── skill_07_features.py
+│       ├── skill_08_anchor.py
+│       ├── skill_09_calibration.py
+│       ├── skill_10_shap.py
+│       ├── skill_11_gate.py
+│       ├── skill_12_metric.py
+│       ├── skill_13_ensemble.py
+│       ├── skill_13_oracle_fusion.py
+│       ├── skill_14_inference.py
+│       ├── skill_15_reporter.py
+│       ├── skill_16_submit.py
+│       ├── skill_17_governance.py
+│       ├── skill_18_librarian.py
+│       ├── skill_19_code_miner.py
+│       ├── skill_20_scientist.py
+│       ├── skill_21_pseudo_label.py
+│       └── skill_22_reproducibility_audit.py
+│
+├── tabula/                          Tabula competition bootstrapper CLI
+│   ├── init.py
+│   ├── __main__.py
+│   └── __init__.py
 │
 ├── scripts/
+│   ├── bootstrap_competition.py
+│   ├── compile_requirements.sh
 │   ├── init_ledger.py               Initialize DuckDB
-│   ├── test_zindi_auth_v2.py        Zindi agent-mode test
+│   ├── inspect_zindi.py
+│   ├── preflight_enforce.py
 │   ├── test_phase_1.py              Phase 1 integration test
-│   └── verify_phase_b.py            Module verification
+│   ├── verify_competition_state.py
+│   ├── verify_phase_b.py            Module verification
+│   ├── write_oof_meta.py
+│   └── zindian_audit.sh             Orchestrator audit script
 │
 ├── templates/                       Per-competition templates
 │   ├── SKILL_STATE_template.json
@@ -121,22 +134,19 @@ cat specs/design.md
 ### 2. Install & Verify (5 min)
 
 ```bash
-# Activate venv
+# Activate venv (Unix)
 source .venv/bin/activate
 
-# Install Zindi client (critical: from correct source)
-pip uninstall zindi -y
-pip install git+https://github.com/KameniAlexNea/zindi.git
+# Activate venv (Windows PowerShell)
+.venv\Scripts\Activate.ps1
 
-# Verify auth
-python scripts/test_zindi_auth_v2.py
+# Install dependencies from pinned file
+pip install -r requirements.txt
 ```
 
 ### Manage Python dependencies (pinned)
 
-This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to
-produce a pinned `requirements.txt`. Developers should generate and commit
-`requirements.txt` after updating `requirements.in`.
+This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to produce a pinned `requirements.txt`. Developers should generate and commit `requirements.txt` after updating `requirements.in`.
 
 ```bash
 # Install the compiler
@@ -153,21 +163,24 @@ pip install -r requirements.txt
 
 ```bash
 python scripts/init_ledger.py
-ls -la reports/experiments.db  # verify created
 ```
 
-### 4. Run Phase 1 Tests (5 min)
+### 4. Run Automated Test Suite (5 min)
+
+The repository includes a comprehensive `pytest` test suite covering 44+ test files with 160+ unit and integration tests.
+
+```bash
+# Run tests inside virtualenv
+.venv\Scripts\pytest
+```
+
+### 5. Run Phase 1 Tests (5 min)
 
 ```bash
 python scripts/test_phase_1.py
-# Verify outputs in reports/
 ```
 
-### 5. Review Code (90 min)
-
-See [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) for external review checklist.
-
----
+### 6. Review Code (90 min)
 
 ## 📚 Documentation
 
@@ -177,8 +190,6 @@ See [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) for external review checklist
 | [specs/requirements.md](specs/requirements.md) | What system must do | Architects, reviewers |
 | [specs/design.md](specs/design.md) | How it works | Developers, code reviewers |
 | [specs/tasks.md](specs/tasks.md) | Task checklist | Project managers |
-| [AUDIT_REPORT.md](AUDIT_REPORT.md) | Project audit | External validators |
-| [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) | Code review guide | External reviewers |
 | [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) | Framework cleanup | DevOps/repo maintainers |
 
 ---
@@ -195,15 +206,11 @@ See [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) for external review checklist
 
 ## 🧪 Testing
 
-### Manual Tests (Ready)
-- [test_zindi_auth_v2.py](scripts/test_zindi_auth_v2.py) — Zindi API auth
-- [test_phase_1.py](scripts/test_phase_1.py) — Phase 1 skills
-- [verify_phase_b.py](scripts/verify_phase_b.py) — Core modules
-
-### Automated Tests (TODO)
-- Add pytest framework
-- Unit tests for state.py, config.py, ledger.py
-- Integration tests for skill orchestration
+### Automated Tests (pytest)
+- Comprehensive test framework with 160+ test cases.
+- Run using: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix).
+- Unit tests for: `state.py`, `config.py`, `ledger.py`, `cv.py`, `paths.py`.
+- Skill verification tests for: anchor training, gating logic, SHAP audit, pseudo-labeling.
 
 ---
 
@@ -211,21 +218,39 @@ See [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) for external review checklist
 
 ### Completed ✅
 - Architecture design
-- Phase 0-1 implementation
-- Core modules (state, config, ledger, zindi_client)
-- Skill 01, 02, 15 implementation
-- Test scripts
-- Comprehensive documentation
+- Core modules (state, config, ledger, zindi_client, paths, schemas, cv)
+- Phase 0-5 all 22 skills implemented and verified
+- Tabula Bootstrapper CLI
+- Comprehensive test suite (167 tests passing)
+- Regression Support & Secondary Metrics (Wave 2) refactor completed with scale-invariant safety guards, continuous domain post-processing, and secondary diagnostic telemetry
 
 ### In Progress 🟡
-- External code review (awaiting)
-- Phase 1 testing
-
-### Not Started ❌
-- Phase 2-7 implementation (14 skills)
-- Automated testing
-- Tabula init CLI
 - Multi-competition validation
+
+## 📈 Regression Support & Secondary Metrics
+
+The framework supports continuous prediction domains (regression tasks) with scale-invariant safety guards and rich auxiliary diagnostic tracking.
+
+### Secondary Metrics Schema
+For all regression model evaluations, the orchestrator computes and stores secondary diagnostics inside each OOF record under a nested `secondary_metrics` block to prevent schema bloat:
+```json
+"branch_variant-01_oof": {
+  "scores": [...],
+  "cv_strategy_id": "stratified",
+  "seed": 42,
+  "branch_name": "variant-01",
+  "secondary_metrics": {
+    "mae": 0.123,
+    "mape": 4.56,
+    "r2": 0.78
+  }
+}
+```
+
+### Scale-Invariant Gating (RMSE vs. RMSLE)
+To ensure robust search decisions across arbitrary target distributions, the validation gates dynamically normalize thresholds:
+- **RMSE/MAE (Continuous Original Scale):** Gate variance threshold scales by $\sigma_y^2$ (`target_std ** 2`) and gate margin scales by $\sigma_y$ (`target_std`).
+- **RMSLE (Dimensionless Log-Ratio):** Evaluated against raw thresholds with no target standard deviation scaling, since log-space metrics are naturally scale-invariant.
 
 ---
 
@@ -234,16 +259,16 @@ See [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md) for external review checklist
 The framework is **specification-driven**. To add a new skill:
 
 1. **Design** — Add to `specs/tasks.md`
-2. **Implement** — Create `zindian_orchestrator/skills/skill_XX_*.py`
-3. **Test** — Add to `scripts/test_phase_X.py`
+2. **Implement** — Create `zindian/skills/skill_XX_*.py`
+3. **Test** — Add to `tests/` or `scripts/`
 4. **Document** — Update `specs/requirements.md`
 
 ### Skill Template
 
 ```python
 """Skill XX — Description"""
-from zindian_orchestrator.config import ChallengeConfig
-from zindian_orchestrator.state import SkillStateStore
+from zindian.config import ChallengeConfig
+from zindian.state import SkillStateStore
 
 def run(
     *,
@@ -280,7 +305,6 @@ if __name__ == "__main__":
 |-------|--------|-----|
 | Zindi `select_a_challenge()` breaking | ✅ FIXED | Use `challenge_id=slug` param |
 | Competition files in framework | 📋 NOTED | See [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) |
-| Phase 2-7 not implemented | 📋 EXPECTED | Next build phase |
 
 ---
 
@@ -303,14 +327,12 @@ if __name__ == "__main__":
 
 | Phase | Timeline | Status |
 |-------|----------|--------|
-| 0-1 | ✅ Complete | Ready for review |
-| 2-5 | 🔄 Planned | Next cycle |
-| 6 | 📋 Planned | After Phase 5 |
-| 7 | 📋 Planned | After Phase 6 |
+| 0-6 | ✅ Complete | Ready for review |
+| 7 | 🔄 In Progress | Multi-competition Validation |
 
 **MVP Target**: ~3 weeks (after Phase 5 completion)
 
 ---
 
-**Last Updated**: May 4, 2026  
-**Status**: Phase 0-1 Complete, External Review Ready ✅
+**Last Updated**: June 13, 2026  
+**Status**: Phase 0-6 Complete, Regression Support Refactor Completed ✅

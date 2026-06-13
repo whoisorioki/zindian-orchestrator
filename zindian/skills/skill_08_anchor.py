@@ -99,6 +99,7 @@ def compute_oof_predictions(
     list[str],
     str,
     int,
+    list[float],
 ]:
     """
     Train LightGBM with KFold cross-validation on TerraClimate features only.
@@ -199,6 +200,7 @@ def compute_oof_predictions(
         feature_cols,
         cv_strategy_id,
         feature_count,
+        [float(score) for score in result.fold_aucs],
     )
 
 
@@ -325,19 +327,35 @@ def run(
             n_splits=n_splits,
             random_seed=random_seed,
         )
-        (
-            oof_preds,
-            test_preds,
-            oof_logloss,
-            oof_auc,
-            oof_f1,
-            best_t,
-            split_iter,
-            feature_cols,
-            cv_strategy_id,
-            feature_count,
-        ) = result
-    except TypeError:
+        if len(result) >= 11:
+            (
+                oof_preds,
+                test_preds,
+                oof_logloss,
+                oof_auc,
+                oof_f1,
+                best_t,
+                split_iter,
+                feature_cols,
+                cv_strategy_id,
+                feature_count,
+                fold_scores_list,
+            ) = result
+        else:
+            (
+                oof_preds,
+                test_preds,
+                oof_logloss,
+                oof_auc,
+                oof_f1,
+                best_t,
+                split_iter,
+                feature_cols,
+                cv_strategy_id,
+                feature_count,
+            ) = result[:10]
+            fold_scores_list = [0.0] * n_splits
+    except (TypeError, ValueError):
         # Backward compatibility for monkeypatched tests expecting the old
         # compute_oof_predictions signature.
         compat_result = cast(
@@ -364,6 +382,9 @@ def run(
                 cv_strategy_id,
                 feature_count,
             ) = compat_result[:10]
+            fold_scores_list = (
+                compat_result[10] if len(compat_result) >= 11 else [0.0] * n_splits
+            )
         elif len(compat_result) >= 6:
             oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = compat_result[
                 :6
@@ -385,6 +406,7 @@ def run(
             # without requiring valid stratification/group constraints.
             idx = np.arange(len(train), dtype=int)
             split_iter = [(idx, idx)]
+            fold_scores_list = [0.0] * n_splits
         else:
             raise RuntimeError(
                 "compute_oof_predictions returned an unexpected tuple shape"
@@ -479,6 +501,7 @@ def run(
                 if state.get("cv_strategy_override", {}).get("active", False)
                 else config.get("cv_strategy", {}).get("type")
             ),
+            "fold_scores": fold_scores_list,
         },
     )
     print(

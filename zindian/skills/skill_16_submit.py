@@ -1,6 +1,6 @@
 """
-Skill 16 — Submission Governance
-================================
+Skill 16 — Zindi Submission
+============================
 
 Validates a candidate submission, enforces the daily budget, and (after a human
 gate) submits to the Zindi platform. All metric / lineage data is read from
@@ -121,7 +121,18 @@ def validate(
     sample_path: Path,
     config: ChallengeConfig | None = None,
 ) -> list[str]:
-    """Validate submission format + task-aware value constraints."""
+    """Validate submission format + task-aware value constraints.
+
+    Executes the canonical 8-check structural alignment sequence:
+      1. Column layout check (columns match SampleSubmission exactly)
+      2. Row count check (matches SampleSubmission exactly)
+      3. ID column presence in submission
+      4. ID column presence in SampleSubmission
+      5. ID values set match check (values match SampleSubmission)
+      6. ID values order match check (order matches SampleSubmission)
+      7. Nulls check (no null values)
+      8. Duplicate IDs check (no duplicate IDs in submission)
+    """
     errors: list[str] = []
     sub = pd.read_csv(sub_path)
     sample = pd.read_csv(sample_path)
@@ -139,26 +150,42 @@ def validate(
     elif len(sample.columns) > 0:
         id_column = str(sample.columns[0])
 
-    # Column checks
+    # 1. Column layout check
     if list(sub.columns) != list(sample.columns):
         errors.append(f"Column mismatch: {list(sub.columns)} vs {list(sample.columns)}")
-    # Row count
+
+    # 2. Row count check
     if len(sub) != len(sample):
         errors.append(f"Row count: got {len(sub)}, expected {len(sample)}")
-    # ID column checks — handle missing ID gracefully
+
+    # 3. ID column presence in submission
     if id_column not in sub.columns:
         errors.append(f"Submission missing '{id_column}' column")
+
+    # 4. ID column presence in SampleSubmission
     if id_column not in sample.columns:
         errors.append(f"SampleSubmission missing '{id_column}' column")
+
+    # 5. ID values set match check
     if id_column in sub.columns and id_column in sample.columns:
         if set(sub[id_column].astype(str)) != set(sample[id_column].astype(str)):
             errors.append(f"{id_column} set mismatch vs SampleSubmission")
+
+    # 6. ID values order match check
+    if id_column in sub.columns and id_column in sample.columns:
         if list(sub[id_column].astype(str)) != list(sample[id_column].astype(str)):
             errors.append(f"{id_column} order mismatch vs SampleSubmission")
+
+    # 7. Nulls check
     if sub.isnull().any().any():
         errors.append(f"Nulls in: {sub.columns[sub.isnull().any()].tolist()}")
 
-    # Task-aware value validation
+    # 8. Duplicate IDs check
+    if id_column in sub.columns:
+        if sub[id_column].duplicated().any():
+            errors.append(f"Duplicate IDs found in submission '{id_column}' column")
+
+    # Task-aware value validation (runs only if structural validation passes)
     if config is not None and not errors:
         target_col = (
             config.get("target_col") or config.get("target_column") or id_column
@@ -265,7 +292,7 @@ def _calibration_method_from_state(state: dict[str, Any], branch: str) -> str:
 
 def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
     print("\n" + "=" * 60)
-    print("SKILL 16 — Submission Governance")
+    print("SKILL 16 — Zindi Submission")
     print("=" * 60 + "\n")
 
     paths = resolve_competition_paths()

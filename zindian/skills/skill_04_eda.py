@@ -218,10 +218,14 @@ def run():
 
     # Detect target column
     target = detect_target(paths)
+
     if target not in df.columns:
         raise ValueError(
             f"Resolved target column '{target}' is not present in the training data"
         )
+
+    # Compute standard deviation of target column
+    target_std = float(np.std(df[target].values, ddof=1))
 
     # Exclude ID, coords, and target
     exclude_lower = {"id", "id_number", "latitude", "longitude", target.lower()}
@@ -364,15 +368,27 @@ def run():
     allowed = current_phase in (None, "uninitialized", "phase_0_foundation") or (
         isinstance(current_phase, str) and current_phase.startswith("phase_1_")
     )
-    updates = {
+
+    mnar_cols = [c for c, pattern in missingness_pattern.items() if pattern == "MNAR"]
+    mcar_cols = [c for c, pattern in missingness_pattern.items() if pattern == "MCAR"]
+
+    eda_updates = {
         "eda_completed_at": datetime.now(timezone.utc).isoformat(),
         "dead_features": zero_variance,
         "high_corr_pairs_count": len(high_corr_pairs),
+        "target_std": target_std,
+        "mnar_columns": mnar_cols,
+        "mcar_columns": mcar_cols,
+    }
+
+    updates: dict[str, Any] = {
+        "eda": eda_updates,
     }
     if allowed:
         updates["dag_phase"] = "phase_1_eda_complete"
     try:
         store.update(**updates)
+
     except Exception:
         print("ERROR: failed to update SKILL_STATE.json after EDA")
         traceback.print_exc()

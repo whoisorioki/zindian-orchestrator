@@ -209,10 +209,23 @@ def run(
     skill_state = store.read() if state is None else state
 
     # ── Human Gate 4 prerequisite (SoT §4 / §8) ────────────────────────────────
-    if not bool(skill_state.get("human_gate_4_approved", False)):
+    gate_entry = skill_state.get("human_gate_4_approved")
+    approved = False
+    if gate_entry is True:
+        approved = True
+    elif isinstance(gate_entry, dict):
+        approved = bool(gate_entry.get("approved", False))
+    elif isinstance(gate_entry, str):
+        try:
+            datetime.fromisoformat(gate_entry.replace("Z", "+00:00"))
+            approved = True
+        except ValueError:
+            approved = False
+
+    if not approved:
         raise RuntimeError(
             "Human Gate 4 is not approved. Skill 14 cannot run until "
-            "skill_state['human_gate_4_approved'] is True."
+            "skill_state['human_gate_4_approved'] is approved."
         )
 
     sub_path = Path(submission_path)

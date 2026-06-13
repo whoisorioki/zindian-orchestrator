@@ -73,15 +73,21 @@ def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
     missing: List[str] = []
     for gate_key in PREREQUISITE_GATES:
         gate_entry = state.get(gate_key)
-        if not gate_entry:
+        if gate_entry is None:
             missing.append(gate_key)
             continue
-        # Gate entries should be dicts with "approved": true or similar
-        if isinstance(gate_entry, dict):
+        # Coercion-safe approval verification
+        if gate_entry is True:
+            continue
+        elif isinstance(gate_entry, dict):
             if not gate_entry.get("approved", False):
                 missing.append(gate_key)
-        # Allow plain ISO timestamp strings
-        elif not isinstance(gate_entry, str):
+        elif isinstance(gate_entry, str):
+            try:
+                datetime.fromisoformat(gate_entry.replace("Z", "+00:00"))
+            except ValueError:
+                missing.append(gate_key)
+        else:
             missing.append(gate_key)
     return missing
 
@@ -92,12 +98,21 @@ def _verify_final_gate(state: Dict[str, Any]) -> Optional[str]:
     Returns None if approved, or the reason string if not.
     """
     gate_entry = state.get(FINAL_GATE_KEY)
-    if not gate_entry:
+    if gate_entry is None:
         return f"Gate key '{FINAL_GATE_KEY}' is absent"
+    if gate_entry is True:
+        return None
     if isinstance(gate_entry, dict):
-        if not gate_entry.get("approved", False):
-            return f"Gate '{FINAL_GATE_KEY}' found but not approved"
-    return None  # approved
+        if gate_entry.get("approved", False):
+            return None
+        return f"Gate '{FINAL_GATE_KEY}' found but not approved"
+    if isinstance(gate_entry, str):
+        try:
+            datetime.fromisoformat(gate_entry.replace("Z", "+00:00"))
+            return None
+        except ValueError:
+            return f"Gate '{FINAL_GATE_KEY}' is not a valid ISO timestamp"
+    return f"Gate '{FINAL_GATE_KEY}' has invalid type: {type(gate_entry)}"
 
 
 # ── Human selection prompt ──────────────────────────────────────────

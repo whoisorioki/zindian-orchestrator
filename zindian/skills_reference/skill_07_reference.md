@@ -30,17 +30,13 @@ What it writes
 
 Current behavior notes
 ----------------------
-- Uses TerraClimate variables only.
+- Uses TerraClimate variables and spatial features.
 - Builds isolated variants rather than stacking untested feature changes.
-- Uses F1 as the active gate metric even though some comments still mention AUC.
-- Reads the anchor score from `SKILL_STATE.json` and blocks if it is missing.
+- Target-dependent feature engineering functions must enforce the two-mode contract (fold-restricted during CV, full-train during inference). Structural features (Haversine, count groups) are computed globally.
 
-Findings
---------
-- Variant naming and report text still contain a few legacy AUC labels.
-- The code still references historical variant groups that were designed around Lat/Lon, but current comments mark the compliant TerraClimate-only paths.
-- The round report is the main artifact to inspect after a feature batch.
+Audit findings & resolution status
+----------------------------------
+- **Regression OOF outputs**: [RESOLVED] Secondary metrics block generation is supported for regression.
+- **Fold Scores Mismatch**: [RESOLVED] Handled by returning validation fold metrics and appending `fold_scores` directly inside the `model_config` metadata block of the OOF schema. Backward compatibility for mock objects in older test suites is preserved via `getattr` fallbacks.
+- **Two-mode contract enforcement**: Enforced two-mode behavior on target-dependent feature encoding during cross-validation split iterations vs final model training.
 
-Notes
------
-- Treat this as the controlled feature-engineering entry point. Do not mix multiple unreviewed changes into one variant.

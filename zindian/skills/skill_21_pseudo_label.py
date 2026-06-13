@@ -30,20 +30,20 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score, roc_auc_score
+
+from zindian.config import ChallengeConfig, get_seed
 from zindian.cv import make_cv_splitter
-
-import lightgbm as lgb
-
 from zindian.paths import resolve_competition_paths
-from zindian.config import ChallengeConfig
-from zindian.state import SkillStateStore
-from zindian.state import resolve_active_cv_strategy_id
-from zindian.state import write_oof_record
-from zindian.config import get_seed
+from zindian.state import (
+    SkillStateStore,
+    resolve_active_cv_strategy_id,
+    write_oof_record,
+)
 
 # ── Locked hyperparameters (do NOT tune per-competition) ──────────────────────
 CONF_POS_DEFAULT = 0.85
@@ -399,6 +399,47 @@ def _build_guard_condition_flags(
     }
 
 
+def _resolve_initial_test_probs(state: dict[str, Any], paths: Any) -> np.ndarray | None:
+    """Find and load test probabilities of the active branch before running the loop."""
+    branch = (
+        state.get("best_variant_this_round")
+        or state.get("best_variant_branch")
+        or state.get("current_active_branch")
+        or state.get("anchor_git_branch")
+    )
+    if not branch:
+        for key in state:
+            if key.startswith("branch_") and key.endswith("_oof"):
+                branch = key.removeprefix("branch_").removesuffix("_oof")
+                break
+
+    if not branch:
+        return None
+
+    proc_dir = paths.data_processed_dir
+    reports_dir = paths.reports_dir
+
+    candidates = [
+        f"calib_test_probs_{branch}.csv",
+        f"calib_test_probs_{branch}_augmented.csv",
+        f"test_probs_{branch}.csv",
+        f"test_probs_{branch}_augmented.csv",
+    ]
+
+    for filename in candidates:
+        for base_dir in (proc_dir, reports_dir):
+            filepath = base_dir / filename
+            if filepath.exists():
+                try:
+                    df = pd.read_csv(filepath)
+                    pcols = [c for c in df.columns if c != "ID"]
+                    if pcols:
+                        return df[pcols[0]].to_numpy()
+                except Exception:
+                    pass
+    return None
+
+
 # ── Run loop ──────────────────────────────────────────────────────────────────
 
 
@@ -441,6 +482,80 @@ def run(dry_run: bool = False) -> dict:
         msg = f"Pseudo-labeling is strictly prohibited for task_type '{task_type}'. Classification only."
         print(f"ERROR: {msg}")
         raise ValueError(msg)
+
+    # ── Early Guard Check Block ──────────────────────────────────────────────
+    cv_strategy = _resolve_active_cv_strategy(config, state)
+    cv_strategy_type = (
+        cv_strategy.get("type") if isinstance(cv_strategy, dict) else None
+    )
+
+    leaked_features = state.get("leaked_features") if isinstance(state, dict) else []
+    if not isinstance(leaked_features, list):
+        leaked_features = []
+
+    fold_variance = None
+    variance_threshold = None
+    metric_analysis = state.get("metric_analysis") if isinstance(state, dict) else None
+    if isinstance(metric_analysis, dict):
+        v = metric_analysis.get("fold_score_variance")
+        if isinstance(v, (int, float)):
+            fold_variance = float(v)
+    cfg_vt = config.get("variance_gate_threshold")
+    if isinstance(cfg_vt, (int, float)):
+        variance_threshold = float(cfg_vt)
+
+    calibration_present = (
+        bool(state.get("calibration_method"))
+        or bool(state.get("calibration_written_at"))
+        or bool(state.get("last_calibration_method"))
+        or bool(state.get("last_calibration_at"))
+    )
+
+    conf_pos, conf_neg, threshold = _resolve_threshold(config)
+    initial_test_probs = _resolve_initial_test_probs(state, paths)
+    confidence_threshold_met = bool(
+        initial_test_probs is not None and float(initial_test_probs.max()) >= conf_pos
+    )
+
+    early_guard_flags = _build_guard_condition_flags(
+        classification=True,
+        cv_strategy_type=cv_strategy_type,
+        leaked_features=leaked_features,
+        fold_variance=fold_variance,
+        variance_threshold=variance_threshold,
+        calibration_present=calibration_present,
+        confidence_threshold_met=confidence_threshold_met,
+    )
+    early_guard_conditions_met = all(early_guard_flags.values())
+    early_failed = [k for k, v in early_guard_flags.items() if not v]
+    early_guard_failure_reason = (
+        f"Failed guard conditions: {', '.join(early_failed)}" if early_failed else None
+    )
+
+    if not early_guard_conditions_met:
+        # Persist the canonical pseudo_label_result block to indicate the blocked run
+        pseudo_label_result = {
+            "ran": True,
+            "n_pseudo_labels_added": 0,
+            "retraining_required": False,
+            "guard_conditions_met": False,
+            "guard_failure_reason": early_guard_failure_reason,
+            "execution_failure_reason": None,
+            "guard_condition_flags": early_guard_flags,
+        }
+        store.update(
+            pseudo_label_result=pseudo_label_result,
+            last_updated=datetime.now(timezone.utc).isoformat(),
+        )
+        print(f"GUARD CONDITIONS FAILED: {early_guard_failure_reason}")
+        return {
+            "status": "BLOCKED",
+            "reason": "guard_conditions_failed",
+            "guard_failure_reason": early_guard_failure_reason,
+            "guard_condition_flags": early_guard_flags,
+            "best_iteration": 0,
+            "best_oof_f1": 0.0,
+        }
 
     # ── Dynamic column resolution ────────────────────────────────────────────
     train_file = paths.data_processed_dir / (
@@ -626,9 +741,9 @@ def run(dry_run: bool = False) -> dict:
     # ── Build guard condition flags ──────────────────────────────────────────
     fold_variance = None
     variance_threshold = None
-    eda = state.get("eda") if isinstance(state, dict) else None
-    if isinstance(eda, dict):
-        v = eda.get("fold_score_variance")
+    metric_analysis = state.get("metric_analysis") if isinstance(state, dict) else None
+    if isinstance(metric_analysis, dict):
+        v = metric_analysis.get("fold_score_variance")
         if isinstance(v, (int, float)):
             fold_variance = float(v)
     cfg_vt = config.get("variance_gate_threshold")
@@ -638,8 +753,11 @@ def run(dry_run: bool = False) -> dict:
     leaked_features = state.get("leaked_features") if isinstance(state, dict) else []
     if not isinstance(leaked_features, list):
         leaked_features = []
-    calibration_present = bool(state.get("last_calibration_method")) or bool(
-        state.get("last_calibration_at")
+    calibration_present = (
+        bool(state.get("calibration_method"))
+        or bool(state.get("calibration_written_at"))
+        or bool(state.get("last_calibration_method"))
+        or bool(state.get("last_calibration_at"))
     )
     confidence_threshold_met = bool(
         test_probs_prev is not None and float(test_probs_prev.max()) >= conf_pos

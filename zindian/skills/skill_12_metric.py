@@ -36,8 +36,44 @@ def run(
     else:
         assert state is not None
 
-    eda = state.get("eda", {})
-    fold_scores = eda.get("fold_scores")
+    active_branch = (
+        state.get("best_variant_this_round")
+        or state.get("best_variant_branch")
+        or state.get("current_active_branch")
+        or state.get("anchor_git_branch")
+        or "anchor-baseline"
+    )
+
+    oof_key = f"branch_{active_branch}_oof"
+    fold_scores = None
+    recommended_threshold = 0.5
+
+    if oof_key in state:
+        oof_dict = state[oof_key]
+        if isinstance(oof_dict, dict):
+            model_config = oof_dict.get("model_config", {}) or {}
+            fold_scores = model_config.get("fold_scores")
+            recommended_threshold = model_config.get("threshold", 0.5)
+
+    # Fallback to search any branch_.*_oof key if not found
+    if not fold_scores:
+        for key, val in state.items():
+            if (
+                key.startswith("branch_")
+                and key.endswith("_oof")
+                and isinstance(val, dict)
+            ):
+                model_config = val.get("model_config", {}) or {}
+                if "fold_scores" in model_config:
+                    fold_scores = model_config["fold_scores"]
+                    recommended_threshold = model_config.get("threshold", 0.5)
+                    break
+
+    # Fallback to eda block for backward compatibility
+    if not fold_scores:
+        eda = state.get("eda", {}) or {}
+        if isinstance(eda, dict):
+            fold_scores = eda.get("fold_scores")
 
     metric_analysis: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -48,8 +84,8 @@ def run(
             {
                 "error": "missing_fold_scores",
                 "message": (
-                    "SKILL_STATE.json missing 'eda.fold_scores'. "
-                    "Ensure Skill 05 or the EDA writes per-fold scores before running Skill 12."
+                    "SKILL_STATE.json missing fold scores metadata. "
+                    "Ensure Skill 07 or Skill 08 writes fold_scores inside model_config before running Skill 12."
                 ),
             }
         )
@@ -65,10 +101,35 @@ def run(
     # Unbiased sample variance (ddof=1) per SoT
     fold_score_variance = float(np.var(arr, ddof=1))
 
+    # Calculate oof_vs_lb_delta if possible
+    from zindian.config import ChallengeConfig
+
+    config_obj = ChallengeConfig.load()
+    metric_key = str(config_obj.get("metric", "f1")).lower()
+
+    oof_score = None
+    if active_branch == "anchor-baseline":
+        oof_score = state.get(f"anchor_oof_{metric_key}")
+    else:
+        oof_score = state.get(f"best_variant_oof_{metric_key}")
+
+    if oof_score is None:
+        oof_score = state.get("anchor_oof_f1") or state.get("best_variant_oof_f1")
+
+    lb_score = state.get("last_lb_score") or state.get("best_lb_score")
+    oof_vs_lb_delta = None
+    if oof_score is not None and lb_score is not None:
+        try:
+            oof_vs_lb_delta = float(oof_score) - float(lb_score)
+        except (ValueError, TypeError):
+            pass
+
     metric_analysis.update(
         {
             "fold_scores": fold_scores,
             "fold_score_variance": fold_score_variance,
+            "recommended_threshold": float(recommended_threshold),
+            "oof_vs_lb_delta": oof_vs_lb_delta,
         }
     )
 

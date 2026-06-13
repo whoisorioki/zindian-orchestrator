@@ -1,6 +1,6 @@
 # Zindian Orchestrator Architecture Matrix
 
-Repository snapshot: current working commit `9b81f85`.
+Repository snapshot: current working commit `2d53250`.
 
 ## Purpose
 
@@ -68,6 +68,8 @@ Current behavior:
 - Trains a baseline model on compliant TerraClimate features only.
 - Validates the submission format before the human gate.
 - Updates state with anchor metrics and branch metadata.
+- For regression tasks, computes secondary metrics (MAE, MAPE, R²) and writes them to a nested `secondary_metrics` block in the OOF record.
+- Handles target log-transformations, inverse-transforms, and non-negativity clipping when primary metric is RMSLE.
 
 Why it matters:
 - This is the calibration point for the rest of the search process.
@@ -131,6 +133,12 @@ Role:
 
 Current behavior:
 - Compares best variant score to the anchor.
+- Evaluates scale-invariant thresholds:
+  - For RMSE: Scales variance gate by `target_std ** 2` and gate margin by `target_std`.
+  - For RMSLE and Classification: Evaluates raw thresholds (dimensionless log-ratio/bounded).
+- Evaluates directional check based on metric direction:
+  - Maximization (e.g. AUC, F1): variant must exceed baseline + margin.
+  - Minimization (e.g. RMSE, RMSLE, MAE): variant must be below baseline - margin.
 - Creates or switches to the next anchor branch.
 - Resets round counters and updates state.
 
@@ -256,15 +264,15 @@ The current pipeline is already modular at the control-plane level. The main gen
 
 The following skill implementations are present in the codebase and were used as the source for this note:
 
-- [zindian/skills/skill_01_integrity.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_01_integrity.py)
-- [zindian/skills/skill_02_intake.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_02_intake.py)
-- [zindian/skills/skill_07_features.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_07_features.py)
-- [zindian/skills/skill_08_anchor.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_08_anchor.py)
-- [zindian/skills/skill_11_gate.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_11_gate.py)
-- [zindian/skills/skill_12_metric.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_12_metric.py)
-- [zindian/skills/skill_15_reporter.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_15_reporter.py)
-- [zindian/skills/skill_16_submit.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_16_submit.py)
-- [zindian/skills/skill_17_governance.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_17_governance.py)
-- [zindian/skills/skill_18_librarian.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_18_librarian.py)
-- [zindian/skills/skill_19_code_miner.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_19_code_miner.py)
-- [zindian/skills/skill_20_scientist.py](/home/adrian/projects/zindian_orchestrator/zindian/skills/skill_20_scientist.py)
+- [zindian/skills/skill_01_integrity.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_01_integrity.py)
+- [zindian/skills/skill_02_intake.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_02_intake.py)
+- [zindian/skills/skill_07_features.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_07_features.py)
+- [zindian/skills/skill_08_anchor.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_08_anchor.py)
+- [zindian/skills/skill_11_gate.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_11_gate.py)
+- [zindian/skills/skill_12_metric.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_12_metric.py)
+- [zindian/skills/skill_15_reporter.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_15_reporter.py)
+- [zindian/skills/skill_16_submit.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_16_submit.py)
+- [zindian/skills/skill_17_governance.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_17_governance.py)
+- [zindian/skills/skill_18_librarian.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_18_librarian.py)
+- [zindian/skills/skill_19_code_miner.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_19_code_miner.py)
+- [zindian/skills/skill_20_scientist.py](file:///C:/Users/Adrian/Desktop/Agents/zindian-orchestrator/zindian/skills/skill_20_scientist.py)

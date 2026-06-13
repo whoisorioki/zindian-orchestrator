@@ -106,12 +106,14 @@ def run(re_verify: bool = False) -> dict:
     sub = pd.read_csv(sample_path)
 
     # Load ChallengeConfig to override default column names if present
+    task_type = "classification"
     try:
         cfg = ChallengeConfig.load()
         tc = cfg.get("target_column") or cfg.get("target_col")
         sc = cfg.get("submission_target_column") or cfg.get("submission_target_col")
         target_col = tc if tc else TARGET_COL
         submission_target_col = sc if sc else SUBMISSION_TARGET_COL
+        task_type = cfg.get("task_type") or "classification"
     except Exception:
         target_col = TARGET_COL
         submission_target_col = SUBMISSION_TARGET_COL
@@ -137,26 +139,43 @@ def run(re_verify: bool = False) -> dict:
     print("✅ Required columns present (warnings may have been emitted)")
 
     # Validate target values
-    # Validate target values; be permissive but warn if non-binary
-    unique_targets = sorted(pd.unique(train[target_col].astype(str)).tolist())
-    is_binary_numeric = set(train[target_col].dropna().unique()) <= {0, 1}
-    if not is_binary_numeric:
-        print(
-            f"⚠️ Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
-        )
-    else:
-        print(f"✅ Target values confirmed numeric binary: {[0, 1]}")
+    if task_type == "regression":
+        # Continuous descriptive metrics
 
-    # Print class distribution
-    counts = train[target_col].value_counts().to_dict()
-    total = len(train)
-    print("\n  Class distribution:")
-    print(
-        f"    Absent  (0): {counts.get(0, 0):,} ({counts.get(0, 0) / total * 100:.1f}%)"
-    )
-    print(
-        f"    Present (1): {counts.get(1, 0):,} ({counts.get(1, 0) / total * 100:.1f}%)"
-    )
+        t_arr = train[target_col].dropna().to_numpy()
+        t_min = float(t_arr.min()) if t_arr.size else 0.0
+        t_max = float(t_arr.max()) if t_arr.size else 0.0
+        t_mean = float(t_arr.mean()) if t_arr.size else 0.0
+        t_std = float(t_arr.std()) if t_arr.size else 0.0
+
+        print("\n  Continuous target statistics:")
+        print(f"    Min  : {t_min:.5f}")
+        print(f"    Max  : {t_max:.5f}")
+        print(f"    Mean : {t_mean:.5f}")
+        print(f"    Std  : {t_std:.5f}")
+
+        counts = {}
+    else:
+        # Validate target values; be permissive but warn if non-binary
+        unique_targets = sorted(pd.unique(train[target_col].astype(str)).tolist())
+        is_binary_numeric = set(train[target_col].dropna().unique()) <= {0, 1}
+        if not is_binary_numeric:
+            print(
+                f"⚠️ Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
+            )
+        else:
+            print(f"✅ Target values confirmed numeric binary: {[0, 1]}")
+
+        # Print class distribution
+        counts = train[target_col].value_counts().to_dict()
+        total = len(train)
+        print("\n  Class distribution:")
+        print(
+            f"    Absent  (0): {counts.get(0, 0):,} ({counts.get(0, 0) / total * 100:.1f}%)"
+        )
+        print(
+            f"    Present (1): {counts.get(1, 0):,} ({counts.get(1, 0) / total * 100:.1f}%)"
+        )
 
     # Compute hashes
     print("\nComputing MD5 hashes...")
@@ -226,7 +245,7 @@ def run(re_verify: bool = False) -> dict:
         "n_features_raw": len(raw_feature_cols),
         "target_col": target_col,
         "submission_target_col": submission_target_col,
-        "task": "binary_classification",
+        "task": "regression" if task_type == "regression" else "binary_classification",
         "class_distribution": counts,
         "feature_cols": raw_feature_cols,
         "note": "Do not assume raw features beyond what is present in training file",

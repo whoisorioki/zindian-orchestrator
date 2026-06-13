@@ -155,8 +155,18 @@ def _audit_oof_strategy_tags(
     """Verify every branch_{name}_oof record carries a valid cv_strategy_id.
 
     A record is considered valid if its `cv_strategy_id` matches the active
-    strategy id, or is one of the recognized fallback markers.
+    strategy id (after prefix normalization), or is one of the recognized
+    fallback markers.
     """
+
+    def _normalize_strategy(strategy: str) -> str:
+        s = strategy.lower().strip()
+        if s.startswith("config:"):
+            s = s[len("config:") :]
+        elif s.startswith("override:"):
+            s = s[len("override:") :]
+        return s.strip()
+
     issues: list[str] = []
     if not isinstance(state, dict):
         return (False, ["SKILL_STATE is not a dict"])
@@ -175,7 +185,9 @@ def _audit_oof_strategy_tags(
         if not isinstance(cv_id, str) or not cv_id:
             issues.append(f"{key}: missing cv_strategy_id tag")
             continue
-        if cv_id != active_strategy_id and cv_id not in (
+        norm_cv = _normalize_strategy(cv_id)
+        norm_active = _normalize_strategy(active_strategy_id)
+        if norm_cv != norm_active and cv_id not in (
             "config:unknown",
             "override:unknown",
             "unknown",

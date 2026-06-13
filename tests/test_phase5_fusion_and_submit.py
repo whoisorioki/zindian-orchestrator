@@ -91,3 +91,9 @@ def test_submission_validate_and_determine(tmp_path):
     bad.write_text("IDX,Pred\n3,0\n4,1\n", encoding="utf-8")
     errs = submitter.validate(bad, sample)
     assert errs
+
+    # duplicate case
+    dup = tmp_path / "dup.csv"
+    dup.write_text("ID,Prediction\n3,0\n3,1\n", encoding="utf-8")
+    errs_dup = submitter.validate(dup, sample)
+    assert any("Duplicate IDs" in e for e in errs_dup)

@@ -54,22 +54,22 @@ Rules to keep active:
 | 03 | skill_03_legality.py | Build legality policy from rules and flagged discussions | DONE |
 | 04 | skill_04_eda.py | Data quality and leakage checks | DONE |
 | 05 | skill_05_cv.py | CV strategy and OOF gap analysis | DONE |
-| 06 | skill_06_cleaning.py | Allowed preprocessing and cleaning | NOT IMPLEMENTED |
+| 06 | skill_06_cleaning.py | Allowed preprocessing and cleaning | DONE |
 | 07 | skill_07_features.py | Feature variants and gated training | DONE; keep derived-feature branches blocked until compliance is reconfirmed |
 | 08 | skill_08_anchor.py | Anchor baseline and human-gated anchor submission | DONE |
-| 09 | skill_09_calibration.py | Threshold/probability calibration | NOT IMPLEMENTED |
+| 09 | skill_09_calibration.py | Threshold/probability calibration | DONE |
 | 10 | skill_10_shap.py | SHAP audit and pruning analysis | DONE; safe to run |
 | 11 | skill_11_gate.py | Promotion gate vs anchor | DONE; do not run until compliance and a compliant variant are ready |
 | 12 | skill_12_metric.py | OOF threshold scan and metric ranking | DONE; safe to run |
 | 13 | skill_13_oracle_fusion.py | Ensemble fusion | HUMAN-GATED |
-| 14 | skill_14_inference.py | Post-processing and inference | NOT IMPLEMENTED |
+| 14 | skill_14_inference.py | Post-processing and inference | DONE |
 | 15 | skill_15_reporter.py | Reports and ledger writes | DONE |
 | 16 | skill_16_submit.py | Guarded submission wrapper | DONE; blocked until gate and compliance are clear |
 | 17 | skill_17_governance.py | Final submission selection and reproducibility checks | DONE |
 | 18 | skill_18_librarian.py | Literature and prior-art scan | DONE; safe to run |
 | 19 | skill_19_code_miner.py | Code mining for candidate ideas | DONE; safe to run |
 | 20 | skill_20_scientist.py | Candidate validation and hypothesis screening | DONE; safe to run |
-| 21 | skill_21_pseudo_label.py | Pseudo-labeling pipeline | PRESENT; blocked until discussion 32819 is explicitly reconfirmed this session |
+| 21 | skill_21_pseudo_label.py | Pseudo-labeling pipeline | DONE; early guards verified |
 
 ---
 

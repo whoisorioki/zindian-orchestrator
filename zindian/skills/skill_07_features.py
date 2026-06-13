@@ -438,12 +438,16 @@ def train_variant(
             "gate": gate,
             "oof_probs": lgb_result.oof_probs,
             "test_probs": lgb_result.test_probs,
+            "fold_scores": [
+                float(score) for score in getattr(lgb_result, "fold_aucs", [])
+            ],
         }
 
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     n_splits = getattr(splitter, "n_splits", 5)
     oof_probs = np.zeros(len(y))
     test_probs = np.zeros(len(test))
+    fold_scores_list = []
 
     print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
     for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
@@ -580,6 +584,7 @@ def train_variant(
             oof_probs[val_idx] = 0.5 * lgb_val + 0.5 * rf_val
             test_probs += (0.5 * lgb_test + 0.5 * rf_test) / n_splits
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
+            fold_scores_list.append(float(fold_auc))
             print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
             continue
 
@@ -657,6 +662,7 @@ def train_variant(
             oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
             test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / n_splits
             fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
+            fold_scores_list.append(float(fold_auc))
             print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
             continue
 
@@ -666,6 +672,7 @@ def train_variant(
         oof_probs[val_idx] = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
         test_probs += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
         fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
+        fold_scores_list.append(float(fold_auc))
         print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
 
     oof_auc = roc_auc_score(y, oof_probs)
@@ -691,6 +698,7 @@ def train_variant(
         "gate": gate,
         "oof_probs": oof_probs,
         "test_probs": test_probs,
+        "fold_scores": fold_scores_list,
     }
 
 
@@ -1319,6 +1327,7 @@ def run(
                 "variant": variant_name,
                 "feature_count": len(feature_cols),
                 "multi_seed": [int(s) for s in SEEDS],
+                "fold_scores": result.get("fold_scores"),
             },
         )
     except Exception as exc:

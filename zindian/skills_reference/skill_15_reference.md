@@ -32,12 +32,18 @@ Current behavior notes
 ----------------------
 - Reads `challenge_config.json`, `SKILL_STATE.json`, and the DuckDB ledger.
 - Summarizes experiment and submission counts.
+- Maps the task type semantically to human-readable strings (e.g. "Classification" maps to "Accuracy / LogLoss / AUC", and "Regression" maps to "RMSE / MAE / R²").
 - Incorporates integrity audit data if `integrity_audit.json` exists.
 
-Findings
---------
+Findings (issues / misalignments)
+---------------------------------
+- **Secondary Metrics Logging**: For regression tasks, the reporter needs to display the secondary metrics block (MAE, MAPE, R²) averages for all models/branches if they are present in the state.
 - This is a reporting utility rather than a modeling or gating skill.
 - It is useful as a phase-1 handoff artifact because it ties config, state, and ledger status together.
+
+Recommendations
+---------------
+- Ensure secondary metrics are logged to the phase summaries and ledger reports during regression runs.
 
 Notes
 -----

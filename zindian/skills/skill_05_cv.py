@@ -107,16 +107,28 @@ def build_spatial_splits(
     geo_groups = kmeans.fit_predict(projected)
 
     print("\n  Geographic block distribution:")
+    # Check if target is binary/categorical (for classification prevalence logging)
+    is_binary = np.issubdtype(y.dtype, np.integer) and bool(set(np.unique(y)) <= {0, 1})
     for block_id in range(cluster_count):
         block_mask = geo_groups == block_id
-        block_pos = y[block_mask].sum()
-        block_total = block_mask.sum()
-        prevalence = (block_pos / block_total * 100.0) if block_total else 0.0
-        print(
-            f"    Block {block_id}: {block_total:4d} samples  "
-            f"({block_pos:3d} positive, "
-            f"{prevalence:.1f}% prevalence)"
-        )
+        block_total = int(block_mask.sum())
+        if block_total:
+            if is_binary:
+                block_pos = int(y[block_mask].sum())
+                prevalence = block_pos / block_total * 100.0
+                print(
+                    f"    Block {block_id}: {block_total:4d} samples  "
+                    f"({block_pos:3d} positive, "
+                    f"{prevalence:.1f}% prevalence)"
+                )
+            else:
+                block_mean = float(y[block_mask].mean())
+                print(
+                    f"    Block {block_id}: {block_total:4d} samples  "
+                    f"(target mean: {block_mean:.4f})"
+                )
+        else:
+            print(f"    Block {block_id}:    0 samples")
 
     # Construct a GroupKFold via the central CV factory and split using geo_groups
     gkf = GroupKFold(n_splits=n_splits)
@@ -215,6 +227,11 @@ def _resolve_decision(
             "selection_reason": f"minority_ratio={float(minority_ratio):.3f} < 0.15",
         }
 
+    reason = (
+        "standard regression strategy chosen for continuous target"
+        if task_type == "regression"
+        else "default balanced classification fallback"
+    )
     return {
         "type": "KFold",
         "shuffle": True,
@@ -222,7 +239,7 @@ def _resolve_decision(
         "random_state": int(
             raw_config.get("reproducibility", {}).get("seed", get_seed())
         ),
-        "selection_reason": "default regression or balanced classification fallback",
+        "selection_reason": reason,
     }
 
 
@@ -245,6 +262,7 @@ def run(strategy: str = "compare") -> dict:
 
     paths = resolve_competition_paths(require_competition=True)
     config = ChallengeConfig.load()
+    task_type = str(config.get("task_type", "classification"))
     competition_dir = paths.competition_dir
     if competition_dir is None:
         raise RuntimeError("Competition directory could not be resolved")
@@ -295,7 +313,8 @@ def run(strategy: str = "compare") -> dict:
 
     # Use explicit np.asarray to provide concrete ndarray types for static checkers
     X = np.asarray(ft[feature_cols].values, dtype=np.float32)
-    y = np.asarray(ft[target_col].values, dtype=np.int32)
+    y_dtype = np.float32 if task_type == "regression" else np.int32
+    y = np.asarray(ft[target_col].values, dtype=y_dtype)
     coords = (
         np.asarray(ft[coord_cols].values, dtype=np.float64)
         if len(coord_cols) == 2
@@ -305,9 +324,15 @@ def run(strategy: str = "compare") -> dict:
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
     if len(y) > 0:
-        print(
-            f"Positive rate: {float(np.asarray(y, dtype=np.float64).mean()) * 100:.1f}%"
-        )
+        if task_type == "regression":
+            print(
+                f"Target mean  : {float(np.asarray(y, dtype=np.float64).mean()):.4f} "
+                f"(range: {float(y.min()):.4f} to {float(y.max()):.4f})"
+            )
+        else:
+            print(
+                f"Positive rate: {float(np.asarray(y, dtype=np.float64).mean()) * 100:.1f}%"
+            )
 
     # If GroupKFold was selected but no explicit group_col is available,
     # attempt a spatial clustering fallback when coordinates exist. If that

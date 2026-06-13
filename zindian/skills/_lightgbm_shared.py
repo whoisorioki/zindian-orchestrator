@@ -15,7 +15,7 @@ from typing import (
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score, root_mean_squared_error
 from sklearn.preprocessing import StandardScaler
 from zindian.cv import get_cv_splits
 
@@ -31,10 +31,11 @@ class Splitter(Protocol):
 class LightGBMRunResult:
     oof_probs: np.ndarray
     test_probs: np.ndarray
-    oof_auc: float
-    oof_f1: float
+    oof_auc: float  # retained for compatibility (classification)
+    oof_f1: float  # retained for compatibility (classification)
     threshold: float
     fold_aucs: list[float]
+    oof_rmse: float = 0.0  # regression metric
 
 
 def train_lightgbm_cv(
@@ -59,6 +60,19 @@ def train_lightgbm_cv(
         | None
     ) = None,
 ) -> LightGBMRunResult:
+    """Train a LightGBM CV model and return metrics.
+    Supports both classification and regression based on challenge_config.task_type.
+    """
+    from zindian.config import ChallengeConfig
+
+    cfg = ChallengeConfig.load()
+    task_type = str(cfg.get("task_type", "classification")).lower()
+    # Resolve canonical seed if not provided
+    if random_seed is None:
+        from zindian.config import get_seed
+
+        random_seed = get_seed()
+
     """Train a LightGBM CV model and return OOF/test probabilities plus metrics."""
     # Resolve canonical seed if not provided
     if random_seed is None:
@@ -69,7 +83,10 @@ def train_lightgbm_cv(
     np.random.seed(int(random_seed))
 
     # If per_fold_feature_fn is provided, X and X_test will be computed inside the fold loop
-    y = np.asarray(train[target_col].values, dtype=np.int32)
+    if task_type == "regression":
+        y = np.asarray(train[target_col].values, dtype=np.float64)
+    else:
+        y = np.asarray(train[target_col].values, dtype=np.int32)
     if per_fold_feature_fn is None:
         X = np.asarray(train[feature_cols].values, dtype=np.float64)
         X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
@@ -79,14 +96,16 @@ def train_lightgbm_cv(
             X = scaler.fit_transform(X)
             X_test = scaler.transform(X_test)
 
-    lgb_params = {
-        "objective": "binary",
-        "metric": "binary_logloss",
-        "learning_rate": 0.05,
-        "num_leaves": 31,
-        "verbose": -1,
-        "seed": int(random_seed),
-    }
+        lgb_params: dict[str, Any] = {
+            "learning_rate": 0.05,
+            "num_leaves": 31,
+            "verbose": -1,
+            "seed": int(random_seed),
+        }
+    if task_type == "regression":
+        lgb_params.update({"objective": "regression", "metric": "rmse"})
+    else:
+        lgb_params.update({"objective": "binary", "metric": "binary_logloss"})
     if params:
         lgb_params.update(params)
 
@@ -140,24 +159,40 @@ def train_lightgbm_cv(
         test_pred = np.asarray(model.predict(X_test), dtype=np.float64)
         oof_probs[val_idx] = val_pred
         test_probs += test_pred / n_splits
+        if task_type == "regression":
+            fold_rmse = root_mean_squared_error(y[val_idx], val_pred)
+            fold_aucs.append(fold_rmse)
+            print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
+        else:
+            fold_auc = float(roc_auc_score(y[val_idx], val_pred))
+            fold_aucs.append(fold_auc)
+            print(f"  Fold {fold_idx + 1}/{n_splits}: auc={fold_auc:.6f}")
 
-        fold_auc = float(roc_auc_score(y[val_idx], val_pred))
-        fold_aucs.append(fold_auc)
-        print(f"  Fold {fold_idx + 1}/{n_splits}: auc={fold_auc:.6f}")
-
-    oof_auc = float(roc_auc_score(y, oof_probs))
-    if threshold_grid is None:
-        threshold_grid = np.arange(0.3, 0.7, 0.01)
-    best_t = float(
-        max(threshold_grid, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
-    )
-    oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
-
-    return LightGBMRunResult(
-        oof_probs=oof_probs,
-        test_probs=test_probs,
-        oof_auc=oof_auc,
-        oof_f1=oof_f1,
-        threshold=best_t,
-        fold_aucs=fold_aucs,
-    )
+    if task_type == "regression":
+        oof_rmse = root_mean_squared_error(y, oof_probs)
+        return LightGBMRunResult(
+            oof_probs=oof_probs,
+            test_probs=test_probs,
+            oof_auc=0.0,
+            oof_f1=0.0,
+            oof_rmse=oof_rmse,
+            threshold=0.0,
+            fold_aucs=fold_aucs,
+        )
+    else:
+        oof_auc = float(roc_auc_score(y, oof_probs))
+        if threshold_grid is None:
+            threshold_grid = np.arange(0.3, 0.7, 0.01)
+        best_t = float(
+            max(threshold_grid, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+        )
+        oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
+        return LightGBMRunResult(
+            oof_probs=oof_probs,
+            test_probs=test_probs,
+            oof_auc=oof_auc,
+            oof_f1=oof_f1,
+            oof_rmse=0.0,
+            threshold=best_t,
+            fold_aucs=fold_aucs,
+        )

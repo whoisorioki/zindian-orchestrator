@@ -27,19 +27,13 @@ Commands
 
   python3 -m zindian.skills.skill_01_integrity --re_verify
 
-Audit findings (issues / misalignments)
-------------------------------------
-- Remaining cleanup: `counts` should consistently use the resolved `target_col` variable instead of a fixed literal.
-- Remaining cleanup: the `hash_pandas_object` import should be removed if it is no longer used by the implementation.
-
-Recommendations
----------------
-- Keep the current config-aware and warning-based behavior.
-- Finish the last cleanup items noted above if the skill is revised again.
+Audit findings & resolution status
+----------------------------------
+- **Regression Misalignment (Class Distribution print)**: [RESOLVED] Previously, target value verification and class distribution printing hardcoded binary values (0 and 1). This has been refactored: if `task_type == "regression"`, the skill bypasses binary class calculations and prints continuous target statistics (Min, Max, Mean, Std) to the trace.
+- **Cleanup**: [RESOLVED] The `counts` dictionary is handled dynamically, and unused imports are cleaned up.
 
 Outputs
 -------
 - Updates `competitions/<slug>/SKILL_STATE.json` with keys: `md5_target_hash`, `md5_train_file`, `md5_test_file`, `md5_sample_sub_file`, and sets `dag_phase` to `phase_1_complete`.
 - Returns a summary dict with dataset counts and `class_distribution`.
 
-If you want, I can patch `skill_01_integrity.py` now to implement these recommendations (make hashing consistent and read target name from config). Reply `patch` to proceed.

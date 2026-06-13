@@ -160,9 +160,9 @@ def group_config(minimal_config: dict) -> dict:
 
 def test_phase1_all_pass(minimal_config: dict, minimal_state: SkillStateStore):
     report = evaluate_three_lenses("phase_1", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    )
     assert report.general.verdict == "PASS"
     assert report.specific.verdict == "PASS"
     assert report.generalisation.verdict == "PASS"
@@ -248,9 +248,9 @@ def test_phase1_specific_pass_target_std_not_required_classification(
     report = evaluate_three_lenses("phase_1", classification_config, store)
     # specific may fail on other fields but not on target_std
     for f in report.specific.findings:
-        assert (
-            "target_std" not in f
-        ), f"target_std should not be required for classification: {f}"
+        assert "target_std" not in f, (
+            f"target_std should not be required for classification: {f}"
+        )
 
 
 def test_phase1_specific_fail_missing_spatial_group_col(
@@ -369,9 +369,9 @@ def test_phase2a_all_pass(minimal_config: dict, minimal_state: SkillStateStore):
     state["policy_gate_passed"] = True
     minimal_state.write(state)
     report = evaluate_three_lenses("phase_2a", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    )
 
 
 def test_phase2a_specific_fail_missing_cleaning_complete(
@@ -417,9 +417,9 @@ def test_phase2b_all_pass(minimal_config: dict, minimal_state: SkillStateStore):
     state["preflight_confirmed"] = True
     minimal_state.write(state)
     report = evaluate_three_lenses("phase_2b", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    )
 
 
 def test_phase2b_general_fail_missing_cv_strategy_id_on_anchor(
@@ -473,9 +473,9 @@ def test_phase2b_generalisation_pass_with_cv_override(
     state["cv_strategy_override"] = {"active": True, "override_strategy": "custom_cv"}
     minimal_state.write(state)
     report = evaluate_three_lenses("phase_2b", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS with override, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS with override, got {report.overall}: {report.to_dict()}"
+    )
 
 
 # ===================================================================
@@ -494,9 +494,9 @@ def test_phase3a_all_pass(minimal_config: dict, minimal_state: SkillStateStore):
     state["leaked_features"] = {"variant01": []}
     minimal_state.write(state)
     report = evaluate_three_lenses("phase_3a", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    )
 
 
 def test_phase3a_specific_fail_shap_audit_incomplete(
@@ -548,9 +548,9 @@ def test_phase3b_all_pass(minimal_config: dict, minimal_state: SkillStateStore):
     state["diversity_check"] = {"max_correlation": 0.82}
     minimal_state.write(state)
     report = evaluate_three_lenses("phase_3b", minimal_config, minimal_state)
-    assert (
-        report.overall == "PASS"
-    ), f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    assert report.overall == "PASS", (
+        f"Expected PASS, got {report.overall}: {report.to_dict()}"
+    )
 
 
 def test_phase3b_specific_fail_gate2_not_approved_for_branch(
