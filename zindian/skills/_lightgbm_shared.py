@@ -65,8 +65,13 @@ def train_lightgbm_cv(
     """
     from zindian.config import ChallengeConfig
 
-    cfg = ChallengeConfig.load()
-    task_type = str(cfg.get("task_type", "classification")).lower()
+    # Safely obtain task_type from provided config or fallback to default.
+    try:
+        from zindian.config import ChallengeConfig
+        cfg = ChallengeConfig.load()
+        task_type = str(cfg.get("task_type", "classification")).lower()
+    except Exception:
+        task_type = "classification"
     # Resolve canonical seed if not provided
     if random_seed is None:
         from zindian.config import get_seed

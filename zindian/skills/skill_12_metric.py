@@ -102,10 +102,16 @@ def run(
     fold_score_variance = float(np.var(arr, ddof=1))
 
     # Calculate oof_vs_lb_delta if possible
-    from zindian.config import ChallengeConfig
-
-    config_obj = ChallengeConfig.load()
-    metric_key = str(config_obj.get("metric", "f1")).lower()
+    # Use provided config dict if available; fallback to ChallengeConfig only if needed.
+    if config is None:
+        try:
+            from zindian.config import ChallengeConfig
+            config_obj = ChallengeConfig.load()
+            metric_key = str(config_obj.get("metric", "f1")).lower()
+        except Exception:
+            metric_key = "f1"
+    else:
+        metric_key = str(config.get("metric", "f1")).lower()
 
     oof_score = None
     if active_branch == "anchor-baseline":

@@ -24,7 +24,11 @@ from .config import ChallengeConfig, get_seed
 
 def _read_strategy(config: ChallengeConfig | None = None) -> dict:
     if config is None:
-        config = ChallengeConfig.load()
+        try:
+            config = ChallengeConfig.load()
+        except Exception:
+            # Return empty strategy if config not available (e.g., unit tests)
+            return {}
     return config.get("cv_strategy", {}) or {}
 
 

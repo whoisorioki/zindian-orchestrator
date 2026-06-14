@@ -3,7 +3,7 @@ import requests
 from unittest.mock import MagicMock
 
 
-def test_requests_get_intercepted_under_network_disable(monkeypatch, mocker):
+def test_requests_get_intercepted_under_network_disable(monkeypatch):
     # Ensure network is disabled
     monkeypatch.setenv("ZINDIAN_DISABLE_NETWORK", "1")
 
@@ -13,7 +13,7 @@ def test_requests_get_intercepted_under_network_disable(monkeypatch, mocker):
     mock_response.text = "mocked HTML content"
     mock_response.status_code = 200
 
-    mocker.patch("requests.get", return_value=mock_response)
+    monkeypatch.setattr("requests.get", MagicMock(return_value=mock_response))
 
     # Call requests.get and verify it returns mock payload without HTTP leakage
     res = requests.get("https://zindi.africa")
