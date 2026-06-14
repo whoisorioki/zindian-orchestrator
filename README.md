@@ -4,7 +4,7 @@ An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
 > 🎯 **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
 
-Every action should declare which problem it serves: Problem 1 (generic Zindian agent) or Problem 2 (EY Biodiversity execution).
+This framework manages end-to-end competition pipelines autonomously and is built to be fully generic and neutral.
 
 ## 🏗️ Architecture Overview
 

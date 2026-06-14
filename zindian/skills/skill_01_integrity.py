@@ -15,8 +15,8 @@ from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
 # Default target column names (can be overridden per-competition)
-TARGET_COL = "Occurrence Status"
-SUBMISSION_TARGET_COL = "Target"
+TARGET_COL = "target"
+SUBMISSION_TARGET_COL = "target"
 
 
 def compute_md5(series: pd.Series) -> str:

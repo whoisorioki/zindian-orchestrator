@@ -1,7 +1,7 @@
 """
 Skill 08 — Anchor Baseline
-Train LightGBM baseline on TerraClimate features only.
-Lat/Lon BANNED as model features per organizer ruling (discussion 32369).
+Train LightGBM baseline on base features only.
+Features excluded per policy filters in challenge_config.json.
 Lock first confirmed anchor artifacts and create git branch.
 Must run after Skill 07 feature engineering completes.
 """
@@ -42,7 +42,7 @@ def load_data(
     Returns (train, test, training_target_col, submission_col).
     These are intentionally different — do not conflate them.
     """
-    # Load from processed features — TerraClimate columns live here
+    # Load from processed features — base features live here
     train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
     test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
 
@@ -102,7 +102,7 @@ def compute_oof_predictions(
     list[float],
 ]:
     """
-    Train LightGBM with KFold cross-validation on TerraClimate features only.
+    Train LightGBM with KFold cross-validation on base features only.
     Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
     Computes F1 using optimal threshold (challenge metric).
     """
@@ -111,8 +111,6 @@ def compute_oof_predictions(
 
     cols_cfg = config.get("columns", {}) or {}
     id_col = cols_cfg.get("id", "ID")
-    lat_col = cols_cfg.get("latitude", "Latitude")
-    lon_col = cols_cfg.get("longitude", "Longitude")
 
     # Resolve active CV strategy from state override first, then config.
     state = state or {}
@@ -124,8 +122,15 @@ def compute_oof_predictions(
     if not active_strategy:
         active_strategy = "stratified"
 
+    # Load policy blocked columns from config
+    policy_blocked = config.get("policy_filters", []) or []
+    excluded_cols = {id_col, target_col}
+    for col in policy_blocked:
+        if col is not None:
+            excluded_cols.add(str(col))
+
     feature_cols = [
-        c for c in train.columns if c not in (id_col, lat_col, lon_col, target_col)
+        c for c in train.columns if c not in excluded_cols
     ]
     feature_count = len(feature_cols)
 
@@ -295,7 +300,7 @@ def run(
         submitted flag, and submission result if submitted.
     """
     print(f"\n{'=' * 60}")
-    print("SKILL 08 — Anchor Baseline (LightGBM · TerraClimate only — Lat/Lon banned)")
+    print("SKILL 08 — Anchor Baseline (LightGBM · Base features only)")
     print(f"{'=' * 60}\n")
 
     paths = resolve_competition_paths()
@@ -456,7 +461,7 @@ def run(
         feature_count=feature_count,
         calibration_method="none",
         gate_result="PASS",
-        gate_reason="Initial anchor baseline — TerraClimate only, no Lat/Lon (compliant per discussion 32369). Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
+        gate_reason="Initial anchor baseline — Base features only. Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
             best_t, oof_auc
         ),
         dag_phase="phase_2_anchor_confirmed",

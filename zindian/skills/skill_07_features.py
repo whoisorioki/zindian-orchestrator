@@ -182,18 +182,33 @@ def build_hypothesis_features(
     if mode not in ("cv", "inference"):
         raise ValueError("mode must be 'cv' or 'inference'")
 
+    # Check for environmental base columns presence (Empty Feature Variant Safeguard)
+    tc_vars = ["aet", "def", "pdsi", "pet", "ppt", "q", "soil", "srad", "swe", "tmax", "tmin", "vap", "vpd"]
+    tc_stats = ["mean", "std", "min", "max"]
+    env_cols = {f"{v}_{s}" for v in tc_vars for s in tc_stats}
+    
+    matching_cols = [c for c in train_df.columns if c in env_cols]
+    if len(matching_cols) == 0:
+        return train_df, test_df
+
     # Work on copies to avoid in-place surprises
     train = train_df.copy()
     test = test_df.copy()
 
-    # Structural (non-target-dependent) features — identical in both modes
+    # Structural (non-target-dependent) features — identical in both modes (defensively guarded)
     for df in (train, test):
-        df["tmax_mean_sq"] = df["tmax_mean"] ** 2
-        df["aet_pet_ratio"] = df["aet_mean"] / (df["pet_mean"] + 1e-9)
-        df["tmax_vpd_stress"] = df["tmax_mean"] * df["vpd_mean"]
-        df["frost_risk"] = (df["tmin_min"] < 5).astype(int)
-        df["aridity_index"] = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
-        df["warm_wet_index"] = df["ppt_mean"] * df["tmin_mean"]
+        if "tmax_mean" in df.columns:
+            df["tmax_mean_sq"] = df["tmax_mean"] ** 2
+        if "aet_mean" in df.columns and "pet_mean" in df.columns:
+            df["aet_pet_ratio"] = df["aet_mean"] / (df["pet_mean"] + 1e-9)
+        if "tmax_mean" in df.columns and "vpd_mean" in df.columns:
+            df["tmax_vpd_stress"] = df["tmax_mean"] * df["vpd_mean"]
+        if "tmin_min" in df.columns:
+            df["frost_risk"] = (df["tmin_min"] < 5).astype(int)
+        if "ppt_mean" in df.columns and "pet_mean" in df.columns:
+            df["aridity_index"] = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
+        if "ppt_mean" in df.columns and "tmin_mean" in df.columns:
+            df["warm_wet_index"] = df["ppt_mean"] * df["tmin_mean"]
 
     # Example target-dependent feature: mean target by tmin quantile bin.
     # This demonstrates the two-mode contract and safe fallbacks when bins are empty.
@@ -201,7 +216,7 @@ def build_hypothesis_features(
     target_feat_col = "tmin_bin_target_mean"
 
     # Need target_array for target-dependent features
-    if target_array is not None:
+    if tmin_col in train.columns and target_array is not None:
         # Compute bin edges and mapping from training slice only
         if mode == "cv":
             if train_idx is None:
@@ -283,7 +298,8 @@ def build_hypothesis_features(
     # Return with columns in stable ordering: original cols + new_cols
     base_cols = [c for c in train_df.columns]
     final_cols = base_cols + [c for c in new_cols if c not in base_cols]
-    return train[final_cols], test[final_cols]
+    test_final_cols = [c for c in final_cols if c in test.columns]
+    return train[final_cols], test[test_final_cols]
 
 
 # ── Phase C: Variant Training ─────────────────────────────────────────────────
@@ -320,14 +336,24 @@ def train_variant(
             TARGET = (
                 config.get("target_column")
                 or config.get("target_col")
-                or "Occurrence Status"
+                or "target"
             )
         else:
-            TARGET = "Occurrence Status"
+            TARGET = "target"
+        
+        # If the resolved target is missing, check for candidates
+        if TARGET not in train.columns:
+            for candidate in ("target", "Occurrence Status", "label", "target_col", "y"):
+                if candidate in train.columns:
+                    TARGET = candidate
+                    break
     else:
         TARGET = target_col
     X = np.asarray(train[feature_cols].values, dtype=np.float64)
-    y = np.asarray(train[TARGET].values, dtype=np.int32)
+    if task_type == "regression":
+        y = np.asarray(train[TARGET].values, dtype=np.float64)
+    else:
+        y = np.asarray(train[TARGET].values, dtype=np.int32)
     X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
     shared_lgb_variants = {
@@ -417,18 +443,36 @@ def train_variant(
                 ),
             ),
         )
-        delta = lgb_result.oof_f1 - baseline_score
-        gate = "PASS" if delta >= gate_margin else "PRUNE"
+        metric_name = config.get("metric", "f1_score") if config is not None else "f1_score"
+        if task_type == "regression":
+            primary_key = f"oof_{metric_name}"
+            oof_score = float(getattr(lgb_result, primary_key, 0.0))
+            metric_direction = config.get("metric_direction", "minimize") if config is not None else "minimize"
+            if metric_direction == "minimize":
+                delta = baseline_score - oof_score
+            else:
+                delta = oof_score - baseline_score
+            gate = "PASS" if delta >= gate_margin else "PRUNE"
 
-        print(f"\n  {'=' * 50}")
-        print(f"  {variant_name}")
-        print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})")
-        print(f"  Delta    : {delta:+.5f}  → {gate}")
-        print(
-            f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})"
-        )
+            print(f"\n  {'=' * 50}")
+            print(f"  {variant_name}")
+            print(f"  OOF {metric_name.upper()} : {oof_score:.5f}  (baseline: {baseline_score:.5f})")
+            print(f"  Delta    : {delta:+.5f}  → {gate}")
+        else:
+            primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
+            oof_score = lgb_result.oof_f1
+            delta = oof_score - baseline_score
+            gate = "PASS" if delta >= gate_margin else "PRUNE"
 
-        return {
+            print(f"\n  {'=' * 50}")
+            print(f"  {variant_name}")
+            print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})")
+            print(f"  Delta    : {delta:+.5f}  → {gate}")
+            print(
+                f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})"
+            )
+
+        ret = {
             "variant": variant_name,
             "features": len(feature_cols),
             "oof_auc": float(lgb_result.oof_auc),
@@ -442,6 +486,9 @@ def train_variant(
                 float(score) for score in getattr(lgb_result, "fold_aucs", [])
             ],
         }
+        if task_type == "regression":
+            ret[primary_key] = oof_score
+        return ret
 
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     n_splits = getattr(splitter, "n_splits", 5)
@@ -716,41 +763,87 @@ def write_round_report(
     pruned = [r for r in results if r["gate"] == "PRUNE"]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    lines = [
-        f"# Feature Round {round_num} Report",
-        f"**Generated**: {now}",
-        "**Primary gate metric**: F1-Score",
-        f"**Baseline Score**: {baseline_score:.5f}",
-        f"**Gate threshold**: baseline + {gate_margin} = {baseline_score + gate_margin:.5f}",
-        f"**Variants tested**: {len(results)}",
-        f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
-        "",
-        "---",
-        "",
-        "## Results",
-        "",
-        "| Variant | Features | ROC-AUC | Delta | F1-Score | Gate |",
-        "|---|---|---|---|---|---|",
-    ]
-    for r in results:
-        icon = "✅" if r["gate"] == "PASS" else "❌"
-        lines.append(
-            f"| {r['variant']} | {r['features']} | {r['oof_auc']:.5f} "
-            f"| {r['delta']:+.5f} | {r['oof_f1']:.5f} | {icon} {r['gate']} |"
-        )
+    try:
+        from zindian.config import ChallengeConfig
+        config = ChallengeConfig.load()
+        task_type = config.get("task_type", "classification")
+        metric_name = config.get("metric", "f1_score")
+        metric_direction = config.get("metric_direction", "maximize") if task_type != "regression" else config.get("metric_direction", "minimize")
+    except Exception:
+        task_type = "classification"
+        metric_name = "f1_score"
+        metric_direction = "maximize"
 
-    if passed:
-        best = max(passed, key=lambda r: r["oof_f1"])
-        lines += [
+    if task_type == "regression":
+        primary_key = f"oof_{metric_name}"
+        gate_op = "-" if metric_direction == "minimize" else "+"
+        gate_threshold_val = baseline_score - gate_margin if metric_direction == "minimize" else baseline_score + gate_margin
+        lines = [
+            f"# Feature Round {round_num} Report",
+            f"**Generated**: {now}",
+            f"**Primary gate metric**: {metric_name.upper()}",
+            f"**Baseline Score**: {baseline_score:.5f}",
+            f"**Gate threshold**: baseline {gate_op} {gate_margin} = {gate_threshold_val:.5f}",
+            f"**Variants tested**: {len(results)}",
+            f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
             "",
-            "## Best Variant This Round",
+            "---",
             "",
-            f"**{best['variant']}** — F1 {best['oof_f1']:.5f} (Δ {best['delta']:+.5f})",
+            "## Results",
+            "",
+            f"| Variant | Features | Delta | {metric_name.upper()} Score | Gate |",
+            "|---|---|---|---|---|",
         ]
+        for r in results:
+            icon = "✅" if r["gate"] == "PASS" else "❌"
+            score_val = r.get(primary_key, 0.0)
+            lines.append(
+                f"| {r['variant']} | {r['features']} | {r['delta']:+.5f} | {score_val:.5f} | {icon} {r['gate']} |"
+            )
+        if passed:
+            best = min(passed, key=lambda r: r[primary_key]) if metric_direction == "minimize" else max(passed, key=lambda r: r[primary_key])
+            lines += [
+                "",
+                "## Best Variant This Round",
+                "",
+                f"**{best['variant']}** — {metric_name.upper()} {best[primary_key]:.5f} (Δ {best['delta']:+.5f})",
+            ]
+    else:
+        primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
+        lines = [
+            f"# Feature Round {round_num} Report",
+            f"**Generated**: {now}",
+            "**Primary gate metric**: F1-Score",
+            f"**Baseline Score**: {baseline_score:.5f}",
+            f"**Gate threshold**: baseline + {gate_margin} = {baseline_score + gate_margin:.5f}",
+            f"**Variants tested**: {len(results)}",
+            f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
+            "",
+            "---",
+            "",
+            "## Results",
+            "",
+            "| Variant | Features | ROC-AUC | Delta | F1-Score | Gate |",
+            "|---|---|---|---|---|---|",
+        ]
+        for r in results:
+            icon = "✅" if r["gate"] == "PASS" else "❌"
+            lines.append(
+                f"| {r['variant']} | {r['features']} | {r['oof_auc']:.5f} "
+                f"| {r['delta']:+.5f} | {r['oof_f1']:.5f} | {icon} {r['gate']} |"
+            )
+        if passed:
+            best = max(passed, key=lambda r: r["oof_f1"])
+            lines += [
+                "",
+                "## Best Variant This Round",
+                "",
+                f"**{best['variant']}** — F1 {best['oof_f1']:.5f} (Δ {best['delta']:+.5f})",
+            ]
 
     report_path = paths.reports_dir / f"feature_round_{round_num:02d}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text("\n".join(lines))
+    report_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\n  ✅ Round report → {report_path}")
 
 
@@ -783,15 +876,18 @@ def run(
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
-    metric_name = config.get("metric", "f1_score")
-    primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
-
     # Dynamic target and task config
     target_col = (
-        config.get("target_column") or config.get("target_col") or "Occurrence Status"
+        config.get("target_column") or config.get("target_col") or "target"
     )
     task_type = config.get("task_type", "classification")
     use_probabilities = config.get("use_probabilities", True)
+
+    metric_name = config.get("metric", "f1_score")
+    if task_type == "regression":
+        primary_key = f"oof_{metric_name}"
+    else:
+        primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
 
     # Effective gate margins scaled for regression tasks
     target_std = float(state.get("eda", {}).get("target_std", 1.0))
@@ -815,7 +911,10 @@ def run(
         baseline_key = f"anchor_{primary_key}"
 
     baseline_score = float(state.get(baseline_key) or 0.0)
-    anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
+    if task_type == "regression":
+        anchor_auc = float(state.get(f"anchor_oof_{metric_name}") or 0.0)
+    else:
+        anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
     if baseline_score == 0.0:
         raise RuntimeError(
             f"{baseline_key} not set in SKILL_STATE.json — run Skill 08 first or set baseline."
@@ -841,8 +940,9 @@ def run(
 
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
+    ref_name = f"anchor_oof_{metric_name}" if task_type == "regression" else "anchor_oof_auc"
     print(
-        f"Baseline ({baseline_key}): {baseline_score}  (reference ROC-AUC: {anchor_auc})"
+        f"Baseline ({baseline_key}): {baseline_score}  (reference {ref_name}: {anchor_auc})"
     )
 
     # ── Phase A: Fetch / Plugin dispatch ───────────────────────
@@ -884,7 +984,7 @@ def run(
     print("\n[B₂] Building hypothesis-derived features")
     # Resolve target column defensively
     target_col_cfg = (
-        config.get("target_column") or config.get("target_col") or "Occurrence Status"
+        config.get("target_column") or config.get("target_col") or "target"
     )
     if variant_name is None:
         # Extraction-only / inference: allow using full training targets if available
@@ -912,244 +1012,287 @@ def run(
         )
         return {"status": "extracted", "tiff": str(tiff_path)}
 
-    # ── Phase C: Define variant feature sets ──────────────────
-    tc_all = TC_BAND_NAMES
-    tc_51 = [c for c in tc_all if c != "swe_min"]  # alias: tc_all_51
-    tc_all_51 = tc_51  # explicit alias for hypothesis variants
-    tc_temp = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
-    tc_water = [
-        f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
-    ]
-    tc_rad = [f"{v}_{s}" for v in ["srad", "vpd", "vap"] for s in TC_STATS]
+    # Check if we are running in generic mode (no environmental columns in train_feat) (Decontamination Check)
+    tc_vars = ["aet", "def", "pdsi", "pet", "ppt", "q", "soil", "srad", "swe", "tmax", "tmin", "vap", "vpd"]
+    tc_stats = ["mean", "std", "min", "max"]
+    env_cols = {f"{v}_{s}" for v in tc_vars for s in tc_stats}
+    matching_cols = [c for c in train_feat.columns if c in env_cols]
+    is_generic = len(matching_cols) == 0
 
-    # Round 4 TC-only feature groups (no Lat/Lon — compliant)
-    tc_temp_only = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
-    tc_water_only = [
-        f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
-    ]
-    tc_stress_only = [
-        f"{v}_{s}" for v in ["pdsi", "vpd", "vap", "srad"] for s in TC_STATS
-    ]
-    shap_top12_tc = [
-        "aet_min",
-        "tmin_mean",
-        "pet_mean",
-        "srad_mean",
-        "ppt_min",
-        "vap_mean",
-        "pdsi_max",
-        "soil_max",
-        "srad_std",
-        "vpd_min",
-        "vap_min",
-        "aet_mean",
-    ]
+    if is_generic:
+        # Determine target, id, and coordinate columns to exclude
+        cols_cfg = config.get("columns", {}) or {}
+        id_col = cols_cfg.get("id", "ID")
+        lat_col = cols_cfg.get("latitude", "Latitude")
+        lon_col = cols_cfg.get("longitude", "Longitude")
+        DROP = {id_col, target_col, lat_col, lon_col, "ID", "target"}
+        all_features = [c for c in train_feat.columns if c not in DROP and c != target_col]
+        
+        # Build generic variants dynamically
+        n_feats = len(all_features)
+        half = n_feats // 2
+        first_half = all_features[:half] if half > 0 else all_features
+        second_half = all_features[half:] if half > 0 else all_features
+        even_feats = [all_features[i] for i in range(0, n_feats, 2)]
+        
+        VARIANTS = {}
+        for var_id in [
+            "variant-00", "variant-06", "variant-07", "variant-08", "variant-09",
+            "variant-10", "variant-11", "variant-12", "variant-13", "variant-14",
+            "variant-15", "variant-16", "variant-17", "variant-18", "variant-19",
+            "variant-20", "variant-21", "variant-22", "variant-23", "variant-24",
+            "variant-25", "variant-26", "variant-27", "variant-28", "variant-29",
+            "variant-30", "variant-31", "variant-32", "variant-33", "variant-34",
+            "variant-35", "variant-36", "variant-37", "variant-38", "variant-39",
+            "variant-40", "variant-41", "variant-42", "variant-43", "variant-44",
+            "variant-45", "variant-46"
+        ]:
+            if "7" in var_id or "0" in var_id:
+                VARIANTS[var_id] = first_half
+            elif "8" in var_id or "1" in var_id:
+                VARIANTS[var_id] = second_half
+            elif "9" in var_id or "2" in var_id:
+                VARIANTS[var_id] = even_feats
+            else:
+                VARIANTS[var_id] = all_features
+    else:
+        # ── Phase C: Define variant feature sets ──────────────────
+        tc_all = TC_BAND_NAMES
+        tc_51 = [c for c in tc_all if c != "swe_min"]  # alias: tc_all_51
+        tc_all_51 = tc_51  # explicit alias for hypothesis variants
+        tc_temp = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
+        tc_water = [
+            f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
+        ]
+        tc_rad = [f"{v}_{s}" for v in ["srad", "vpd", "vap"] for s in TC_STATS]
 
-    # SHAP top features from variant-06
-    shap_top5 = ["aet_min", "tmin_mean", "pet_mean", "srad_mean", "ppt_min"]
-    shap_top10 = shap_top5 + ["vap_mean", "pdsi_max", "soil_max", "srad_std", "vpd_min"]
-    shap_top20 = shap_top10 + [
-        "vap_min",
-        "aet_mean",
-        "q_max",
-        "pet_min",
-        "pet_max",
-        "tmin_max",
-        "pdsi_min",
-        "pet_std",
-        "def_std",
-        "aet_max",
-    ]
-    # Dead features by SHAP (near-zero importance)
-    # Updated: only `swe_min` is confirmed constant-zero and should be dropped.
-    dead = ["swe_min"]  # only confirmed constant-zero feature
-    tc_clean = [
-        f for f in tc_all if f not in dead
-    ]  # 51 features (52 TC bands - swe_min)
-    tc_pruned_37 = [
-        f
-        for f in tc_clean
-        if f
-        not in {
-            "aet_mean",
-            "aet_std",
-            "def_max",
-            "ppt_max",
-            "q_min",
-            "q_std",
-            "soil_max",
-            "soil_mean",
-            "swe_max",
-            "swe_std",
-            "tmax_max",
-            "vap_std",
-            "vpd_max",
-            "vpd_mean",
-            "vpd_std",
-        }
-    ]
-
-    VARIANTS = {
-        "variant-00": tc_all,  # anchor baseline — same model core as Skill 08
-        # Round 1
-        "variant-06": tc_all,
-        "variant-07": tc_temp,
-        "variant-08": tc_water,
-        "variant-09": tc_rad,
-        # Round 2 — SHAP-driven
-        "variant-10": shap_top10,
-        "variant-11": tc_clean,
-        "variant-12": shap_top20,
-        "variant-13": tc_all,  # hyperparams differ
-        "variant-14": tc_all,  # RF ensemble
-        "variant-16": shap_top5,
-        # Round 3 — Science-driven (ecology: temp + moisture first)
-        "variant-15": [
-            # Temperature — primary frog habitat driver
-            "tmin_mean",
-            "tmin_std",
-            "tmin_min",
-            "tmin_max",
-            "tmax_mean",
-            "tmax_std",
-            "tmax_min",
-            "tmax_max",
-            # Moisture — critical for frog survival
-            "soil_mean",
-            "soil_std",
-            "soil_min",
-            "soil_max",
-            "ppt_mean",
-            "ppt_std",
-            "ppt_min",
-            "ppt_max",
-            "vap_mean",
-            "vap_std",
-            "vap_min",
-            "vap_max",
-        ],
-        "variant-17": [
-            # All TC except swe (snow water = irrelevant for Australia)
-            c
-            for c in [
-                "aet_mean",
-                "aet_std",
-                "aet_min",
-                "aet_max",
-                "def_mean",
-                "def_std",
-                "def_min",
-                "def_max",
-                "pdsi_mean",
-                "pdsi_std",
-                "pdsi_min",
-                "pdsi_max",
-                "pet_mean",
-                "pet_std",
-                "pet_min",
-                "pet_max",
-                "ppt_mean",
-                "ppt_std",
-                "ppt_min",
-                "ppt_max",
-                "q_mean",
-                "q_std",
-                "q_min",
-                "q_max",
-                "soil_mean",
-                "soil_std",
-                "soil_min",
-                "soil_max",
-                "srad_mean",
-                "srad_std",
-                "srad_min",
-                "srad_max",
-                "tmax_mean",
-                "tmax_std",
-                "tmax_min",
-                "tmax_max",
-                "tmin_mean",
-                "tmin_std",
-                "tmin_min",
-                "tmin_max",
-                "vap_mean",
-                "vap_std",
-                "vap_min",
-                "vap_max",
-                "vpd_mean",
-                "vpd_std",
-                "vpd_min",
-                "vpd_max",
-            ]
-        ],
-        "variant-18": tc_all,  # XGBoost
-        "variant-19": tc_all,  # LGB larger trees
-        "variant-20": [
-            # Top ecological predictors from SHAP + domain science
+        # Round 4 TC-only feature groups (no Lat/Lon — compliant)
+        tc_temp_only = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
+        tc_water_only = [
+            f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
+        ]
+        tc_stress_only = [
+            f"{v}_{s}" for v in ["pdsi", "vpd", "vap", "srad"] for s in TC_STATS
+        ]
+        shap_top12_tc = [
             "aet_min",
             "tmin_mean",
             "pet_mean",
             "srad_mean",
-            "soil_mean",
-            "ppt_mean",
+            "ppt_min",
             "vap_mean",
-            "vpd_mean",
-            "tmax_mean",
+            "pdsi_max",
+            "soil_max",
+            "srad_std",
+            "vpd_min",
+            "vap_min",
             "aet_mean",
-            "def_mean",
-            "pdsi_mean",
-        ],
-        # Round 4 — Blend + threshold
-        "variant-25": tc_all,  # LGB+RF blend
-        "variant-26": tc_all,  # per-fold threshold
-        # Round 4 — TC only compliant (no Lat/Lon)
-        "variant-27": tc_all,
-        "variant-28": tc_all,
-        "variant-29": tc_all,
-        "variant-30": tc_temp_only,
-        "variant-31": tc_water_only,
-        "variant-32": tc_stress_only,
-        "variant-33": shap_top12_tc,
-        "variant-34": tc_all,
-        # Round 5 — 2017-2019 window + extended features
-        "variant-35": tc_all,  # 52 TC bands, 2017-2019 window
-        "variant-36": None,  # 94 features (full merge),
-        "variant-37": tc_51,  # 51 features, swe_min dropped, standard LGB
-        "variant-38": tc_51,  # 51 features, 3-way blend LGB+RF+XGB
-        "variant-39": tc_51,  # 51 features, dart booster LGB
-        # Round 6 — hypothesis-derived features (climate algebra, validated hypotheses)
-        "variant-40": tc_all_51
-        + [
-            "tmax_mean_sq",
-            "aet_pet_ratio",
-            "tmax_vpd_stress",
-            "frost_risk",
-            "aridity_index",
-            "warm_wet_index",
-        ],  # all 6 derived
-        "variant-41": tc_all_51
-        + ["aridity_index", "aet_pet_ratio"],  # water indices only (hyp-011, hyp-003)
-        "variant-42": tc_all_51
-        + ["tmax_vpd_stress", "frost_risk"],  # stress indices only (hyp-006, hyp-007)
-        "variant-43": tc_all_51
-        + [
-            "warm_wet_index",
-            "aridity_index",
-            "aet_pet_ratio",
-        ],  # ecology trio (warm/wet + water efficiency)
-        "variant-44": tc_all_51
-        + ["tmax_mean_sq", "frost_risk"],  # temperature stress (hyp-001, hyp-007)
-        "variant-45": tc_all_51
-        + [
-            "aridity_index",
-            "warm_wet_index",
-        ],  # moisture interaction (hyp-011, hyp-012)
-        "variant-46": tc_pruned_37
-        + [
-            "aridity_index",
-            "aet_pet_ratio",
-        ],  # lean clean matrix: 37 pruned + 2 structural ratios
-    }
+        ]
+
+        # SHAP top features from variant-06
+        shap_top5 = ["aet_min", "tmin_mean", "pet_mean", "srad_mean", "ppt_min"]
+        shap_top10 = shap_top5 + ["vap_mean", "pdsi_max", "soil_max", "srad_std", "vpd_min"]
+        shap_top20 = shap_top10 + [
+            "vap_min",
+            "aet_mean",
+            "q_max",
+            "pet_min",
+            "pet_max",
+            "tmin_max",
+            "pdsi_min",
+            "pet_std",
+            "def_std",
+            "aet_max",
+        ]
+        # Dead features by SHAP (near-zero importance)
+        dead = ["swe_min"]  # only confirmed constant-zero feature
+        tc_clean = [
+            f for f in tc_all if f not in dead
+        ]  # 51 features (52 TC bands - swe_min)
+        tc_pruned_37 = [
+            f
+            for f in tc_clean
+            if f
+            not in {
+                "aet_mean",
+                "aet_std",
+                "def_max",
+                "ppt_max",
+                "q_min",
+                "q_std",
+                "soil_max",
+                "soil_mean",
+                "swe_max",
+                "swe_std",
+                "tmax_max",
+                "vap_std",
+                "vpd_max",
+                "vpd_mean",
+                "vpd_std",
+            }
+        ]
+
+        VARIANTS = {
+            "variant-00": tc_all,  # anchor baseline — same model core as Skill 08
+            # Round 1
+            "variant-06": tc_all,
+            "variant-07": tc_temp,
+            "variant-08": tc_water,
+            "variant-09": tc_rad,
+            # Round 2 — SHAP-driven
+            "variant-10": shap_top10,
+            "variant-11": tc_clean,
+            "variant-12": shap_top20,
+            "variant-13": tc_all,  # hyperparams differ
+            "variant-14": tc_all,  # RF ensemble
+            "variant-16": shap_top5,
+            # Round 3 — Science-driven
+            "variant-15": [
+                # Temperature predictors
+                "tmin_mean",
+                "tmin_std",
+                "tmin_min",
+                "tmin_max",
+                "tmax_mean",
+                "tmax_std",
+                "tmax_min",
+                "tmax_max",
+                # Moisture predictors
+                "soil_mean",
+                "soil_std",
+                "soil_min",
+                "soil_max",
+                "ppt_mean",
+                "ppt_std",
+                "ppt_min",
+                "ppt_max",
+                "vap_mean",
+                "vap_std",
+                "vap_min",
+                "vap_max",
+            ],
+            "variant-17": [
+                # All TC except swe
+                c
+                for c in [
+                    "aet_mean",
+                    "aet_std",
+                    "aet_min",
+                    "aet_max",
+                    "def_mean",
+                    "def_std",
+                    "def_min",
+                    "def_max",
+                    "pdsi_mean",
+                    "pdsi_std",
+                    "pdsi_min",
+                    "pdsi_max",
+                    "pet_mean",
+                    "pet_std",
+                    "pet_min",
+                    "pet_max",
+                    "ppt_mean",
+                    "ppt_std",
+                    "ppt_min",
+                    "ppt_max",
+                    "q_mean",
+                    "q_std",
+                    "q_min",
+                    "q_max",
+                    "soil_mean",
+                    "soil_std",
+                    "soil_min",
+                    "soil_max",
+                    "srad_mean",
+                    "srad_std",
+                    "srad_min",
+                    "srad_max",
+                    "tmax_mean",
+                    "tmax_std",
+                    "tmax_min",
+                    "tmax_max",
+                    "tmin_mean",
+                    "tmin_std",
+                    "tmin_min",
+                    "tmin_max",
+                    "vap_mean",
+                    "vap_std",
+                    "vap_min",
+                    "vap_max",
+                    "vpd_mean",
+                    "vpd_std",
+                    "vpd_min",
+                    "vpd_max",
+                ]
+            ],
+            "variant-18": tc_all,  # XGBoost
+            "variant-19": tc_all,  # LGB larger trees
+            "variant-20": [
+                # Top ecological predictors from SHAP + domain science
+                "aet_min",
+                "tmin_mean",
+                "pet_mean",
+                "srad_mean",
+                "soil_mean",
+                "ppt_mean",
+                "vap_mean",
+                "vpd_mean",
+                "tmax_mean",
+                "aet_mean",
+                "def_mean",
+                "pdsi_mean",
+            ],
+            # Round 4 — Blend + threshold
+            "variant-25": tc_all,  # LGB+RF blend
+            "variant-26": tc_all,  # per-fold threshold
+            # Round 4 — TC only compliant (no Lat/Lon)
+            "variant-27": tc_all,
+            "variant-28": tc_all,
+            "variant-29": tc_all,
+            "variant-30": tc_temp_only,
+            "variant-31": tc_water_only,
+            "variant-32": tc_stress_only,
+            "variant-33": shap_top12_tc,
+            "variant-34": tc_all,
+            # Round 5 — 2017-2019 window + extended features
+            "variant-35": tc_all,  # 52 TC bands, 2017-2019 window
+            "variant-36": None,  # 94 features (full merge)
+            "variant-37": tc_51,  # 51 features, swe_min dropped, standard LGB
+            "variant-38": tc_51,  # 51 features, 3-way blend LGB+RF+XGB
+            "variant-39": tc_51,  # 51 features, dart booster LGB
+            # Round 6 — hypothesis-derived features (climate algebra, validated hypotheses)
+            "variant-40": tc_all_51
+            + [
+                "tmax_mean_sq",
+                "aet_pet_ratio",
+                "tmax_vpd_stress",
+                "frost_risk",
+                "aridity_index",
+                "warm_wet_index",
+            ],  # all 6 derived
+            "variant-41": tc_all_51
+            + ["aridity_index", "aet_pet_ratio"],  # water indices only (hyp-011, hyp-003)
+            "variant-42": tc_all_51
+            + ["tmax_vpd_stress", "frost_risk"],  # stress indices only (hyp-006, hyp-007)
+            "variant-43": tc_all_51
+            + [
+                "warm_wet_index",
+                "aridity_index",
+                "aet_pet_ratio",
+            ],  # ecology trio (warm/wet + water efficiency)
+            "variant-44": tc_all_51
+            + ["tmax_mean_sq", "frost_risk"],  # temperature stress (hyp-001, hyp-007)
+            "variant-45": tc_all_51
+            + [
+                "aridity_index",
+                "warm_wet_index",
+            ],  # moisture interaction (hyp-011, hyp-012)
+            "variant-46": tc_pruned_37
+            + [
+                "aridity_index",
+                "aet_pet_ratio",
+            ],  # lean clean matrix: 37 pruned + 2 structural ratios
+        }
 
     if variant_name not in VARIANTS:
         raise ValueError(
@@ -1216,12 +1359,21 @@ def run(
     avg_oof = np.mean([r["oof_probs"] for r in seed_results], axis=0)
     gate = "PASS" if mean_delta >= effective_gate_margin else "PRUNE"
 
+    if task_type == "regression":
+        mean_metric = float(np.mean([r[primary_key] for r in seed_results]))
+        std_metric = float(np.std([r[primary_key] for r in seed_results]))
+
     print(f"\n  {'=' * 50}")
     print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
-    print(f"  Mean ROC-AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
-    print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
-    print(f"  Mean F1-Score: {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
-    print(f"  Seed ROC-AUCs: {[round(r['oof_auc'], 5) for r in seed_results]}")
+    if task_type == "regression":
+        print(f"  Mean {metric_name.upper()} : {mean_metric:.5f}  ±{std_metric:.5f}")
+        print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
+        print(f"  Seed {metric_name.upper()}s: {[round(r[primary_key], 5) for r in seed_results]}")
+    else:
+        print(f"  Mean ROC-AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
+        print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
+        print(f"  Mean F1-Score: {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
+        print(f"  Seed ROC-AUCs: {[round(r['oof_auc'], 5) for r in seed_results]}")
 
     result = {
         "variant": variant_name,
@@ -1236,6 +1388,8 @@ def run(
         "seed_aucs": [r["oof_auc"] for r in seed_results],
         "seed_std": std_auc,
     }
+    if task_type == "regression":
+        result[primary_key] = mean_metric
 
     # Persist averaged OOF and test probabilities for ensembling/stacking
     try:
@@ -1271,7 +1425,9 @@ def run(
         sub_col = [c for c in sample.columns if c != id_col][0]
         test_probs = result["test_probs"]
         # Respect submission format policy: prefer probabilities when configured
-        if task_type == "classification" and use_probabilities:
+        if task_type == "regression":
+            sub_values = test_probs
+        elif task_type == "classification" and use_probabilities:
             sub_values = test_probs
         else:
             sub_values = (test_probs >= result["threshold"]).astype(int)
@@ -1286,7 +1442,16 @@ def run(
     variants_passed = int(state.get("variants_passed") or 0) + (
         1 if result["gate"] == "PASS" else 0
     )
-    best_score = float(state.get(f"best_variant_{primary_key}") or 0.0)
+    metric_direction = config.get("metric_direction", "maximize") if task_type != "regression" else config.get("metric_direction", "minimize")
+    best_score_raw = state.get(f"best_variant_{primary_key}")
+    if best_score_raw is None:
+        is_improvement = True
+    else:
+        best_score = float(best_score_raw)
+        if metric_direction == "minimize":
+            is_improvement = (best_score == 0.0) or (result[primary_key] < best_score)
+        else:
+            is_improvement = (best_score == 0.0) or (result[primary_key] > best_score)
 
     update = {
         "dag_phase": "phase_3_features",
@@ -1294,10 +1459,11 @@ def run(
         "variants_passed": variants_passed,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    if result["gate"] == "PASS" and result[primary_key] > best_score:
+    if result["gate"] == "PASS" and is_improvement:
         update["best_variant_this_round"] = variant_name
         update["best_variant_oof_auc"] = result["oof_auc"]
         update["best_variant_oof_f1"] = result["oof_f1"]
+        update[f"best_variant_{primary_key}"] = result[primary_key]
         update["best_variant_threshold"] = result["threshold"]
         update["best_variant_features"] = len(feature_cols)
 

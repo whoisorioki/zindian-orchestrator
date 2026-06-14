@@ -6,7 +6,7 @@ and GitHub repositories using Gemini Flash's built-in web search capability.
 
 Two problems served:
   Problem 1 (Generic Agent): Extract reusable ML prior art for any competition
-  Problem 2 (EY Frogs):      Find geospatial species distribution tricks
+  Problem 2 (Geospatial):    Find geospatial species distribution tricks
 
 Output: reports/ml_priorart.json
         reports/code_miner_report.md
@@ -96,21 +96,20 @@ SEARCH_TEMPLATES = {
             "CV strategy and OOF ensemble patterns",
         ),
     ],
-    "frog_ecology": [
+    "biodiversity": [
         (
-            "frog species occurrence prediction southeastern Australia "
-            "environmental predictors machine learning",
-            "Frog ecology ML — Australia specific",
+            "species occurrence prediction environmental predictors machine learning",
+            "Biodiversity modeling ML",
         ),
         (
-            "amphibian habitat suitability model climate variables "
+            "species habitat suitability model climate variables "
             "precipitation temperature breeding trigger",
-            "Amphibian habitat modeling signals",
+            "Habitat suitability modeling signals",
         ),
         (
-            "FrogID citizen science species distribution model "
-            "TerraClimate environmental predictors",
-            "FrogID-specific modeling approaches",
+            "citizen science species distribution model "
+            "environmental predictors",
+            "Species distribution modeling approaches",
         ),
     ],
 }
@@ -263,13 +262,13 @@ SYNTHESIS_PROMPT = """
 You are a senior ML competition strategist.
 
 Below are search results from multiple queries about winning ML competition approaches
-for a geospatial species distribution problem (frog presence/absence in SE Australia).
+for a species distribution problem.
 
 Competition context:
-- Target: binary classification (frog present = 1, absent = 0)
+- Target: binary classification (target present = 1, absent = 0)
 - Metric: F1 score (maximize)
 - Features: 52 TerraClimate climate variables (no lat/lon allowed)
-- Dataset: 6312 training rows, SE Australia, Nov 2017 - Nov 2019
+- Dataset: 6312 training rows, Nov 2017 - Nov 2019
 - Current best LB: 0.8846
 - Gap to top 10: ~0.08
 
@@ -290,7 +289,7 @@ Synthesize into a JSON object with exactly these fields:
   "feature_hypotheses": [
     {\
       "hypothesis": "Specific new feature to create from TerraClimate variables",
-      "ecological_basis": "Why this should predict frog presence",
+      "ecological_basis": "Why this should predict target presence",
       "variables_needed": ["list of TC variable names"],
       "complexity": "simple|moderate|complex"
     }
@@ -370,7 +369,7 @@ def synthesize_results(
             if config.metric_direction:
                 metric_dir = config.metric_direction
 
-            if "frog" in comp_name.lower() or "frog" in config.slug.lower():
+            if "frog" in comp_name.lower() or "frog" in config.slug.lower() or "biodiversity" in comp_name.lower():
                 extra_ctx = (
                     "- Features: 52 TerraClimate climate variables (no lat/lon allowed)\n"
                     "- Dataset: 6312 training rows, SE Australia, Nov 2017 - Nov 2019\n"

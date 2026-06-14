@@ -179,9 +179,20 @@ fi
 
 # ── 10. COMPETITION STATE ──────────────────
 echo ""
-echo "── 10. COMPETITION STATE (ey-frogs) ──"
-state_file="competitions/ey-frogs/SKILL_STATE.json"
-config_file="competitions/ey-frogs/challenge_config.json"
+echo "── 10. COMPETITION STATE ──"
+comp_dir="competitions/ey-frogs"
+if [ ! -z "$COMPETITION_SLUG" ] && [ -d "competitions/$COMPETITION_SLUG" ]; then
+  comp_dir="competitions/$COMPETITION_SLUG"
+else
+  candidate=$(find competitions -maxdepth 2 -name "SKILL_STATE.json" | head -n 1 2>/dev/null)
+  if [ -f "$candidate" ]; then
+    comp_dir=$(dirname "$candidate")
+  fi
+fi
+
+state_file="$comp_dir/SKILL_STATE.json"
+config_file="$comp_dir/challenge_config.json"
+echo "  Active competition dir: $comp_dir"
 
 if [ -f "$state_file" ]; then
   echo "  ✅ SKILL_STATE.json found"

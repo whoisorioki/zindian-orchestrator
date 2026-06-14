@@ -161,10 +161,13 @@ def _audit_oof_strategy_tags(
 
     def _normalize_strategy(strategy: str) -> str:
         s = strategy.lower().strip()
-        if s.startswith("config:"):
-            s = s[len("config:") :]
-        elif s.startswith("override:"):
-            s = s[len("override:") :]
+        while True:
+            if s.startswith("config:"):
+                s = s[len("config:") :]
+            elif s.startswith("override:"):
+                s = s[len("override:") :]
+            else:
+                break
         return s.strip()
 
     issues: list[str] = []

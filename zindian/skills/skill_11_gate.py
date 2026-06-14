@@ -128,8 +128,9 @@ def run() -> dict:
         else "human_gate_2_unknown_approved"
     )
     human_gate_approved = bool(state.get(human_gate_key, False))
-    shap_pass = bool(state.get("shap_completed_at")) and bool(
-        state.get("pruning_pass", False)
+    shap_pass = bool(state.get("shap_completed_at")) and (
+        bool(state.get("pruning_pass", False))
+        or state.get("shap_audit_skipped_reason") == "single_feature"
     )
     variants_passed = int(state.get("variants_passed") or 0)
     branch_name = str(best_variant or "unknown")

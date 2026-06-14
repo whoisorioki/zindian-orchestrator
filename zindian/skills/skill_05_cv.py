@@ -80,6 +80,7 @@ def build_spatial_splits(
     coords: np.ndarray,
     n_splits: int = N_SPLITS,
     n_clusters: int | None = None,
+    task_type: str = "classification",
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
     """
     Strategy B — Spatial Block CV.
@@ -91,6 +92,7 @@ def build_spatial_splits(
         y:          Labels
         coords:     (n, 2) array of [Latitude, Longitude]
         n_clusters: Number of geographic blocks (default = 3 × n_splits, capped by sample count)
+        task_type:  'classification' or 'regression'
 
     Returns:
         (splits, geo_groups) — splits for CV, geo_groups for inspection
@@ -108,7 +110,7 @@ def build_spatial_splits(
 
     print("\n  Geographic block distribution:")
     # Check if target is binary/categorical (for classification prevalence logging)
-    is_binary = np.issubdtype(y.dtype, np.integer) and bool(set(np.unique(y)) <= {0, 1})
+    is_binary = task_type == "classification" and np.issubdtype(y.dtype, np.integer) and bool(set(np.unique(y)) <= {0, 1})
     for block_id in range(cluster_count):
         block_mask = geo_groups == block_id
         block_total = int(block_mask.sum())
@@ -349,7 +351,7 @@ def run(strategy: str = "compare") -> dict:
         if coords is not None and len(coords) >= N_SPLITS:
             try:
                 _splits, geo_groups = build_spatial_splits(
-                    X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS))
+                    X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS)), task_type=task_type
                 )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
                 selected_type = "GroupKFold"

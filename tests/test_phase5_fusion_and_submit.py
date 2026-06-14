@@ -97,3 +97,68 @@ def test_submission_validate_and_determine(tmp_path):
     dup.write_text("ID,Prediction\n3,0\n3,1\n", encoding="utf-8")
     errs_dup = submitter.validate(dup, sample)
     assert any("Duplicate IDs" in e for e in errs_dup)
+
+def test_submission_8_checks(tmp_path, monkeypatch):
+    import pandas as pd
+    orig_read_csv = pd.read_csv
+    def mock_read_csv(filepath_or_buffer, *args, **kwargs):
+        if "bad_sample" in str(filepath_or_buffer):
+            return pd.DataFrame()
+        return orig_read_csv(filepath_or_buffer, *args, **kwargs)
+    monkeypatch.setattr(pd, "read_csv", mock_read_csv)
+
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    sample = raw / "SampleSubmission.csv"
+    sample.write_text("ID,Prediction\n3,0\n4,1\n", encoding="utf-8")
+
+    # 1. Column layout check
+    sub1 = tmp_path / "sub1.csv"
+    sub1.write_text("ID,Pred\n3,0\n4,1\n", encoding="utf-8")
+    errs = submitter.validate(sub1, sample)
+    assert any("Column mismatch" in e for e in errs)
+
+    # 2. Row count check
+    sub2 = tmp_path / "sub2.csv"
+    sub2.write_text("ID,Prediction\n3,0\n", encoding="utf-8")
+    errs = submitter.validate(sub2, sample)
+    assert any("Row count" in e for e in errs)
+
+    # 3. ID column presence in submission
+    sub3 = tmp_path / "sub3.csv"
+    sub3.write_text("IDX,Prediction\n3,0\n4,1\n", encoding="utf-8")
+    errs = submitter.validate(sub3, sample)
+    assert any("missing 'ID' column" in e for e in errs)
+
+    # 4. ID column presence in SampleSubmission
+    bad_sample = tmp_path / "bad_sample.csv"
+    bad_sample.write_text("IDX,Prediction\n3,0\n4,1\n", encoding="utf-8")
+    sub4 = tmp_path / "sub4.csv"
+    sub4.write_text("ID,Prediction\n3,0\n4,1\n", encoding="utf-8")
+    errs = submitter.validate(sub4, bad_sample)
+    assert any("SampleSubmission missing 'ID' column" in e for e in errs)
+
+    # 5. ID values set mismatch check
+    sub5 = tmp_path / "sub5.csv"
+    sub5.write_text("ID,Prediction\n3,0\n5,1\n", encoding="utf-8")
+    errs = submitter.validate(sub5, sample)
+    assert any("set mismatch" in e for e in errs)
+
+    # 6. ID values order mismatch check
+    sub6 = tmp_path / "sub6.csv"
+    sub6.write_text("ID,Prediction\n4,1\n3,0\n", encoding="utf-8")
+    errs = submitter.validate(sub6, sample)
+    assert any("order mismatch" in e for e in errs)
+
+    # 7. Nulls check
+    sub7 = tmp_path / "sub7.csv"
+    sub7.write_text("ID,Prediction\n3,\n4,1\n", encoding="utf-8")
+    errs = submitter.validate(sub7, sample)
+    assert any("Nulls in" in e for e in errs)
+
+    # 8. Duplicate IDs check
+    sub8 = tmp_path / "sub8.csv"
+    sub8.write_text("ID,Prediction\n3,0\n3,1\n", encoding="utf-8")
+    errs = submitter.validate(sub8, sample)
+    assert any("Duplicate IDs" in e for e in errs)
+

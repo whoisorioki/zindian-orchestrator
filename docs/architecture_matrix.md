@@ -4,7 +4,7 @@ Repository snapshot: current working commit `2d53250`.
 
 ## Purpose
 
-This document is the onboarding map for the orchestrator. It describes the stable control flow, the feedback loops, and the extension boundaries that keep the system generic across Problem 1 (generic orchestrator infrastructure) and Problem 2 (EY Frogs execution).
+This document is the onboarding map for the orchestrator. It describes the stable control flow, the feedback loops, and the extension boundaries that keep the system generic across any tabular or geospatial machine learning challenges.
 
 It does not change runtime logic. It records how the current pipeline is structured so future algorithms and methods can be added without rewriting the control plane.
 

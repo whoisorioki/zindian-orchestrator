@@ -30,7 +30,14 @@ if hasattr(sys.stdout, "reconfigure"):
 import pandas as pd
 
 ROOT = Path(__file__).parent.parent
-COMP_DIR = ROOT / "competitions" / "ey-frogs"
+
+try:
+    from zindian.paths import resolve_competition_paths
+    paths = resolve_competition_paths()
+    COMP_DIR = paths.competition_dir or (ROOT / "competitions" / "ey-frogs")
+except Exception:
+    COMP_DIR = ROOT / "competitions" / "ey-frogs"
+
 DATA_RAW = COMP_DIR / "data" / "raw"
 DATA_PROC = COMP_DIR / "data" / "processed"
 SUBS_DIR = COMP_DIR / "submissions"

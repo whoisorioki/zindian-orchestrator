@@ -31,12 +31,12 @@ MAX_RETRIES = 5
 BASE_BACKOFF = 2
 
 QUERY_TEMPLATES = [
-    "TerraClimate species distribution modelling Australia",
-    "TerraClimate amphibian occurrence prediction",
-    "{var} climate variable frog distribution southeastern Australia",
+    "TerraClimate species distribution modelling",
+    "TerraClimate species occurrence prediction",
+    "{var} climate variable species distribution",
     "monthly climate features species distribution machine learning",
-    "TerraClimate temporal features biodiversity modelling",
-    "precipitation temperature amphibian habitat suitability Australia",
+    "TerraClimate temporal features species modelling",
+    "precipitation temperature species suitability",
 ]
 
 _SS_CLIENT: Any = None
@@ -52,46 +52,83 @@ except Exception:
 
 
 def build_queries(tc_variables: list[str]) -> list[str]:
+    keywords = []
     comp_name = "Species distribution modelling"
     comp_domain = "biodiversity"
+    target_col = "Occurrence Status"
+    slug = ""
     try:
         cfg = ChallengeConfig.load()
+        if cfg.get("domain_keywords"):
+            keywords = cfg.get("domain_keywords")
         if cfg.get("name"):
             comp_name = cfg.get("name")
         if cfg.get("domain"):
             comp_domain = cfg.get("domain")
+        if cfg.get("target_col"):
+            target_col = cfg.get("target_col")
+        if cfg.get("slug"):
+            slug = cfg.get("slug")
     except Exception:
         pass
 
-    is_frog_comp = any(
-        k in comp_name.lower() or k in comp_domain.lower()
-        for k in ["frog", "amphibian", "biodiversity"]
-    )
+    # 1. Fallback cascade if no explicit keywords are defined
+    if not isinstance(keywords, list) or not keywords:
+        sources = [comp_name, target_col, slug]
+        try:
+            paths = resolve_competition_paths()
+            sources.append(paths.config_path.parent.name)
+        except Exception:
+            pass
 
-    if is_frog_comp:
-        queries = []
-        for tmpl in QUERY_TEMPLATES:
-            if "{var}" in tmpl:
-                for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
-                    queries.append(tmpl.format(var=var))
-            else:
-                queries.append(tmpl)
-        return queries
-    else:
-        queries = [
+        found = []
+        stopwords = {
+            "the", "and", "for", "with", "from", "challenge", "competition",
+            "modelling", "modeling", "prediction", "predict", "predictive", "status",
+            "occurrence", "distribution", "value", "target", "label",
+            "column", "series", "study", "jam", "june", "volume", "forecasting", "transaction"
+        }
+        for source_str in sources:
+            if source_str:
+                # Find all alphabetical words of length >= 3
+                for w in re.findall(r"\b[a-zA-Z]{3,}\b", source_str.lower()):
+                    if w not in stopwords:
+                        found.append(w)
+                # also split by separators (dashes, underscores)
+                for part in re.split(r"[-_ ]", source_str.lower()):
+                    w_clean = re.sub(r"[^a-z]", "", part)
+                    if len(w_clean) >= 3 and w_clean not in stopwords:
+                        found.append(w_clean)
+        keywords = sorted(list(set(found)))
+
+    # 2. Ultimate fallback to prevent empty keywords
+    if not keywords:
+        keywords = ["biodiversity", "species"]
+
+    # 3. Generate query set dynamically using the keywords
+    queries = []
+    
+    # Base generic ML queries
+    if comp_name:
+        queries.extend([
             f"{comp_name} machine learning pipeline",
             f"{comp_name} feature engineering techniques",
             f"{comp_name} winning solution writeup",
             f"{comp_name} cross validation strategy",
-        ]
-        if tc_variables:
-            queries.extend(
-                [
-                    f"{var} feature representation in {comp_name}"
-                    for var in tc_variables[:3]
-                ]
-            )
-        return queries
+        ])
+
+    # Dynamic queries based on extracted/configured domain keywords
+    for kw in keywords:
+        queries.extend([
+            f"TerraClimate {kw} occurrence prediction",
+            f"precipitation temperature {kw} suitability",
+            f"TerraClimate temporal features {kw} modelling",
+        ])
+        for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
+            queries.append(f"{var} climate variable {kw} distribution")
+
+    return sorted(list(set(queries)))
+
 
 
 def fetch_papers(query: str, limit: int = 5) -> list[dict]:

@@ -115,7 +115,7 @@ SCIENTIST_SYSTEM = """
 You are a feature engineering scientist for species distribution modelling.
 You will receive ecological hypotheses and ML prior art, plus a list of AVAILABLE feature columns.
 
-Your job: identify which features or transformations are most likely to predict frog occurrence in southeastern Australia,
+Your job: identify which features or transformations are most likely to predict the target occurrence,
 using ONLY the available columns provided.
 
 Output a JSON array. Each element must follow this exact schema:
@@ -347,7 +347,7 @@ def run_scientist(
                 "species distribution modelling", f"machine learning for {comp_name}"
             )
             .replace(
-                "predict frog occurrence in southeastern Australia",
+                "predict the target occurrence",
                 f"predict the target column in {comp_name}",
             )
             .replace("predict frog presence", "predict the target")

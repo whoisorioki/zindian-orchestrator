@@ -47,8 +47,48 @@ def extract_config(data: dict, slug: str) -> dict:
     subtitle = data.get("subtitle")
     end_time = data.get("end_time")
 
-    # Metric must come from API. If missing, write null and raise ConfigNotPopulated.
+    # Metric must come from API or be parsed from sections. If missing, write null.
     metric = data.get("metric")
+    if metric is None and rules_text:
+        text_lower = rules_text.lower()
+        import re
+        metric_patterns = [
+            r"evaluation metric.*?is\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
+            r"scored using\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
+            r"error metric.*?(f1|rmse|mae|auc|accuracy|log.?loss|f-1)",
+        ]
+        for pattern in metric_patterns:
+            m = re.search(pattern, text_lower)
+            if m:
+                raw = m.group(1).strip()
+                if "f1" in raw or "f-1" in raw:
+                    metric = "f1_score"
+                elif "rmse" in raw:
+                    metric = "rmse"
+                elif "mae" in raw:
+                    metric = "mae"
+                elif "log" in raw:
+                    metric = "log_loss"
+                elif "auc" in raw:
+                    metric = "auc"
+                elif "accuracy" in raw:
+                    metric = "accuracy"
+                break
+        
+        if not metric:
+            if "f1 score" in text_lower or "f-1 score" in text_lower:
+                metric = "f1_score"
+            elif "root mean squared" in text_lower or "rmse" in text_lower:
+                metric = "rmse"
+            elif "mean absolute" in text_lower or " mae" in text_lower:
+                metric = "mae"
+            elif "log loss" in text_lower or "logloss" in text_lower:
+                metric = "log_loss"
+            elif "area under" in text_lower or " auc " in text_lower:
+                metric = "auc"
+            elif "accuracy" in text_lower:
+                metric = "accuracy"
+
     metric_direction = data.get("metric_direction")
 
     # Determine task_type dynamically if possible
@@ -70,10 +110,17 @@ def extract_config(data: dict, slug: str) -> dict:
         else:
             task_type = None
 
-    # Derive use_probabilities from metric when possible.
+    # Derive use_probabilities from metric/rules when possible.
     use_probabilities = data.get("use_probabilities")
     if use_probabilities is None:
-        if metric is not None:
+        if rules_text:
+            text_lower = rules_text.lower()
+            if "do not set thresholds" in text_lower or "raw probabilities" in text_lower or "if the error metric requires probabilities" in text_lower:
+                use_probabilities = True
+            elif "hard labels" in text_lower or "0/1 labels" in text_lower:
+                use_probabilities = False
+        
+        if use_probabilities is None and metric is not None:
             m = str(metric).lower()
             if m in ("log_loss", "logloss", "cross_entropy", "auc"):
                 use_probabilities = True
@@ -81,6 +128,7 @@ def extract_config(data: dict, slug: str) -> dict:
                 use_probabilities = False
             else:
                 use_probabilities = None
+
 
     # Limits and splits: take from API when provided, otherwise leave null.
     daily_limit = data.get("daily_limit")
@@ -245,17 +293,17 @@ def extract_config(data: dict, slug: str) -> dict:
 
     if config.get("use_probabilities") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if m in ("log_loss", "logloss", "cross_entropy", "auc"):
+        if any(x in m for x in ("log_loss", "logloss", "cross_entropy", "auc", "area_under_curve")):
             config["use_probabilities"] = True
-        elif m in ("f1_score", "f1", "accuracy", "rmse", "mae"):
+        elif any(x in m for x in ("f1", "accuracy", "rmse", "mae", "root_mean_squared", "mean_absolute", "bleu")):
             config["use_probabilities"] = False
 
     # Derive metric_direction from metric when not provided
     if config.get("metric_direction") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if m in ("f1_score", "f1", "accuracy", "auc"):
+        if any(x in m for x in ("f1", "accuracy", "auc", "area_under_curve", "bleu", "straight_accuracy")):
             config["metric_direction"] = "maximize"
-        elif m in ("rmse", "mae", "log_loss", "logloss", "cross_entropy"):
+        elif any(x in m for x in ("rmse", "mae", "log_loss", "logloss", "cross_entropy", "root_mean_squared", "mean_absolute")):
             config["metric_direction"] = "minimize"
         else:
             config["metric_direction"] = None

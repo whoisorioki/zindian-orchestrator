@@ -3,7 +3,7 @@ Skill 10 — Governed SHAP Audit
 
 Trains a LightGBM model on the current competition feature set, computes
 fold-level TreeSHAP importances, and evaluates a lightweight correlation-pruning
-wrapper using the active gate metric (F1 for EY Frogs).
+wrapper using the active gate metric.
 
 Outputs:
   - competitions/<slug>/reports/shap_analysis.json
@@ -57,7 +57,7 @@ def _detect_target(config: ChallengeConfig, frame: pd.DataFrame) -> str:
         value = config.get(key)
         if isinstance(value, str) and value and value in frame.columns:
             return value
-    for candidate in ("Occurrence Status", "target", "label"):
+    for candidate in ("target", "label", "target_col", "y"):
         if candidate in frame.columns:
             return candidate
     for column in frame.columns:
@@ -88,14 +88,30 @@ def _train_shap_fold_model(
     val_y: np.ndarray,
     *,
     seed: int,
-) -> lgb.LGBMClassifier:
-    model = lgb.LGBMClassifier(
-        n_estimators=500,
-        learning_rate=0.05,
-        num_leaves=31,
-        random_state=seed,
-        verbose=-1,
-    )
+) -> lgb.LGBMClassifier | lgb.LGBMRegressor:
+    try:
+        from zindian.config import ChallengeConfig
+        config = ChallengeConfig.load()
+        task_type = config.get("task_type", "classification")
+    except Exception:
+        task_type = "classification"
+
+    if task_type == "regression":
+        model = lgb.LGBMRegressor(
+            n_estimators=500,
+            learning_rate=0.05,
+            num_leaves=31,
+            random_state=seed,
+            verbose=-1,
+        )
+    else:
+        model = lgb.LGBMClassifier(
+            n_estimators=500,
+            learning_rate=0.05,
+            num_leaves=31,
+            random_state=seed,
+            verbose=-1,
+        )
     model.fit(
         train_x,
         train_y,
@@ -112,9 +128,13 @@ def _compute_shap_audit(
     *,
     n_splits: int = 5,
     seed: int | None = None,
+    task_type: str = "classification",
 ) -> dict:
     X = np.asarray(frame[feature_cols].values, dtype=np.float64)
-    y = np.asarray(frame[target].values, dtype=np.int32)
+    if task_type == "regression":
+        y = np.asarray(frame[target].values, dtype=np.float64)
+    else:
+        y = np.asarray(frame[target].values, dtype=np.int32)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
@@ -139,17 +159,24 @@ def _compute_shap_audit(
             y[val_idx],
             seed=seed + fold_idx,
         )
-        val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[:, 1]
-        oof_probs[val_idx] = val_probs
-        fold_auc = float(roc_auc_score(y[val_idx], val_probs))
-        fold_aucs.append(fold_auc)
+        if task_type == "regression":
+            val_preds = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
+            oof_probs[val_idx] = val_preds
+            from sklearn.metrics import root_mean_squared_error
+            fold_rmse = float(root_mean_squared_error(y[val_idx], val_preds))
+            fold_aucs.append(fold_rmse)
+            print(f"  Fold {fold_idx}/{n_splits}: rmse={fold_rmse:.6f}")
+        else:
+            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[:, 1]
+            oof_probs[val_idx] = val_probs
+            fold_auc = float(roc_auc_score(y[val_idx], val_probs))
+            fold_aucs.append(fold_auc)
+            print(f"  Fold {fold_idx}/{n_splits}: auc={fold_auc:.6f}")
 
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X[val_idx], check_additivity=False)
         fold_importance = np.abs(_as_positive_shap_values(shap_values)).mean(axis=0)
         fold_importances.append(fold_importance)
-
-        print(f"  Fold {fold_idx}/{n_splits}: auc={fold_auc:.6f}")
 
     mean_abs_shap = np.mean(np.vstack(fold_importances), axis=0)
     ranking = (
@@ -166,23 +193,38 @@ def _compute_shap_audit(
     )
     tail_share = float(1.0 - top15_share) if shap_total > 0 else 0.0
 
-    thresholds = np.arange(0.3, 0.7, 0.01)
-    best_threshold = float(
-        max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
-    )
-    oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
-    oof_auc = float(roc_auc_score(y, oof_probs))
+    if task_type == "regression":
+        from sklearn.metrics import root_mean_squared_error
+        oof_rmse = float(root_mean_squared_error(y, oof_probs))
+        return {
+            "oof_probs": oof_probs,
+            "oof_auc": 0.0,
+            "oof_f1": 0.0,
+            "oof_rmse": oof_rmse,
+            "threshold": 0.0,
+            "fold_aucs": fold_aucs,
+            "ranking": ranking,
+            "top15_share": top15_share,
+            "tail_share": tail_share,
+        }
+    else:
+        thresholds = np.arange(0.3, 0.7, 0.01)
+        best_threshold = float(
+            max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+        )
+        oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
+        oof_auc = float(roc_auc_score(y, oof_probs))
 
-    return {
-        "oof_probs": oof_probs,
-        "oof_auc": oof_auc,
-        "oof_f1": oof_f1,
-        "threshold": best_threshold,
-        "fold_aucs": fold_aucs,
-        "ranking": ranking,
-        "top15_share": top15_share,
-        "tail_share": tail_share,
-    }
+        return {
+            "oof_probs": oof_probs,
+            "oof_auc": oof_auc,
+            "oof_f1": oof_f1,
+            "threshold": best_threshold,
+            "fold_aucs": fold_aucs,
+            "ranking": ranking,
+            "top15_share": top15_share,
+            "tail_share": tail_share,
+        }
 
 
 def _build_pruned_feature_set(
@@ -248,10 +290,83 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
     print(f"Target           : {target}")
     print(f"Features         : {len(feature_cols)}")
     print(f"DAG phase        : {state.get('dag_phase')}")
+
+    task_type = config.get("task_type", "classification")
+
+    if len(feature_cols) < 2:
+        print("⚠️ X.shape[1] < 2: skipping SHAP ratio audit.")
+        # Perform 5-fold CV to get oof_probs and metrics
+        splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed or get_seed())
+        X = np.asarray(frame[feature_cols].values, dtype=np.float64)
+        if task_type == "regression":
+            y = np.asarray(frame[target].values, dtype=np.float64)
+        else:
+            y = np.asarray(frame[target].values, dtype=np.int32)
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X)
+        oof_probs = np.zeros(len(frame), dtype=np.float64)
+        for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y), start=1):
+            model = _train_shap_fold_model(
+                X[train_idx], y[train_idx], X[val_idx], y[val_idx], seed=(seed or get_seed()) + fold_idx
+            )
+            if task_type == "regression":
+                val_preds = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
+                oof_probs[val_idx] = val_preds
+            else:
+                val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[:, 1]
+                oof_probs[val_idx] = val_probs
+
+        state_store = SkillStateStore(paths.state_path)
+        try:
+            cfg = ChallengeConfig.load()._data
+        except Exception:
+            cfg = {}
+        try:
+            cv_id = resolve_active_cv_strategy_id(state, cfg)
+        except Exception:
+            cv_id = "unknown"
+
+        state_store.update(
+            shap_completed_at=datetime.now(timezone.utc).isoformat(),
+            shap_feature_count=len(feature_cols),
+            shap_audit_skipped_reason="single_feature",
+            last_updated=datetime.now(timezone.utc).isoformat(),
+            shap_oof_cv_strategy_id=cv_id,
+        )
+        write_oof_record(
+            state_store,
+            branch_name="shap_audit",
+            scores=np.asarray(oof_probs, dtype=np.float64).tolist(),
+            cv_strategy_id=cv_id,
+            seed=int(seed if seed is not None else get_seed()),
+            model_config={
+                "feature_count": len(feature_cols),
+                "n_splits": n_splits,
+                "shap_audit_skipped_reason": "single_feature",
+            },
+        )
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "competition": config.slug,
+            "target": target,
+            "feature_count": len(feature_cols),
+            "shap_audit_skipped_reason": "single_feature",
+            "shap": {
+                "oof_probs": oof_probs,
+                "oof_auc": 0.5,
+                "oof_f1": 0.0,
+                "threshold": 0.5,
+                "fold_aucs": [0.5] * n_splits,
+                "ranking": pd.DataFrame({"feature": feature_cols, "mean_abs_shap": [0.0]}),
+                "top15_share": 1.0,
+                "tail_share": 0.0,
+            }
+        }
+
     print("Training governed SHAP audit…")
 
     full_audit = _compute_shap_audit(
-        frame, feature_cols, target, n_splits=n_splits, seed=seed
+        frame, feature_cols, target, n_splits=n_splits, seed=seed, task_type=task_type
     )
     ranking = full_audit["ranking"]
     pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
@@ -280,15 +395,24 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         early_stopping_rounds=50,
     )
 
-    pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
-    pruning_pass = pruning_delta >= 0.005
+    if task_type == "regression":
+        metric_direction = config.get("metric_direction", "minimize")
+        if metric_direction == "minimize":
+            pruning_delta = float(full_cv.oof_rmse - pruned_cv.oof_rmse)
+        else:
+            pruning_delta = float(pruned_cv.oof_rmse - full_cv.oof_rmse)
+        target_std = float(state.get("eda", {}).get("target_std", 1.0))
+        pruning_pass = pruning_delta >= -0.01 * target_std
+    else:
+        pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
+        pruning_pass = pruning_delta >= 0.005
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "competition": config.slug,
         "target": target,
         "feature_count": len(feature_cols),
-        "metric": "f1_score",
+        "metric": "rmse" if task_type == "regression" else "f1_score",
         "shap": {
             "fold_aucs": full_audit["fold_aucs"],
             "oof_auc": full_audit["oof_auc"],
@@ -303,29 +427,48 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
             "correlated_pairs": pruning["correlated_pairs"],
             "dropped_features": pruning["drop_features"],
             "pruned_feature_count": len(pruning["pruned_features"]),
-            "full_oof_f1": full_cv.oof_f1,
-            "pruned_oof_f1": pruned_cv.oof_f1,
+            "full_oof_f1": full_cv.oof_rmse if task_type == "regression" else full_cv.oof_f1,
+            "pruned_oof_f1": pruned_cv.oof_rmse if task_type == "regression" else pruned_cv.oof_f1,
             "delta_f1": pruning_delta,
             "gate_pass": pruning_pass,
         },
     }
+    if task_type == "regression":
+        report["shap"]["oof_rmse"] = full_audit["oof_rmse"]
 
-    summary_lines = [
-        f"# SHAP Audit Summary — {report['generated_at']}",
-        f"**Feature count**: {len(feature_cols)}",
-        f"**Target**: {target}",
-        f"**Full OOF AUC**: {full_audit['oof_auc']:.6f}",
-        f"**Full OOF F1**: {full_audit['oof_f1']:.6f} (threshold={full_audit['threshold']:.2f})",
-        f"**Top-15 SHAP share**: {full_audit['top15_share']:.3%}",
-        f"**Tail SHAP share**: {full_audit['tail_share']:.3%}",
-        f"**High-correlation pairs**: {len(pruning['correlated_pairs'])}",
-        f"**Pruned feature count**: {len(pruning['pruned_features'])}",
-        f"**Pruned OOF F1**: {pruned_cv.oof_f1:.6f}",
-        f"**Delta F1**: {pruning_delta:+.6f}",
-        f"**Pruning gate**: {'PASS' if pruning_pass else 'PRUNE'}",
-        "",
-        "## Top 10 SHAP Features",
-    ]
+    if task_type == "regression":
+        summary_lines = [
+            f"# SHAP Audit Summary — {report['generated_at']}",
+            f"**Feature count**: {len(feature_cols)}",
+            f"**Target**: {target}",
+            f"**Full OOF RMSE**: {full_audit['oof_rmse']:.6f}",
+            f"**Top-15 SHAP share**: {full_audit['top15_share']:.3%}",
+            f"**Tail SHAP share**: {full_audit['tail_share']:.3%}",
+            f"**High-correlation pairs**: {len(pruning['correlated_pairs'])}",
+            f"**Pruned feature count**: {len(pruning['pruned_features'])}",
+            f"**Pruned OOF RMSE**: {pruned_cv.oof_rmse:.6f}",
+            f"**Delta RMSE**: {pruning_delta:+.6f}",
+            f"**Pruning gate**: {'PASS' if pruning_pass else 'PRUNE'}",
+            "",
+            "## Top 10 SHAP Features",
+        ]
+    else:
+        summary_lines = [
+            f"# SHAP Audit Summary — {report['generated_at']}",
+            f"**Feature count**: {len(feature_cols)}",
+            f"**Target**: {target}",
+            f"**Full OOF AUC**: {full_audit['oof_auc']:.6f}",
+            f"**Full OOF F1**: {full_audit['oof_f1']:.6f} (threshold={full_audit['threshold']:.2f})",
+            f"**Top-15 SHAP share**: {full_audit['top15_share']:.3%}",
+            f"**Tail SHAP share**: {full_audit['tail_share']:.3%}",
+            f"**High-correlation pairs**: {len(pruning['correlated_pairs'])}",
+            f"**Pruned feature count**: {len(pruning['pruned_features'])}",
+            f"**Pruned OOF F1**: {pruned_cv.oof_f1:.6f}",
+            f"**Delta F1**: {pruning_delta:+.6f}",
+            f"**Pruning gate**: {'PASS' if pruning_pass else 'PRUNE'}",
+            "",
+            "## Top 10 SHAP Features",
+        ]
     for idx, row in ranking.head(10).iterrows():
         summary_lines.append(
             f"{idx + 1}. {row['feature']} — {row['mean_abs_shap']:.8f}"
