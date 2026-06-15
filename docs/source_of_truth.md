@@ -883,7 +883,7 @@ No string literals permitted in `skill_05` body.
 **Phase 1 → Phase 2A gate:**
 
 ```
-[ ] challenge_config.json matches v2.1 schema — all
+[ ] challenge_config.json matches v2.2 schema — all
     fields present and non-null where required
 [ ] task_type, metric, target_col confirmed
 [ ] metric_direction written and set

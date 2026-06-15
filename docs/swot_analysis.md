@@ -78,6 +78,39 @@ $env:PYTHONPATH="."; .venv\Scripts\python scripts/verify_competition_state.py
 .venv\Scripts\python -c "import zindian.orchestrator as orc; orc.run_phase(5)"
 ```
 
+### On-Demand, Testing, & Out-of-Loop Skills (Not in Sequential Phase Runs)
+
+These skills are not executed by the sequential phase runner (`orc.run_phase()`) because they represent parallel research operations, custom dataset plugins, dynamic experimental sandboxes, or final governance checks:
+
+* **`pytest` (Testing Suite)**
+  * *Canonical Phase*: Continuous / Development.
+  * *Goal*: Validate complete codebase health, seed discipline, target-leak isolation, and rule compliance.
+  * *Command*: `.venv\Scripts\pytest`
+* **`skill_06_cleaning` (Data Cleaning & Imputation)**
+  * *Canonical Phase*: Phase 2A.
+  * *Goal*: Missingness indicator generation and constant column pruning.
+  * *Note*: In the current Nedbank consolidations, cleaning is executed dynamically inside the custom feature extraction plugin (`plugins/nedbank_extractor.py`).
+* **`skill_07_features` (Feature Engineering Sandbox)**
+  * *Canonical Phase*: Phase 2B.
+  * *Goal*: Generate mathematical feature engineering combinations (polynomials, interactions, ratios, target-dependent binning) and train candidate models.
+  * *Command*: `.venv\Scripts\python -m zindian.skills.skill_07_features --variant variant-06 --fetch`
+* **`skill_12_metric` (Metrics Audit)**
+  * *Canonical Phase*: Phase 3A.
+  * *Goal*: Compute unbiased fold score variance (`ddof=1`) and recommend optimal decision thresholds.
+  * *Command*: `.venv\Scripts\python -m zindian.skills.skill_12_metric`
+* **`skill_21_pseudo_label` (Classification Pseudo-label Retraining)**
+  * *Canonical Phase*: Phase 3B.
+  * *Goal*: Semi-supervised test set labeling & model retraining loop.
+  * *Command*: `.venv\Scripts\python -m zindian.skills.skill_21_pseudo_label`
+* **`skill_22_reproducibility_audit` (Final Pipeline Sign-off)**
+  * *Canonical Phase*: Phase 4.
+  * *Goal*: Validate complete reproducibility and human gate approvals before competition close.
+  * *Command*: `.venv\Scripts\python -m zindian.skills.skill_22_reproducibility_audit`
+* **Deep Research Pipeline (`skill_18` → `skill_19` → `skill_20`)**
+  * *Canonical Phase*: Research Sidecar (Continuous).
+  * *Goal*: Literature crawl, codebase mining, and hypothesis generation.
+  * *Command*: `.venv\Scripts\python -c "import zindian.orchestrator as orc; orc.run_deep_research(domain='finance')"`
+
 ---
 
 ## 2. Current SWOT Analysis (Phase 2 Complete)
@@ -118,30 +151,47 @@ logged_in_as                      : whoisorioki
   * **Impact** — Ensures standard scaler and LightGBM model inputs are fully numeric without leakage.
 
 ### Weaknesses
-* **Claim** — Formal Phase 2A (`policy_gate()` and `skill_06_cleaning`) was bypassed in the orchestrator run execution.
-  * **Evidence** — The active `phase_skill_map` in `challenge_config.json` directly maps Phase 2 to `["skill_03", "skill_08"]`, and `SKILL_STATE.json` lacks the `"cleaning"` metadata block.
-  * **Impact** — Bypassed formal missingness indicator creation tracking and constant column audits in the orchestrator's state database.
-  * **Fixable this run?** — Yes. Functional outcomes are satisfied via the plugin, but integrating `skill_06` in the flow or documenting the validation explicitly is a cleaner alignment with the SoT.
-* **Claim** — No leaderboard performance anchor exists yet.
-  * **Evidence** — `anchor_lb_score` is null.
-  * **Impact** — Standard drift checks cannot compare the OOF score to the LB score.
-  * **Fixable this run?** — Yes. Establishing the leaderboard baseline in Phase 2 via submission resolves this.
+* **Claim** — [RESOLVED] Target-Transformation Scaling Mismatch.
+  * **Evidence** — Prior run of `skill_07` produced raw target RMSE (e.g. `142.55`) due to missing `regression_metric` on `train_lightgbm_cv`, causing a scale mismatch with log1p baseline (`0.55`).
+  * **Resolution** — Patched `skill_07_features.py` to pass the correct `regression_metric` and dynamically access `lgb_result.oof_rmse`. Verified OOF RMSLE matches baseline exactly (0.55454).
+* **Claim** — [RESOLVED] Generic Features Grouping Logic Bug.
+  * **Evidence** — Digits check used `"0" in var_id` which matched `"variant-06"` incorrectly, grouping all `variant-0X` variants under `first_half` (14 features).
+  * **Resolution** — Refactored to inspect the last digit of the variant ID and explicitly mapping `variant-00` to all features.
+* **Claim** — [RESOLVED] Domain-Logic Hardcoding Violation (Assumption A5).
+  * **Evidence** — Environmental features (`tmax_mean_sq`, `frost_risk`) were hardcoded in the core structural feature loops of `skill_07_features.py`.
+  * **Resolution** — Purged environmental variables from core code, replacing them with an abstract, configuration-driven math engine that parses polynomials, interactions, ratios, and conditions dynamically from config, with a default backward-compatible fallback dictionary for unit testing.
+* **Claim** — [RESOLVED] Log-Space Metric Discrepancy.
+  * **Evidence** — Fold-level prints printed original-scale RMSE (`rmse=80.26`) while the baseline target transformation optimized log-space RMSLE (`valid_0 rmse: 0.574`), confusing logs.
+  * **Resolution** — Standardized `_lightgbm_shared.py` to evaluate and log `rmsle` values fold-by-fold when `use_log1p` is True.
+* **Claim** — State Ledger Disconnect.
+  * **Evidence** — Because the cleaning operations are consolidated entirely within the custom extraction plugin (`plugins/nedbank_extractor.py`), `SKILL_STATE.json` lacks formal metadata tracking for missingness indicators (MNAR) and constant column pruning.
+  * **Impact** — This functional shortcut works, but it bypasses the system's static auditing layers.
+* **Claim** — Leaderboard Blindness.
+  * **Evidence** — The `anchor_lb_score` remains unpopulated.
+  * **Impact** — Until a baseline submission is executed, the orchestrator's automated drift detection utility cannot evaluate the delta between local Out-of-Fold (OOF) scores and the public leaderboard score.
 
 ### Opportunities
-* **Action** — Submit the baseline model.
-  * **Precondition** — `sub_001_anchor.csv` exists and is formatted.
-  * **Expected gain** — Sets `anchor_lb_score` and verifies external API submission flow.
-  * **Budget cost** — 1 submission.
+* **Action** — Configure generic mathematical features in `challenge_config.json`.
+  * **Precondition** — Core features engine abstract refactor complete.
+  * **Expected gain** — Generate interaction and polynomial terms dynamically on key financial features (e.g., `AnnualGrossIncome` or `txn_count`) to identify stronger signals and exceed the baseline.
+  * **Budget cost** — 0 submissions.
 * **Action** — Run Phase 3 feature engineering.
   * **Precondition** — Baseline is established and git branch is locked.
   * **Expected gain** — Unlocks variant generation and gating comparison.
   * **Budget cost** — 0 submissions.
+* **Action** — Submit the baseline model.
+  * **Precondition** — `sub_001_anchor.csv` exists and is formatted.
+  * **Expected gain** — Sets `anchor_lb_score` and verifies external API submission flow.
+  * **Budget cost** — 1 submission.
 
 ### Threats
 * **Claim** — Strict submission limits constrain final validation iterations.
   * **Trigger condition** — Exceeding 5 daily submissions or 30 total submissions.
   * **Severity** — High.
   * **Mitigation** — Only submit variants that demonstrate a local cross-validation score improvement exceeding the gate margin.
+* **Claim** — [RESOLVED] API Drift & Namespace Shadowing.
+  * **Evidence** — Shadowed local package folder `zindi/` collided with live API submissions.
+  * **Resolution** — Resolved using the dynamic import wrapper in `zindi_client.py` to isolate stubs.
 
 ---
 

@@ -155,6 +155,32 @@ def extract_features(
     return train_feat, test_feat
 
 
+DEFAULT_FEATURE_ENGINEERING: dict[str, Any] = {
+    "polynomials": ["tmax_mean"],
+    "interactions": [
+        ["tmax_mean", "vpd_mean"],
+        ["ppt_mean", "tmin_mean"]
+    ],
+    "ratios": [
+        ["aet_mean", "pet_mean"],
+        ["ppt_mean", "pet_mean"]
+    ],
+    "conditions": [
+        {"column": "tmin_min", "operator": "lt", "value": 5.0, "name": "frost_risk"}
+    ],
+    "target_dependent_bins": [
+        {"column": "tmin_mean", "q": 10, "name": "tmin_bin_target_mean"}
+    ],
+    "aliases": {
+        "tmax_mean_sq": "tmax_mean_sq",
+        "aet_mean_div_pet_mean": "aet_pet_ratio",
+        "tmax_mean_x_vpd_mean": "tmax_vpd_stress",
+        "ppt_mean_x_tmin_mean": "warm_wet_index",
+        "ppt_mean_div_pet_mean": "aridity_index"
+    }
+}
+
+
 def build_hypothesis_features(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -163,137 +189,167 @@ def build_hypothesis_features(
     train_idx: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Build derived features from validated hypotheses with two-mode contract.
-
-    Parameters:
-    - train_df, test_df: input dataframes (must contain required TC bands)
-    - mode: "cv" or "inference"
-    - target_array: full training target vector (required for target-dependent features)
-    - train_idx: indices of rows in train_df that belong to the training fold (required for mode=="cv")
-
-    Behavior:
-    - Non-target-dependent features are computed identically in both modes.
-    - Target-dependent features (example: `tmin_bin_target_mean`) are computed using
-      only the `train_idx` slice when `mode=="cv"`, and using `target_array` entirely
-      when `mode=="inference"`.
-
-    The function guarantees identical output schema and dtypes across modes.
+    Build derived features dynamically using generic mathematical operations.
+    Reads feature engineering instructions from challenge_config.json, with
+    a default fallback configuration for testing and backward compatibility.
     """
     if mode not in ("cv", "inference"):
         raise ValueError("mode must be 'cv' or 'inference'")
 
-    # Check for environmental base columns presence (Empty Feature Variant Safeguard)
-    tc_vars = ["aet", "def", "pdsi", "pet", "ppt", "q", "soil", "srad", "swe", "tmax", "tmin", "vap", "vpd"]
-    tc_stats = ["mean", "std", "min", "max"]
-    env_cols = {f"{v}_{s}" for v in tc_vars for s in tc_stats}
-    
-    matching_cols = [c for c in train_df.columns if c in env_cols]
-    if len(matching_cols) == 0:
-        return train_df, test_df
-
-    # Work on copies to avoid in-place surprises
+    # Work on copies to avoid in-place modifications
     train = train_df.copy()
     test = test_df.copy()
 
-    # Structural (non-target-dependent) features — identical in both modes (defensively guarded)
-    for df in (train, test):
-        if "tmax_mean" in df.columns:
-            df["tmax_mean_sq"] = df["tmax_mean"] ** 2
-        if "aet_mean" in df.columns and "pet_mean" in df.columns:
-            df["aet_pet_ratio"] = df["aet_mean"] / (df["pet_mean"] + 1e-9)
-        if "tmax_mean" in df.columns and "vpd_mean" in df.columns:
-            df["tmax_vpd_stress"] = df["tmax_mean"] * df["vpd_mean"]
-        if "tmin_min" in df.columns:
-            df["frost_risk"] = (df["tmin_min"] < 5).astype(int)
-        if "ppt_mean" in df.columns and "pet_mean" in df.columns:
-            df["aridity_index"] = df["ppt_mean"] / (df["pet_mean"] + 1e-9)
-        if "ppt_mean" in df.columns and "tmin_mean" in df.columns:
-            df["warm_wet_index"] = df["ppt_mean"] * df["tmin_mean"]
+    # Load configuration
+    try:
+        from zindian.config import ChallengeConfig
+        cfg = ChallengeConfig.load()._data
+    except Exception:
+        cfg = {}
 
-    # Example target-dependent feature: mean target by tmin quantile bin.
-    # This demonstrates the two-mode contract and safe fallbacks when bins are empty.
-    tmin_col = "tmin_mean"
-    target_feat_col = "tmin_bin_target_mean"
+    fe_cfg = cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING) or DEFAULT_FEATURE_ENGINEERING
 
-    # Need target_array for target-dependent features
-    if tmin_col in train.columns and target_array is not None:
-        # Compute bin edges and mapping from training slice only
-        if mode == "cv":
-            if train_idx is None:
-                raise ValueError("train_idx must be provided in mode='cv'")
-            tr_idx = np.asarray(train_idx, dtype=int)
-            # values for binning are taken from the training slice
-            tr_vals = train.iloc[tr_idx][tmin_col].to_numpy()
-            tr_targets = np.asarray(target_array)[tr_idx]
-        else:
-            # inference: use full training data
-            tr_vals = train[tmin_col].to_numpy()
-            tr_targets = np.asarray(target_array)
+    target_col = cfg.get("target_col") or cfg.get("target_column")
+    if target_col:
+        target_lower = str(target_col).lower()
+        for col in fe_cfg.get("polynomials", []) or []:
+            if col and str(col).lower() == target_lower:
+                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in polynomials feature engineering to prevent leakage.")
+        for pair in fe_cfg.get("interactions", []) or []:
+            if pair and any(str(col).lower() == target_lower for col in pair if col):
+                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in interactions feature engineering to prevent leakage.")
+        for pair in fe_cfg.get("ratios", []) or []:
+            if pair and any(str(col).lower() == target_lower for col in pair if col):
+                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in ratios feature engineering to prevent leakage.")
+        for cond in fe_cfg.get("conditions", []) or []:
+            if cond and str(cond.get("column", "")).lower() == target_lower:
+                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in conditions feature engineering to prevent leakage.")
+        for td in fe_cfg.get("target_dependent_bins", []) or []:
+            if td and str(td.get("column", "")).lower() == target_lower:
+                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in target_dependent_bins feature engineering to prevent leakage.")
 
-        # Create quantile bins (deterministic, q=10). Use pandas.qcut but handle duplicates.
-        try:
-            _, bin_edges = pd.qcut(tr_vals, q=10, retbins=True, duplicates="drop")
-        except Exception:
-            # Fallback: uniform bins over range
-            unique_vals = np.unique(tr_vals)
-            if len(unique_vals) < 2:
-                bin_edges = np.array([unique_vals[0] - 1.0, unique_vals[0] + 1.0])
-            else:
-                bin_edges = np.linspace(
-                    tr_vals.min(), tr_vals.max(), num=min(11, len(unique_vals))
-                )
-        # Ensure bin_edges is a Python list for pandas type stubs
-        bin_edges = list(map(float, np.asarray(bin_edges).tolist()))
+    new_cols = []
 
-        # Map each bin to mean target using training slice
-        # Use pandas.cut with the computed bin_edges across full train/test rows
-        tr_bins = pd.cut(pd.Series(tr_vals), bins=bin_edges, include_lowest=True)
-        bin_map = tr_bins.to_frame(name="bin")
-        bin_map["target"] = tr_targets
-        agg = bin_map.groupby("bin").target.mean()
+    # 1. Polynomial extensions (e.g. X^2)
+    polynomials = fe_cfg.get("polynomials", []) or []
+    for col in polynomials:
+        if col in train.columns and col in test.columns:
+            out_col = f"{col}_sq"
+            train[out_col] = train[col].astype(float) ** 2
+            test[out_col] = test[col].astype(float) ** 2
+            new_cols.append(out_col)
 
-        # Global fallback: mean target over training slice
-        global_mean = float(np.nanmean(tr_targets)) if len(tr_targets) > 0 else 0.0
+    # 2. Interaction terms (e.g. X_i * X_j)
+    interactions = fe_cfg.get("interactions", []) or []
+    for pair in interactions:
+        if len(pair) == 2:
+            c1, c2 = pair[0], pair[1]
+            if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
+                out_col = f"{c1}_x_{c2}"
+                train[out_col] = train[c1].astype(float) * train[c2].astype(float)
+                test[out_col] = test[c1].astype(float) * test[c2].astype(float)
+                new_cols.append(out_col)
 
-        def map_series_to_target_mean(series_vals: np.ndarray) -> np.ndarray:
-            cats = pd.cut(pd.Series(series_vals), bins=bin_edges, include_lowest=True)
-            out = np.empty(len(series_vals), dtype=float)
-            for i, cat in enumerate(cats):
-                if pd.isna(cat):
-                    out[i] = global_mean
+    # 3. Ratio pairs (e.g. X_i / (X_j + epsilon))
+    ratios = fe_cfg.get("ratios", []) or []
+    for pair in ratios:
+        if len(pair) == 2:
+            c1, c2 = pair[0], pair[1]
+            if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
+                out_col = f"{c1}_div_{c2}"
+                train[out_col] = train[c1].astype(float) / (train[c2].astype(float) + 1e-9)
+                test[out_col] = test[c1].astype(float) / (test[c2].astype(float) + 1e-9)
+                new_cols.append(out_col)
+
+    # 4. Conditions (e.g. X_i < threshold)
+    conditions = fe_cfg.get("conditions", []) or []
+    for cond in conditions:
+        col = cond.get("column")
+        op = cond.get("operator")
+        val = cond.get("value")
+        name = cond.get("name")
+        if col in train.columns and col in test.columns:
+            out_col = name or f"{col}_{op}_{val}"
+            if op == "lt":
+                train[out_col] = (train[col].astype(float) < float(val)).astype(int)
+                test[out_col] = (test[col].astype(float) < float(val)).astype(int)
+            elif op == "gt":
+                train[out_col] = (train[col].astype(float) > float(val)).astype(int)
+                test[out_col] = (test[col].astype(float) > float(val)).astype(int)
+            elif op == "eq":
+                train[out_col] = (train[col].astype(float) == float(val)).astype(int)
+                test[out_col] = (test[col].astype(float) == float(val)).astype(int)
+            new_cols.append(out_col)
+
+    # 5. Target-dependent bin means (quantile binning with two-mode contract)
+    target_dep_bins = fe_cfg.get("target_dependent_bins", []) or []
+    for td in target_dep_bins:
+        col = td.get("column")
+        q_val = int(td.get("q", 10))
+        out_col = td.get("name", f"{col}_bin_target_mean")
+
+        if col in train.columns and col in test.columns:
+            new_cols.append(out_col)
+            if target_array is not None:
+                # CV/Inference mode fold handling
+                if mode == "cv":
+                    if train_idx is None:
+                        raise ValueError("train_idx must be provided in mode='cv'")
+                    tr_idx = np.asarray(train_idx, dtype=int)
+                    tr_vals = train.iloc[tr_idx][col].to_numpy()
+                    tr_targets = np.asarray(target_array)[tr_idx]
                 else:
-                    out[i] = float(agg.get(cat, global_mean))
-            return out
+                    tr_vals = train[col].to_numpy()
+                    tr_targets = np.asarray(target_array)
 
-        # Apply mapping: for train rows we use mapping derived from training slice
-        train[target_feat_col] = map_series_to_target_mean(train[tmin_col].to_numpy())
-        # For test set, always map using training-derived agg (no leakage from test targets)
-        test[target_feat_col] = map_series_to_target_mean(test[tmin_col].to_numpy())
+                # Create quantile bins
+                try:
+                    _, bin_edges = pd.qcut(tr_vals, q=q_val, retbins=True, duplicates="drop")
+                except Exception:
+                    unique_vals = np.unique(tr_vals)
+                    if len(unique_vals) < 2:
+                        bin_edges = np.array([unique_vals[0] - 1.0, unique_vals[0] + 1.0])
+                    else:
+                        bin_edges = np.linspace(tr_vals.min(), tr_vals.max(), num=min(q_val + 1, len(unique_vals)))
 
-    else:
-        # No target array provided: create deterministic default (global 0.0)
-        train["tmin_bin_target_mean"] = 0.0
-        test["tmin_bin_target_mean"] = 0.0
+                bin_edges = list(map(float, np.asarray(bin_edges).tolist()))
+                tr_bins = pd.cut(pd.Series(tr_vals), bins=bin_edges, include_lowest=True)
+                bin_map = tr_bins.to_frame(name="bin")
+                bin_map["target"] = tr_targets
+                agg = bin_map.groupby("bin").target.mean()
+                global_mean = float(np.nanmean(tr_targets)) if len(tr_targets) > 0 else 0.0
 
-    # Ensure column order and dtypes are identical across modes: append new cols at the end in fixed order
-    new_cols = [
-        "tmax_mean_sq",
-        "aet_pet_ratio",
-        "tmax_vpd_stress",
-        "frost_risk",
-        "aridity_index",
-        "warm_wet_index",
-        "tmin_bin_target_mean",
-    ]
+                def map_to_mean(series_vals: np.ndarray) -> np.ndarray:
+                    cats = pd.cut(pd.Series(series_vals), bins=bin_edges, include_lowest=True)
+                    out = np.empty(len(series_vals), dtype=float)
+                    for i, cat in enumerate(cats):
+                        if pd.isna(cat):
+                            out[i] = global_mean
+                        else:
+                            out[i] = float(agg.get(cat, global_mean))
+                    return out
+
+                train[out_col] = map_to_mean(train[col].to_numpy())
+                test[out_col] = map_to_mean(test[col].to_numpy())
+            else:
+                train[out_col] = 0.0
+                test[out_col] = 0.0
+
+    # Apply aliases/renaming for backward compatibility
+    aliases = fe_cfg.get("aliases", {}) or {}
+    for old_name, new_name in aliases.items():
+        if old_name in train.columns:
+            train.rename(columns={old_name: new_name}, inplace=True)
+            test.rename(columns={old_name: new_name}, inplace=True)
+            # Update new_cols list to match renamed column
+            new_cols = [new_name if c == old_name else c for c in new_cols]
 
     # Guarantee dtype stability
     for df in (train, test):
         for c in new_cols:
             if c not in df.columns:
                 df[c] = 0.0
-            df[c] = (
-                df[c].astype(float) if df[c].dtype != "int64" else df[c].astype(float)
-            )
+            df[c] = df[c].astype(float)
 
     # Return with columns in stable ordering: original cols + new_cols
     base_cols = [c for c in train_df.columns]
@@ -444,11 +500,12 @@ def train_variant(
                     dtype=np.float64,
                 ),
             ),
+            regression_metric=config.get("metric") if task_type == "regression" and config is not None else None,
         )
         metric_name = config.get("metric", "f1_score") if config is not None else "f1_score"
         if task_type == "regression":
             primary_key = f"oof_{metric_name}"
-            oof_score = float(getattr(lgb_result, primary_key, 0.0))
+            oof_score = float(lgb_result.oof_rmse)
             metric_direction = config.get("metric_direction", "minimize") if config is not None else "minimize"
             if metric_direction == "minimize":
                 delta = baseline_score - oof_score
@@ -485,7 +542,7 @@ def train_variant(
             "oof_probs": lgb_result.oof_probs,
             "test_probs": lgb_result.test_probs,
             "fold_scores": [
-                float(score) for score in getattr(lgb_result, "fold_aucs", [])
+                float(score) for score in getattr(lgb_result, "fold_scores", getattr(lgb_result, "fold_aucs", []))
             ],
         }
         if task_type == "regression":
@@ -1040,22 +1097,27 @@ def run(
             train_feat, test_feat, mode="inference", target_array=None
         )
 
-    print(
-        "  ✓ Derived features added: tmax_mean_sq, aet_pet_ratio, tmax_vpd_stress, frost_risk, aridity_index, warm_wet_index"
-    )
-
-    if variant_name is None:
-        print(
-            "\n✅ Fetch + extraction complete. Pass --variant <name> to run a variant."
-        )
-        return {"status": "extracted", "tiff": str(tiff_path)}
-
     # Check if we are running in generic mode (no environmental columns in train_feat) (Decontamination Check)
     tc_vars = ["aet", "def", "pdsi", "pet", "ppt", "q", "soil", "srad", "swe", "tmax", "tmin", "vap", "vpd"]
     tc_stats = ["mean", "std", "min", "max"]
     env_cols = {f"{v}_{s}" for v in tc_vars for s in tc_stats}
     matching_cols = [c for c in train_feat.columns if c in env_cols]
     is_generic = len(matching_cols) == 0
+
+    if not is_generic:
+        print(
+            "  ✓ Derived features added: tmax_mean_sq, aet_pet_ratio, tmax_vpd_stress, frost_risk, aridity_index, warm_wet_index"
+        )
+    else:
+        print(
+            "  ✓ Using financial dataset features — no climate/environmental variables found"
+        )
+
+    if variant_name is None:
+        print(
+            "\n✅ Fetch + extraction complete. Pass --variant <name> to run a variant."
+        )
+        return {"status": "extracted", "tiff": str(tiff_path)}
 
     if is_generic:
         # Determine target, id, and coordinate columns to exclude
@@ -1085,11 +1147,14 @@ def run(
             "variant-40", "variant-41", "variant-42", "variant-43", "variant-44",
             "variant-45", "variant-46"
         ]:
-            if "7" in var_id or "0" in var_id:
+            last_digit = var_id[-1]
+            if var_id == "variant-00":
+                VARIANTS[var_id] = all_features
+            elif last_digit in ("7", "0"):
                 VARIANTS[var_id] = first_half
-            elif "8" in var_id or "1" in var_id:
+            elif last_digit in ("8", "1"):
                 VARIANTS[var_id] = second_half
-            elif "9" in var_id or "2" in var_id:
+            elif last_digit in ("9", "2"):
                 VARIANTS[var_id] = even_feats
             else:
                 VARIANTS[var_id] = all_features
@@ -1577,5 +1642,6 @@ if __name__ == "__main__":
         elif arg == "--variant" and len(sys.argv) > sys.argv.index(arg) + 1:
             variant = sys.argv[sys.argv.index(arg) + 1]
     force_save = "--force-save" in sys.argv
-    result = run(variant_name=variant, force_save=force_save)
+    fetch_opt = "--fetch" in sys.argv
+    result = run(variant_name=variant, force_save=force_save, fetch=fetch_opt)
     print(json.dumps({k: v for k, v in result.items() if k != "oof_probs"}, indent=2))

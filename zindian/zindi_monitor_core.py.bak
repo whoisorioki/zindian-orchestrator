@@ -1063,6 +1063,8 @@ def run(
         print(f"  Best LB score       : {sub_intel['best_score']:.9f}")
         print(f"  Chosen submissions  : {sub_intel['chosen_count']}/2")
         try:
+            from zindian.config import ChallengeConfig
+            config = ChallengeConfig.load()
             metric_name = (config.get("metric") or "f1").upper()
         except Exception:
             metric_name = "F1"

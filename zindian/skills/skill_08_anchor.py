@@ -226,7 +226,7 @@ def compute_oof_predictions(
         feature_cols,
         cv_strategy_id,
         feature_count,
-        [float(score) for score in result.fold_aucs],
+        [float(score) for score in getattr(result, "fold_scores", getattr(result, "fold_aucs", []))],
     )
 
 

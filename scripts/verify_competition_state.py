@@ -192,7 +192,10 @@ else:
         vals = sample[pred_col[0]]
         print(f"\n  Prediction col '{pred_col[0]}' range: [{vals.min()}, {vals.max()}]")
         unique = set(vals.unique())
-        if unique.issubset({0, 1, 0.0, 1.0}):
+        task_type = config.get("task_type", "classification")
+        if task_type == "regression":
+            ok("SampleSubmission values are numeric — regression predictions expected")
+        elif unique.issubset({0, 1, 0.0, 1.0}):
             ok("SampleSubmission values are 0/1 — hard labels expected")
         else:
             ok("SampleSubmission values are floats — probabilities expected")
@@ -351,6 +354,12 @@ else:
                 if isinstance(bounds, dict):
                     min_val = bounds.get("min")
                     max_val = bounds.get("max")
+                    if config.get("submission_log1p", False):
+                        import numpy as np
+                        if min_val is not None:
+                            min_val = float(np.log1p(min_val))
+                        if max_val is not None:
+                            max_val = float(np.log1p(max_val))
                     if min_val is not None and vals.min() < min_val:
                         sub_errors.append(f"value below min bound {min_val}: {vals.min():.4f}")
                     if max_val is not None and vals.max() > max_val:
@@ -365,44 +374,48 @@ else:
 # ── 7. skill_08_anchor.py — Check 8 logic ─────────────────────────────────────
 section("7. skill_08_anchor.py — Check 8 (use_probabilities aware?)")
 
-skill08 = SKILLS / "skill_08_anchor.py"
-if not skill08.exists():
-    fail(f"skill_08_anchor.py not found at {skill08}")
+task_type = config.get("task_type", "classification")
+if task_type != "classification":
+    ok(f"Skipping Check 8 logic validation: active task type is '{task_type}' (not classification)")
 else:
-    src = skill08.read_text(encoding="utf-8")
+    skill08 = SKILLS / "skill_08_anchor.py"
+    if not skill08.exists():
+        fail(f"skill_08_anchor.py not found at {skill08}")
+    else:
+        src = skill08.read_text(encoding="utf-8")
 
-    # Check if Check 8 is use_probabilities aware
-    if "use_probabilities" in src and "issubset" in src:
-        # Check if it's inside a use_probabilities conditional
-        lines = src.splitlines()
-        check8_lines = [
-            (i, line) for i, line in enumerate(lines, 1) if "issubset" in line
-        ]
-        for lineno, line in check8_lines:
-            print(f"\n  Check 8 found at line {lineno}:")
-            # Show context (5 lines before)
-            start = max(0, lineno - 6)
-            context = lines[start:lineno]
-            for cl in context:
-                print(f"    {cl}")
+        # Check if Check 8 is use_probabilities aware
+        if "use_probabilities" in src and "issubset" in src:
+            # Check if it's inside a use_probabilities conditional
+            lines = src.splitlines()
+            check8_lines = [
+                (i, line) for i, line in enumerate(lines, 1) if "issubset" in line
+            ]
+            for lineno, line in check8_lines:
+                print(f"\n  Check 8 found at line {lineno}:")
+                # Show context (5 lines before)
+                start = max(0, lineno - 6)
+                context = lines[start:lineno]
+                for cl in context:
+                    print(f"    {cl}")
 
-        # Determine if the issubset check is inside use_probabilities block
-        if "if config.use_probabilities" in src and "issubset" in src:
-            # Check if there's an else branch for hard labels
-            if "use_probabilities=False" in src or "hard" in src.lower():
-                ok("Check 8 appears use_probabilities aware (has else branch)")
+            # Determine if the issubset check is inside use_probabilities block
+            if "if config.use_probabilities" in src and "issubset" in src:
+                # Check if there's an else branch for hard labels
+                if "use_probabilities=False" in src or "hard" in src.lower():
+                    ok("Check 8 appears use_probabilities aware (has else branch)")
+                else:
+                    fail(
+                        "Check 8 blocks thresholded submissions regardless of "
+                        "use_probabilities — will block F1 submissions (hard 0/1 labels)"
+                    )
             else:
                 fail(
-                    "Check 8 blocks thresholded submissions regardless of "
-                    "use_probabilities — will block F1 submissions (hard 0/1 labels)"
+                    "Check 8 not inside use_probabilities conditional — "
+                    "will block correct F1 submissions"
                 )
         else:
-            fail(
-                "Check 8 not inside use_probabilities conditional — "
-                "will block correct F1 submissions"
-            )
-    else:
-        warn("Could not find Check 8 (issubset) in skill_08_anchor.py")
+            warn("Could not find Check 8 (issubset) in skill_08_anchor.py")
 
 
 # ── 8. Git branch state ────────────────────────────────────────────────────────

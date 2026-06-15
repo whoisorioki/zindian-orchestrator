@@ -49,7 +49,7 @@ class LightGBMRunResult:
     oof_auc: float  # retained for compatibility (classification)
     oof_f1: float  # retained for compatibility (classification)
     threshold: float
-    fold_aucs: list[float]
+    fold_scores: list[float]
     oof_rmse: float = 0.0  # regression metric
 
 
@@ -165,7 +165,7 @@ def train_lightgbm_cv(
 
     oof_probs = np.zeros(len(train), dtype=np.float64)
     test_probs = np.zeros(len(test), dtype=np.float64)
-    fold_aucs: list[float] = []
+    fold_scores: list[float] = []
 
     # Obtain CV splits. If `cv` is provided it may be either:
     # - an sklearn splitter object (with .split)
@@ -275,10 +275,15 @@ def train_lightgbm_cv(
         oof_probs[val_idx] = val_pred_final
         test_probs += test_pred_final / n_splits
         if task_type == "regression":
-            # Compute RMSE on back-transformed (original-space) predictions
-            fold_rmse = root_mean_squared_error(y[val_idx], val_pred_final)
-            fold_aucs.append(fold_rmse)
-            print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
+            if use_log1p:
+                # Compute RMSLE on back-transformed (original-space) predictions
+                fold_rmsle = float(np.sqrt(np.mean((np.log1p(y[val_idx]) - np.log1p(val_pred_final)) ** 2)))
+                fold_scores.append(fold_rmsle)
+                print(f"  Fold {fold_idx + 1}/{n_splits}: rmsle={fold_rmsle:.6f}")
+            else:
+                fold_rmse = float(root_mean_squared_error(y[val_idx], val_pred_final))
+                fold_scores.append(fold_rmse)
+                print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
             try:
                 # Standard binary classification validation
@@ -293,7 +298,7 @@ def train_lightgbm_cv(
                     )
                 except Exception:
                     fold_auc = 0.0
-            fold_aucs.append(fold_auc)
+            fold_scores.append(fold_auc)
             print(f"  Fold {fold_idx + 1}/{n_splits}: score={fold_auc:.6f}")
 
     if task_type == "regression":
@@ -312,7 +317,7 @@ def train_lightgbm_cv(
             oof_f1=0.0,
             oof_rmse=oof_rmse,
             threshold=0.0,
-            fold_aucs=fold_aucs,
+            fold_scores=fold_scores,
         )
     else:
         try:
@@ -341,5 +346,5 @@ def train_lightgbm_cv(
             oof_f1=oof_f1,
             oof_rmse=0.0,
             threshold=best_t,
-            fold_aucs=fold_aucs,
+            fold_scores=fold_scores,
         )

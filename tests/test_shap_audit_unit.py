@@ -42,7 +42,7 @@ def test_compute_shap_audit_monkeypatch(monkeypatch):
     )
 
     assert "oof_probs" in result and len(result["oof_probs"]) == len(df)
-    assert len(result["fold_aucs"]) == 3
+    assert len(result["fold_scores"]) == 3
     assert "ranking" in result and not result["ranking"].empty
 
 def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
