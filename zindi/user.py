@@ -12,9 +12,10 @@ class Zindian:
         self.remaining_subimissions = 10  # note: the typo matches usage in codebase
         self.my_rank = 1
 
-    def select_a_challenge(self, fixed_index: int):
-        """Select a competition by index – no-op in stub."""
-        print(f"[zindi stub] select_a_challenge called with index {fixed_index}")
+    def select_a_challenge(self, fixed_index: int = None, challenge_id: str = None, **kwargs):
+        """Select a competition by index or ID – no-op in stub."""
+        print(f"[zindi stub] select_a_challenge called with index {fixed_index}, challenge_id {challenge_id}")
+        self.which_challenge = challenge_id or "dummy-challenge"
 
     def submit(self, filepaths: list, comments: list):
         """Pretend to submit files – returns a dummy dict."""

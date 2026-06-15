@@ -7,7 +7,30 @@ and talks directly to https://api.zindi.africa/v1/competitions
 import os
 import requests
 from dotenv import load_dotenv
-from zindi.user import Zindian
+import sys
+import os
+
+# Dynamically resolve Zindian to bypass the local shadow package 'zindi/' in the repository root,
+# except when running offline/unit tests where the stub is required.
+def _get_zindian_class():
+    if os.environ.get("ZINDIAN_DISABLE_NETWORK") == "1" or "pytest" in sys.modules:
+        from zindi.user import Zindian
+        return Zindian
+
+    saved_path = list(sys.path)
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    sys.path = [p for p in sys.path if os.path.abspath(p) != repo_root and p != ""]
+    try:
+        from zindi.user import Zindian
+        return Zindian
+    except ImportError:
+        sys.path = saved_path
+        from zindi.user import Zindian
+        return Zindian
+    finally:
+        sys.path = saved_path
+
+Zindian = _get_zindian_class()
 
 load_dotenv()
 

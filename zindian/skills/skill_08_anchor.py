@@ -482,6 +482,10 @@ def run(
             np.asarray(test_preds, dtype=np.float64) >= best_t
         ).astype(int)
 
+    if config.get("submission_log1p", False):
+        print("Applying log1p transformation to submission predictions per platform config")
+        predictions_to_save = np.log1p(predictions_to_save)
+
     save_submission(
         id_col,
         np.asarray(test[id_col].values),

@@ -479,6 +479,11 @@ def run(
     # Save submission
     target_out_col = sample.columns[-1]  # Use whatever column name sample uses
     id_col_name = sample.columns[0]
+    
+    if config_obj.get("submission_log1p", False):
+        print("Applying log1p transformation to ensembled submission values per platform config")
+        submission_values = np.log1p(submission_values)
+
     sub = pd.DataFrame({id_col_name: sample[id_col_name], target_out_col: submission_values})
     sub = sub.set_index(id_col_name).reindex(sample[id_col_name]).reset_index()
 
