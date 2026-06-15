@@ -30,12 +30,14 @@ if hasattr(sys.stdout, "reconfigure"):
 import pandas as pd
 
 ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
 
 try:
     from zindian.paths import resolve_competition_paths
     paths = resolve_competition_paths()
     COMP_DIR = paths.competition_dir or (ROOT / "competitions" / "ey-frogs")
-except Exception:
+except Exception as e:
+    print(f"Warning: Failed to import/resolve competition paths: {e}", file=sys.stderr)
     COMP_DIR = ROOT / "competitions" / "ey-frogs"
 
 DATA_RAW = COMP_DIR / "data" / "raw"
@@ -207,33 +209,43 @@ else:
     ok(f"Found: {ft_path}")
     print(f"\n  Shape   : {ft.shape}")
 
-    ws_cols = [c for c in ft.columns if "ws" in c.lower()]
-    if ws_cols:
-        fail(f"ws (wind speed) columns present — BANNED: {ws_cols}")
-    else:
-        ok("No ws columns found ✓")
+    slug = config.get("slug")
+    is_ey = slug in ("ey-frogs", "ey-biodiversity-challenge")
+    if is_ey:
+        ws_cols = [c for c in ft.columns if "ws" in c.lower()]
+        if ws_cols:
+            fail(f"ws (wind speed) columns present — BANNED: {ws_cols}")
+        else:
+            ok("No ws columns found ✓")
 
-    spatial_derived = [
-        c
-        for c in ft.columns
-        if any(
-            x in c.lower()
-            for x in [
-                "distance",
-                "cluster",
-                "bin",
-                "h3",
-                "poly",
-                "interact",
-                "lat_lon",
-                "lon_lat",
-            ]
-        )
-    ]
-    if spatial_derived:
-        fail(f"Derived spatial columns detected — BANNED: {spatial_derived}")
+        spatial_derived = [
+            c
+            for c in ft.columns
+            if any(
+                x in c.lower()
+                for x in [
+                    "distance",
+                    "cluster",
+                    "bin",
+                    "h3",
+                    "poly",
+                    "interact",
+                    "lat_lon",
+                    "lon_lat",
+                ]
+            )
+        ]
+        if spatial_derived:
+            fail(f"Derived spatial columns detected — BANNED: {spatial_derived}")
+        else:
+            ok("No derived spatial columns found ✓")
     else:
-        ok("No derived spatial columns found ✓")
+        banned = config.get("banned_features", [])
+        found_banned = [c for c in ft.columns if c in banned]
+        if found_banned:
+            fail(f"Banned features detected: {found_banned}")
+        else:
+            ok("No banned features detected ✓")
 
     print(f"\n  Columns ({len(ft.columns)}):")
     for c in ft.columns:
@@ -251,16 +263,27 @@ else:
     ok(f"Found: {ftest_path}")
     print(f"\n  Shape   : {ftest.shape}")
 
-    ws_cols_t = [c for c in ftest.columns if "ws" in c.lower()]
-    if ws_cols_t:
-        fail(f"ws columns in test — BANNED: {ws_cols_t}")
+    slug = config.get("slug")
+    is_ey = slug in ("ey-frogs", "ey-biodiversity-challenge")
+    if is_ey:
+        ws_cols_t = [c for c in ftest.columns if "ws" in c.lower()]
+        if ws_cols_t:
+            fail(f"ws columns in test — BANNED: {ws_cols_t}")
+        else:
+            ok("No ws columns in test ✓")
     else:
-        ok("No ws columns in test ✓")
+        banned = config.get("banned_features", [])
+        found_banned = [c for c in ftest.columns if c in banned]
+        if found_banned:
+            fail(f"Banned features in test: {found_banned}")
+        else:
+            ok("No banned features in test ✓")
 
     # Column parity with train (excluding target)
     if ft_path.exists():
+        target_col = config.get("target_col") or "Occurrence Status"
         train_non_target = [
-            c for c in ft.columns if c not in ("Occurrence Status", "Target")
+            c for c in ft.columns if c not in (target_col, "Target", "Occurrence Status")
         ]
         test_cols = list(ftest.columns)
         missing_in_test = set(train_non_target) - set(test_cols)
@@ -298,28 +321,40 @@ else:
                 sub_errors.append(f"rows {len(sub)} ≠ expected {len(sample)}")
 
         # Value check
-        pred_col = [c for c in sub.columns if c.upper() != "ID"]
+        id_col = config.get("id_col") or config.get("id_column") or "ID"
+        pred_col = [c for c in sub.columns if c.upper() != "ID" and c != id_col]
         if pred_col:
             vals = sub[pred_col[0]]
             unique = set(vals.round(8).unique())
+            task_type = config.get("task_type", "classification")
 
-            if use_probs_cfg:
-                # Expect floats
-                if unique.issubset({0, 1, 0.0, 1.0}):
-                    sub_errors.append(
-                        "thresholded (0/1 only) but use_probabilities=True"
-                    )
-                if vals.min() < 0 or vals.max() > 1:
-                    sub_errors.append(
-                        f"values out of [0,1]: [{vals.min():.4f}, {vals.max():.4f}]"
-                    )
-            else:
-                # Expect hard labels
-                invalid = unique - {0, 1, 0.0, 1.0}
-                if invalid:
-                    sub_errors.append(
-                        f"non-binary values found but use_probabilities=False: {sorted(invalid)[:3]}"
-                    )
+            if task_type == "classification":
+                if use_probs_cfg:
+                    # Expect floats
+                    if unique.issubset({0, 1, 0.0, 1.0}):
+                        sub_errors.append(
+                            "thresholded (0/1 only) but use_probabilities=True"
+                        )
+                    if vals.min() < 0 or vals.max() > 1:
+                        sub_errors.append(
+                            f"values out of [0,1]: [{vals.min():.4f}, {vals.max():.4f}]"
+                        )
+                else:
+                    # Expect hard labels
+                    invalid = unique - {0, 1, 0.0, 1.0}
+                    if invalid:
+                        sub_errors.append(
+                            f"non-binary values found but use_probabilities=False: {sorted(invalid)[:3]}"
+                        )
+            elif task_type == "regression":
+                bounds = config.get("target_domain_bounds") or {}
+                if isinstance(bounds, dict):
+                    min_val = bounds.get("min")
+                    max_val = bounds.get("max")
+                    if min_val is not None and vals.min() < min_val:
+                        sub_errors.append(f"value below min bound {min_val}: {vals.min():.4f}")
+                    if max_val is not None and vals.max() > max_val:
+                        sub_errors.append(f"value above max bound {max_val}: {vals.max():.4f}")
 
         if sub_errors:
             fail(f"{sub_path.name}: {'; '.join(sub_errors)}")

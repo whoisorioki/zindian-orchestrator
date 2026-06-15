@@ -280,6 +280,7 @@ def next_submission_path(paths, suffix: str = "anchor") -> Path:
 
 
 def save_submission(
+    id_col: str,
     test_ids: np.ndarray,
     predictions: np.ndarray,
     submission_col: str,
@@ -290,7 +291,7 @@ def save_submission(
 
     sub_df = pd.DataFrame(
         {
-            "ID": np.asarray(test_ids),
+            id_col: np.asarray(test_ids),
             submission_col: np.asarray(predictions),
         }
     )
@@ -482,7 +483,11 @@ def run(
         ).astype(int)
 
     save_submission(
-        np.asarray(test[id_col].values), predictions_to_save, submission_col, sub_path
+        id_col,
+        np.asarray(test[id_col].values),
+        predictions_to_save,
+        submission_col,
+        sub_path,
     )
 
     # ── Log to DuckDB ledger ───────────────────────────────────

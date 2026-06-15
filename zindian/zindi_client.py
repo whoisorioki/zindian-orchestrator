@@ -69,24 +69,12 @@ class ZindiClient:
         Select a competition by its slug/id.
         Also selects it on the Zindian object for submit() to work.
         """
-        # Use fixed_index workaround: fetch list, find index, select
-        competitions = self.list_competitions(active=False)
-        all_ids = [c["id"] for c in competitions]
-
-        if challenge_id not in all_ids:
-            # Try fetching all (including closed)
-            resp = requests.get(self.BASE_URL, headers=self._headers)
-            resp.raise_for_status()
-            all_comps = resp.json()["data"]
-            all_ids = [c["id"] for c in all_comps]
-
-        if challenge_id in all_ids:
-            idx = all_ids.index(challenge_id)
-            self._user.select_a_challenge(fixed_index=idx)
-            self._challenge_id = challenge_id
-            print(f"✅ Selected: {challenge_id}")
-        else:
-            raise ValueError(f"Competition '{challenge_id}' not found.")
+        # Select directly by challenge_id instead of the fragile fixed_index workaround
+        res = self._user.select_a_challenge(challenge_id=challenge_id)
+        if isinstance(res, dict) and res.get("challenge") is None:
+            raise ValueError(f"Competition '{challenge_id}' not found: {res.get('message')}")
+        self._challenge_id = self._user.which_challenge
+        print(f"✅ Selected: {self._challenge_id}")
 
     # ── Competition Info ───────────────────────────────────────────
 
