@@ -24,10 +24,11 @@ def test_effective_thresholds_regression():
     # Equation:
     # effective_variance_threshold = variance_gate_threshold * (target_std ** 2)
     # effective_gate_margin = gate_margin * target_std
-    eff_var, eff_margin = _effective_thresholds(config, state)
+    eff_var, eff_margin, warning = _effective_thresholds(config, state)
 
     assert np.isclose(eff_var, 0.01 * (2.5**2))
     assert np.isclose(eff_margin, 0.005 * 2.5)
+    assert warning is None  # target_std > 0.0, no warning expected
 
 
 def test_effective_thresholds_classification():
@@ -40,10 +41,11 @@ def test_effective_thresholds_classification():
     )
     state = {"eda": {"target_std": 2.5}}  # Should be ignored for classification
 
-    eff_var, eff_margin = _effective_thresholds(config, state)
+    eff_var, eff_margin, warning = _effective_thresholds(config, state)
 
     assert np.isclose(eff_var, 0.01)
     assert np.isclose(eff_margin, 0.005)
+    assert warning is None
 
 
 def test_fold_score_variance_unbiased_sample():

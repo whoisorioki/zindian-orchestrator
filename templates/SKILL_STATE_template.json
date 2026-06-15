@@ -3,21 +3,36 @@
     "md5_target_hash": null,
     "current_git_branch": "main",
     "anchor_git_branch": null,
-    "anchor_oof_rmse": null,
+
+    "anchor_oof_score": null,
+    "anchor_oof_score_augmented": null,
+    "anchor_oof_score_challenged": null,
     "anchor_lb_score": null,
+
+    "best_variant_oof_score": null,
+
     "feature_round": 0,
     "variants_tested": 0,
     "variants_passed": 0,
     "best_variant_this_round": null,
-    "best_variant_oof_rmse": null,
+
     "submissions_used_today": 0,
     "submissions_used_total": 0,
     "remaining_submissions": null,
+
     "dag_phase": "uninitialized",
     "human_gate_1_approved": false,
     "human_gate_3_approved": false,
     "human_gate_4_approved": false,
     "human_gate_5_selection": [],
     "selected_submissions": [],
-    "last_updated": null
+    "last_updated": null,
+
+    "_legacy_note": "Keys below are DEPRECATED as of v2.0.1. Use anchor_oof_score and best_variant_oof_score instead.",
+    "_legacy_anchor_oof_rmse": "DEPRECATED — use anchor_oof_score",
+    "_legacy_anchor_oof_f1": "DEPRECATED — use anchor_oof_score",
+    "_legacy_anchor_oof_auc": "DEPRECATED — use anchor_oof_score",
+    "_legacy_best_variant_oof_rmse": "DEPRECATED — use best_variant_oof_score",
+    "_legacy_best_variant_oof_f1": "DEPRECATED — use best_variant_oof_score",
+    "_legacy_best_variant_oof_auc": "DEPRECATED — use best_variant_oof_score"
 }

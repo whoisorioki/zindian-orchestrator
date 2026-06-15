@@ -49,44 +49,101 @@ def _fold_score_variance(state: dict) -> float | None:
         return None
 
 
-def _effective_thresholds(config: ChallengeConfig, state: dict) -> tuple[float, float]:
+def _effective_thresholds(
+    config: ChallengeConfig,
+    state: dict,
+) -> tuple[float, float, str | None]:
+    """
+    Return (effective_variance_threshold, effective_gate_margin, warning_message).
+
+    For regression tasks:
+      - If metric == "rmsle": raw thresholds are returned unchanged.
+        RMSLE is a dimensionless log-ratio — applying target_std normalisation
+        would mix log-space units with original-scale units, which is
+        mathematically invalid.
+      - If target_std == 0.0 (degenerate target): raw thresholds are
+        returned and a non-empty warning string is returned to the caller
+        for state logging. Pipeline does not halt — the warning is advisory.
+      - Otherwise: variance_threshold is scaled by target_std**2 and
+        gate_margin is scaled by target_std, making both thresholds
+        scale-invariant across competitions with different target magnitudes.
+
+    For classification tasks: raw thresholds are returned (bounded metrics
+    need no scale correction).
+
+    This function does NOT write to state. The caller is responsible for
+    writing any returned warning_message to SKILL_STATE["metadata_warnings"].
+    """
+    variance_gate_threshold = float(config.get("variance_gate_threshold", 0.01) or 0.0)
+    gate_margin = float(config.get("gate_margin", 0.001) or 0.0)
     task_type = str(config.get("task_type", "classification"))
-    variance_gate_threshold = float(config.get("variance_gate_threshold", 0.0) or 0.0)
-    gate_margin = float(config.get("gate_margin", 0.0) or 0.0)
+    metric = str(config.get("metric", ""))
 
-    if task_type == "regression":
-        target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
-        return variance_gate_threshold * (target_std**2), gate_margin * target_std
+    if task_type != "regression":
+        # Classification: bounded metrics — no scale correction needed.
+        return variance_gate_threshold, gate_margin, None
 
-    return variance_gate_threshold, gate_margin
+    if metric == "rmsle":
+        # RMSLE is computed in log-space and is already scale-invariant.
+        # Raw thresholds apply with no normalisation.
+        return variance_gate_threshold, gate_margin, None
+
+    target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
+
+    if target_std == 0.0:
+        # Degenerate target: skill_04 may not have written target_std yet,
+        # or the target has zero variance. Fall back to raw thresholds and
+        # return a warning for the caller to log to state.
+        warning = (
+            "Degenerate target_std (0.0) in skill_11_gate: "
+            "effective thresholds falling back to raw config values. "
+            "Verify skill_04 EDA output has written target_std correctly."
+        )
+        return variance_gate_threshold, gate_margin, warning
+
+    # Original-scale regression metrics (RMSE, MAE): scale thresholds by
+    # target_std to make them magnitude-invariant across competitions.
+    effective_variance = variance_gate_threshold * (target_std**2)
+    effective_margin = gate_margin * target_std
+    return effective_variance, effective_margin, None
 
 
 def _baseline_score(state: dict, metric_key: str) -> tuple[float | None, str]:
+    # Safe state access patterns
     retraining_active = state.get("pseudo_label_result", {}) or {}
-    retraining_required = (
-        bool(retraining_active.get("retraining_required", False))
-        if isinstance(retraining_active, dict)
-        else False
-    )
+    retraining_required = False
+    if isinstance(retraining_active, dict):
+        retraining_required = bool(retraining_active.get("retraining_required", False))
+
     anchor_challenge = state.get("anchor_challenge", {}) or {}
-    challenge_active = (
-        bool(anchor_challenge.get("active", False))
-        if isinstance(anchor_challenge, dict)
-        else False
-    )
+    challenge_active = False
+    if isinstance(anchor_challenge, dict):
+        challenge_active = bool(anchor_challenge.get("active", False))
 
     if retraining_required:
+        key = "anchor_oof_score_augmented"
+        value = _to_float(state.get(key))
+        if value is not None:
+            return value, key
         key = f"anchor_oof_{metric_key}_augmented"
         value = _to_float(state.get(key))
         if value is not None:
             return value, key
 
     if challenge_active:
+        key = "anchor_oof_score_challenged"
+        value = _to_float(state.get(key))
+        if value is not None:
+            return value, key
         key = f"anchor_oof_{metric_key}_challenged"
         value = _to_float(state.get(key))
         if value is not None:
             return value, key
 
+    key = "anchor_oof_score"
+    value = _to_float(state.get(key))
+    if value is not None:
+        return value, key
     key = f"anchor_oof_{metric_key}"
     value = _to_float(state.get(key))
     return (value, key) if value is not None else (None, key)
@@ -114,12 +171,19 @@ def run() -> dict:
         "best_variant_branch"
     )
     metric_key = _metric_key(config)
-    best_score_value = state.get(f"best_variant_oof_{metric_key}")
+    best_score_value = state.get("best_variant_oof_score")
+    if best_score_value is None:
+        best_score_value = state.get(f"best_variant_oof_{metric_key}")
     best_score = float(best_score_value or 0.0)
     fold_score_variance = _fold_score_variance(state)
-    effective_variance_threshold, effective_gate_margin = _effective_thresholds(
-        config, state
+    effective_variance_threshold, effective_gate_margin, threshold_warning = (
+        _effective_thresholds(config, state)
     )
+    if threshold_warning is not None:
+        existing_warnings = store.get("metadata_warnings") or []
+        if not isinstance(existing_warnings, list):
+            existing_warnings = []
+        store.update(metadata_warnings=existing_warnings + [threshold_warning])
     baseline_score, baseline_key = _baseline_score(state, metric_key)
     leaked_features = state.get("leaked_features", []) or []
     human_gate_key = (
@@ -253,19 +317,24 @@ def run() -> dict:
         subprocess.run(["git", "checkout", new_branch], check=True, capture_output=True)
         print(f"✅ Switched to: {new_branch}")
 
-    store.update(
-        anchor_oof_auc=state.get("best_variant_oof_auc"),
-        anchor_oof_f1=state.get("best_variant_oof_f1"),
-        anchor_git_branch=new_branch,
-        feature_round=round_num + 1,
-        variants_tested=0,
-        variants_passed=0,
-        best_variant_this_round=None,
-        best_variant_oof_auc=None,
-        dag_phase="phase_3_anchor_promoted",
-        last_updated=datetime.now(timezone.utc).isoformat(),
-        phase_3_gate_diagnosis={**diagnosis, "passed": True, "new_branch": new_branch},
-    )
+    updates = {
+        "anchor_oof_score": best_score,
+        "anchor_oof_auc": state.get("best_variant_oof_auc"),
+        "anchor_oof_f1": state.get("best_variant_oof_f1"),
+        "anchor_git_branch": new_branch,
+        "feature_round": round_num + 1,
+        "variants_tested": 0,
+        "variants_passed": 0,
+        "best_variant_this_round": None,
+        "best_variant_oof_auc": None,
+        "best_variant_oof_f1": None,
+        "best_variant_oof_score": None,
+        f"best_variant_oof_{metric_key}": None,
+        "dag_phase": "phase_3_anchor_promoted",
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "phase_3_gate_diagnosis": {**diagnosis, "passed": True, "new_branch": new_branch},
+    }
+    store.update(**updates)
     print(f"✅ SKILL_STATE.json — new anchor {metric_key.upper()}: {best_score:.5f}")
     print(f"✅ Feature round advanced to: {round_num + 1}")
 

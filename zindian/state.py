@@ -110,6 +110,27 @@ def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:
     return "unknown"
 
 
+def compute_secondary_metrics(y_true: Any, y_pred: Any) -> dict[str, Any]:
+    """Calculate regression diagnostics (MAE, MAPE, R2) on concatenated arrays."""
+    from sklearn.metrics import mean_absolute_error, r2_score
+    import numpy as np
+
+    y_true_arr = np.asarray(y_true, dtype=np.float64)
+    y_pred_arr = np.asarray(y_pred, dtype=np.float64)
+
+    mae = float(mean_absolute_error(y_true_arr, y_pred_arr))
+    r2 = float(r2_score(y_true_arr, y_pred_arr))
+
+    # Guard against division-by-zero for MAPE
+    non_zero = y_true_arr != 0
+    if np.sum(non_zero) > 0:
+        mape: float | None = float(np.mean(np.abs((y_true_arr[non_zero] - y_pred_arr[non_zero]) / y_true_arr[non_zero])))
+    else:
+        mape = None  # SOT/user correction: mape is None when all targets are zero
+
+    return {"mae": mae, "mape": mape, "r2": r2}
+
+
 def write_oof_record(
     store: SkillStateStore,
     *,
@@ -118,6 +139,7 @@ def write_oof_record(
     cv_strategy_id: str,
     seed: int,
     model_config: dict[str, Any],
+    secondary_metrics: dict[str, Any] | None = None,
     touch_timestamp: bool = True,
 ) -> dict[str, Any]:
     """Persist a SoT-shaped OOF record under `branch_{branch_name}_oof`."""
@@ -133,6 +155,9 @@ def write_oof_record(
         "branch_name": str(branch_name),
         "model_config": dict(model_config),
     }
+    if secondary_metrics is not None:
+        record["secondary_metrics"] = secondary_metrics
+
 
     state = store.read()
     key = f"branch_{branch_name}_oof"

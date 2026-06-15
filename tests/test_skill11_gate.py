@@ -100,3 +100,40 @@ def test_skill11_gate_blocks_without_human_approval(tmp_path, monkeypatch):
     updated = json.loads(state_path.read_text(encoding="utf-8"))
     assert updated["dag_phase"] == "phase_3_gate_blocked"
     assert updated["phase_3_gate_diagnosis"]["failure_reason"] == "human_gate_missing"
+
+
+def test_gate_precedence_and_keyerror_safety(tmp_path, monkeypatch):
+    comp = _make_phase3_comp(tmp_path)
+    state_path = comp / "SKILL_STATE.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    
+    # 1. Test KeyError safety: delete optional state keys
+    state.pop("pseudo_label_result", None)
+    state.pop("anchor_challenge", None)
+    
+    # Set up some dummy values for anchor_oof_score versions to check precedence
+    state["anchor_oof_score"] = 0.75
+    state["anchor_oof_score_challenged"] = 0.76
+    state["anchor_oof_score_augmented"] = 0.77
+    
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    
+    import zindian.skills.skill_11_gate as gate
+    
+    # Check default precedence: challenge and pseudo-label are absent -> should select anchor_oof_score
+    baseline_val, baseline_key = gate._baseline_score(state, "f1")
+    assert baseline_key == "anchor_oof_score"
+    assert baseline_val == 0.75
+    
+    # 2. Test challenge active precedence
+    state["anchor_challenge"] = {"active": True}
+    baseline_val, baseline_key = gate._baseline_score(state, "f1")
+    assert baseline_key == "anchor_oof_score_challenged"
+    assert baseline_val == 0.76
+    
+    # 3. Test pseudo-label retraining active precedence (takes priority over challenge)
+    state["pseudo_label_result"] = {"retraining_required": True}
+    baseline_val, baseline_key = gate._baseline_score(state, "f1")
+    assert baseline_key == "anchor_oof_score_augmented"
+    assert baseline_val == 0.77

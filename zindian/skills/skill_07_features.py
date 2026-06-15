@@ -328,6 +328,8 @@ def train_variant(
     """
     if anchor_f1 is not None:
         baseline_score = anchor_f1
+    import random
+    random.seed(seed)
     np.random.seed(seed)
 
     # Resolve target column defensively: prefer explicit arg, then config keys, then legacy default.
@@ -876,6 +878,37 @@ def run(
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
+
+    # Effective gate thresholds — scale by target_std for original-scale
+    # regression metrics only. RMSLE is log-space and scale-invariant;
+    # applying target_std normalisation would produce thresholds in the
+    # wrong units entirely. Classification metrics are bounded and also
+    # need no scale correction.
+    task_type = str(config.get("task_type", "classification"))
+    metric_name_raw = str(config.get("metric", "f1_score"))
+    gate_margin_cfg = float(config.get("gate_margin", 0.005))
+    variance_cfg = float(config.get("variance_gate_threshold", 0.01))
+
+    if task_type == "regression" and metric_name_raw != "rmsle":
+
+        target_std_raw = float(
+            (state.get("eda", {}) or {}).get("target_std") or 0.0
+        )
+        if target_std_raw == 0.0:
+            # Degenerate target — fall back to raw thresholds.
+            # skill_11_gate will also detect this and log the advisory warning.
+            effective_gate_margin = gate_margin_cfg
+            effective_variance_threshold = variance_cfg
+        else:
+            # Scale thresholds to be magnitude-invariant across competitions.
+            effective_gate_margin = gate_margin_cfg * target_std_raw
+            effective_variance_threshold = variance_cfg * (target_std_raw**2)
+    else:
+        # Classification (bounded metrics) or RMSLE (log-space, already
+        # scale-invariant): raw thresholds apply with no normalisation.
+        effective_gate_margin = gate_margin_cfg
+        effective_variance_threshold = variance_cfg
+
     # Dynamic target and task config
     target_col = (
         config.get("target_column") or config.get("target_col") or "target"
@@ -889,35 +922,40 @@ def run(
     else:
         primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
 
-    # Effective gate margins scaled for regression tasks
-    target_std = float(state.get("eda", {}).get("target_std", 1.0))
-    gate_margin_cfg = float(config.get("gate_margin", 0.005))
-    variance_cfg = float(config.get("variance_gate_threshold", 0.01))
-    if task_type == "regression":
-        effective_gate_margin = gate_margin_cfg * target_std
-        variance_cfg * (target_std**2)
-    else:
-        effective_gate_margin = gate_margin_cfg
 
-    # Baseline precedence selector
+
+    # Baseline precedence selector (safe generic lookup with fallback)
     retraining_active = state.get("pseudo_label_result", {}).get(
         "retraining_required", False
     )
-    if retraining_active:
-        baseline_key = f"anchor_{primary_key}_augmented"
-    elif state.get("anchor_challenge", {}).get("active", False):
-        baseline_key = f"anchor_{primary_key}_challenged"
-    else:
-        baseline_key = f"anchor_{primary_key}"
+    challenge_active = state.get("anchor_challenge", {}).get("active", False)
 
-    baseline_score = float(state.get(baseline_key) or 0.0)
+    if retraining_active:
+        baseline_key = "anchor_oof_score_augmented"
+        fallback_key = f"anchor_{primary_key}_augmented"
+    elif challenge_active:
+        baseline_key = "anchor_oof_score_challenged"
+        fallback_key = f"anchor_{primary_key}_challenged"
+    else:
+        baseline_key = "anchor_oof_score"
+        fallback_key = f"anchor_{primary_key}"
+
+    baseline_val = state.get(baseline_key)
+    if baseline_val is None:
+        baseline_val = state.get(fallback_key)
+    baseline_score = float(baseline_val or 0.0)
+
     if task_type == "regression":
-        anchor_auc = float(state.get(f"anchor_oof_{metric_name}") or 0.0)
+        anchor_auc = state.get("anchor_oof_score")
+        if anchor_auc is None:
+            anchor_auc = state.get(f"anchor_oof_{metric_name}")
+        anchor_auc = float(anchor_auc or 0.0)
     else:
         anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
+
     if baseline_score == 0.0:
         raise RuntimeError(
-            f"{baseline_key} not set in SKILL_STATE.json — run Skill 08 first or set baseline."
+            f"Baseline score not set in SKILL_STATE.json — run Skill 08 first or set baseline."
         )
 
     # Resolve active CV strategy (allow override in state)
@@ -1329,8 +1367,11 @@ def run(
     # Use canonical seed discipline: derive multi-seed list deterministically
     SEEDS = [SEED, SEED + 1, SEED + 2]
     print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
+    import random
     seed_results = []
     for s in SEEDS:
+        random.seed(s)
+        np.random.seed(s)
         print(f"\n  -- Seed {s} --")
         r = train_variant(
             train_feat,
@@ -1476,6 +1517,15 @@ def run(
         pass
 
     store.update(**update)
+    secondary_metrics = None
+    if task_type == "regression":
+        try:
+            from zindian.state import compute_secondary_metrics
+            y_true = np.asarray(train_feat[target_col].values, dtype=np.float64)
+            secondary_metrics = compute_secondary_metrics(y_true, result["oof_probs"])
+        except Exception as exc:
+            print(f"  ⚠️ Failed to compute secondary metrics: {exc}")
+
     try:
         write_oof_record(
             store,
@@ -1495,6 +1545,7 @@ def run(
                 "multi_seed": [int(s) for s in SEEDS],
                 "fold_scores": result.get("fold_scores"),
             },
+            secondary_metrics=secondary_metrics,
         )
     except Exception as exc:
         print(f"  ⚠️ Failed to write OOF record: {exc}")

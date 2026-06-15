@@ -39,6 +39,11 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
+
+class HardAbortException(RuntimeError):
+    """Raised when the submission budget is exhausted."""
+    pass
+
 # ── Value validation (mirrors skill_14 semantics) ─────────────────────────────
 
 
@@ -221,11 +226,22 @@ def determine_submission_metrics(
         candidate_keys.append(f"branch_{active_branch}_oof")
     candidate_keys.extend(
         [
+            # Generic keys
+            "last_ensemble_oof_score",
+            "best_ensemble_oof_score",
+            "last_variant_oof_score",
+            "best_variant_oof_score",
+            "anchor_oof_score_augmented",
+            "anchor_oof_score_challenged",
+            "anchor_oof_score",
+            # Metric-specific keys
             "last_ensemble_oof_f1",
             "best_ensemble_oof_f1",
             "last_variant_oof_f1",
             "best_variant_oof_f1",
             "anchor_oof_f1",
+            "anchor_oof_rmse",
+            "anchor_oof_mae",
         ]
     )
     for key in candidate_keys:
@@ -350,30 +366,43 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
         live_remaining = int(client.remaining_submissions)
     except Exception:
         live_remaining = -1
-    if live_remaining == 0:
-        return {
-            "status": "BLOCKED",
-            "reason": "platform_budget_exhausted",
-            "message": "Zindi reports zero remaining submissions today.",
+    if live_remaining != -1 and live_remaining <= 0:
+        raise HardAbortException("Zindi reports zero remaining submissions today.")
+    if live_remaining == 1:
+        budget_warning_payload = {
+            "remaining_submissions": 1,
+            "source": "live",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-    if 0 < live_remaining <= 2:
-        return {
-            "status": "BLOCKED",
-            "reason": "platform_budget_low",
-            "message": f"Zindi reports only {live_remaining} remaining submission(s). Aborting.",
-        }
+        store.update(budget_warning=budget_warning_payload)
+        print(
+            "\n⚠️  BUDGET WARNING: Only 1 live submission remaining today! "
+            "Proceeding will exhaust the daily budget. "
+            "Explicit confirmation required before proceeding. "
+            "Warning written to SKILL_STATE['budget_warning']."
+        )
 
-    cached_remaining = int(skill_state.get("remaining_submissions") or 10)
+    cached_remaining_val = skill_state.get("remaining_submissions")
+    cached_remaining = int(cached_remaining_val) if cached_remaining_val is not None else 10
     used_today = int(skill_state.get("submissions_used_today") or 0)
     print(
         f"\nBudget (cached state): {cached_remaining} remaining | {used_today} used today"
     )
-    if cached_remaining <= 2:
-        return {
-            "status": "BLOCKED",
-            "reason": "state_budget_low",
-            "message": "State-side budget guard: fewer than 2 submissions remaining.",
+    if cached_remaining <= 0:
+        raise HardAbortException("State-side budget guard: zero submissions remaining.")
+    if cached_remaining == 1:
+        budget_warning_payload = {
+            "remaining_submissions": 1,
+            "source": "cached",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        store.update(budget_warning=budget_warning_payload)
+        print(
+            "\n⚠️  BUDGET WARNING: Only 1 cached submission remaining today! "
+            "Explicit confirmation required before proceeding. "
+            "Warning written to SKILL_STATE['budget_warning']."
+        )
+
 
     best_auc = (
         skill_state.get("best_variant_oof_auc")
@@ -384,14 +413,15 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
     feature_count = _feature_count_from_state(skill_state, branch)
     calibration_method = _calibration_method_from_state(skill_state, branch)
     git_branch = skill_state.get("current_git_branch", "unknown")
+    metric_name = str(config.get("metric", "f1")).upper()
 
     print(f"""
-{"=" * 60}
+============================================================
 === HUMAN GATE: Skill 16 — Submit ===
-{"=" * 60}
+============================================================
 File              : {sub_path.name}
 Branch            : {git_branch}
-OOF F1            : {best_f1}
+OOF {metric_name} : {best_f1}
 Reference ROC-AUC : {best_auc}
 Metric source     : {metric_source}
 Feature count     : {feature_count}
@@ -400,16 +430,18 @@ Live remaining    : {live_remaining if live_remaining >= 0 else "unknown"}
 Validation        : ✅ PASSED
 
 Type YES to submit or NO to abort.
-{"=" * 60}""")
+============================================================""")
     response = input("Submit? [YES/NO]: ").strip().upper()
     if response != "YES":
         print("🛑 Submission aborted by user.")
         return {"status": "ABORTED"}
 
     oof_str = f"{best_f1:.4f}" if isinstance(best_f1, (int, float)) else "n/a"
+    metric_name_lower = metric_name.lower()
+    oof_tag = "oof_f1" if "f1" in metric_name_lower else "oof_score"
     comment = (
         f"branch:{git_branch}"
-        f"|oof_f1:{oof_str}"
+        f"|{oof_tag}:{oof_str}"
         f"|features:{feature_count}"
         f"|calib:{calibration_method}"
     )

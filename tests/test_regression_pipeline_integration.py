@@ -107,7 +107,6 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
         "last_updated": "2026-06-14T12:00:00Z",
         "competition": "regcomp",
         "anchor_git_branch": "main",
-        "anchor_oof_rmse": 99.0, # high baseline so we easily improve
         "human_gate_2_variant-06_approved": True, # approve gate for the variant
     })
     (comp_dir / "SKILL_STATE.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -115,6 +114,15 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     # Monkeypatch and setenv so paths resolve to our temp workspace
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("COMPETITION_SLUG", "regcomp")
+
+    # Mock checkout command in subprocess for git checkout in test context
+    class DummyCompletedProcess:
+        def __init__(self):
+            self.stdout = ""
+            self.stderr = ""
+            self.returncode = 0
+            
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kwargs: DummyCompletedProcess())
 
     # 4. Execute Skill 04: EDA
     skill_04_eda.run()
@@ -134,6 +142,32 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     })
     assert "cleaning" in clean_state
 
+    # 5.5 Prepare processed features and run Skill 08: Anchor Baseline
+    from zindian.constants import TC_BAND_NAMES
+    train_feat_df = train_df.copy()
+    test_feat_df = test_df.copy()
+    for col in TC_BAND_NAMES:
+        if col not in train_feat_df.columns:
+            train_feat_df[col] = 0.0
+        if col not in test_feat_df.columns:
+            test_feat_df[col] = 0.0
+    train_feat_df.to_csv(proc_dir / "features_train.csv", index=False)
+    test_feat_df.to_csv(proc_dir / "features_test.csv", index=False)
+
+    from zindian.skills import skill_08_anchor
+    skill_08_anchor.run(n_splits=5)
+
+    # Assert that anchor_oof_score is populated in SKILL_STATE.json and is a float
+    state_after_anchor = state_store.read()
+    assert "anchor_oof_score" in state_after_anchor
+    assert isinstance(state_after_anchor["anchor_oof_score"], float)
+    # Check that secondary_metrics exists in branch_anchor-baseline_oof
+    assert "branch_anchor-baseline_oof" in state_after_anchor
+    assert "secondary_metrics" in state_after_anchor["branch_anchor-baseline_oof"]
+    sec = state_after_anchor["branch_anchor-baseline_oof"]["secondary_metrics"]
+    assert isinstance(sec["mae"], float)
+    assert isinstance(sec["r2"], float)
+
     # 6. Execute Skill 07: Feature Engineering
     # We run variant-06
     # Touch dummy tiff file to bypass existence check in skill_07
@@ -141,45 +175,31 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     dummy_tiff.touch()
 
     def mock_extract(paths_arg, tiff_path_arg, config_arg):
-        train_p = pd.read_csv(paths_arg.data_raw_dir / "Training_Data.csv")
-        test_p = pd.read_csv(paths_arg.data_raw_dir / "Test_Data.csv")
-        from zindian.constants import TC_BAND_NAMES
-        for col in TC_BAND_NAMES:
-            if col not in train_p.columns:
-                train_p[col] = 0.0
-            if col not in test_p.columns:
-                test_p[col] = 0.0
-        train_p.to_csv(paths_arg.data_processed_dir / "features_train.csv", index=False)
-        test_p.to_csv(paths_arg.data_processed_dir / "features_test.csv", index=False)
-        return train_p, test_p
+        return pd.read_csv(paths_arg.data_processed_dir / "features_train.csv"), pd.read_csv(paths_arg.data_processed_dir / "features_test.csv")
 
     monkeypatch.setattr(skill_07_features, "extract_features", mock_extract)
 
     skill_07_features.run(variant_name="variant-06")
     assert (proc_dir / "features_train.csv").exists()
 
+    # Verify variant-06 OOF record has secondary_metrics
+    state_after_features = state_store.read()
+    assert "branch_variant-06_oof" in state_after_features
+    assert "secondary_metrics" in state_after_features["branch_variant-06_oof"]
+    sec_var = state_after_features["branch_variant-06_oof"]["secondary_metrics"]
+    assert isinstance(sec_var["mae"], float)
+
     # 7. Execute Skill 10: SHAP Audit
-    # For integration run, we mock the git call in skill_11 if needed, or check git exists
     # First, let's write best_variant_this_round and other expected state items so skill_11 knows what to promote
     state_store.update(
         best_variant_this_round="variant-06",
-        best_variant_oof_rmse=1.0, # low RMSE means improved!
+        best_variant_oof_score=1.0, # low RMSE means improved!
         variants_passed=1,
     )
     
     skill_10_shap.run(n_splits=5, seed=42)
 
     # 8. Execute Skill 11: Gate
-    # Mock checkout command in subprocess for git checkout in test context
-    class DummyCompletedProcess:
-        def __init__(self):
-            self.stdout = ""
-            self.stderr = ""
-            self.returncode = 0
-            
-    monkeypatch.setattr("subprocess.run", lambda cmd, **kwargs: DummyCompletedProcess())
-    
-    # Switiching to mock validation to avoid real git call errors in isolated CI
     res = skill_11_gate.run()
     
     # The gate should pass and update the state

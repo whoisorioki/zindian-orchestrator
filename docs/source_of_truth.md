@@ -1,11 +1,17 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** 2.0.1-Canonical
-**Status:** Living Document — Approved for Production Automation
+**Version:** 2.1-Canonical
+**Status:** Fully signed off — zero open anomalies remaining.
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** v2.0 → v2.0.1 — 2 label fixes applied
-(Section 4 Phase 1 gate reference string advanced to v2.0.1;
-Section 8 skill_21 DoD Guard Condition 4 synced to effective_variance_threshold label)
+**Last updated:** June 2026
+**Patched from v2.0.1:** 4 changes —
+  Section 4 `skill_11_gate` condition 3: RMSLE carve-out added (log-space
+  metric must not be scaled by target_std; zero-std fallback documented);
+  Section 2 MAPE: zero-target exclusion and null-on-all-zero clause clarified;
+  Section 8 `skill_11` DoD: degenerate target_std fallback item added;
+  Section 8 `skill_22` DoD: simultaneous [C]+pseudo-label baseline precedence
+  item added.
+
 
 ---
 
@@ -226,7 +232,15 @@ Every OOF-generating skill must write its output in this form in `SKILL_STATE.js
 #### Secondary Metrics Block
 To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versatility across diverse Zindi regression challenges, all candidate and anchor OOF records must contain a nested `secondary_metrics` object containing:
 - `mae`: Mean Absolute Error (regression tasks only)
-- `mape`: Mean Absolute Percentage Error (regression tasks only, guarded against division-by-zero by ignoring/clipping samples where $y = 0$)
+- `mape`: Mean Absolute Percentage Error (regression tasks only).
+  Computed exclusively over rows where the ground-truth target
+  `y_true != 0`. Rows where `y_true == 0` are excluded entirely from
+  both the numerator and denominator of the MAPE computation.
+  When all rows in the validation fold have `y_true == 0`,
+  `mape` is set to `null` with reason `"all_targets_zero"` rather than
+  `0.0` or infinity. Zero or infinity would silently corrupt the
+  `secondary_metrics` block and any downstream diagnostic that reads it.
+
 - `r2`: Coefficient of determination (regression tasks only)
 
 For classification tasks, the `secondary_metrics` field may be omitted or set to `null`.
@@ -845,7 +859,7 @@ No string literals permitted in `skill_05` body.
 **Phase 1 → Phase 2A gate:**
 
 ```
-[ ] challenge_config.json matches v2.0.1 schema — all
+[ ] challenge_config.json matches v2.1 schema — all
     fields present and non-null where required
 [ ] task_type, metric, target_col confirmed
 [ ] metric_direction written and set
@@ -1233,16 +1247,32 @@ runs.**
 3. OOF improvement over anchor passes directional check:
        Effective gate margin:
            If config["task_type"] == "regression":
-               effective_gate_margin =
-                   config["gate_margin"] *
-                   SKILL_STATE["eda"]["target_std"]
-               (gate_margin: 0.001 is trivially small for
-               RMSE on a target with σ_y = 500; σ_y
-               normalisation makes the threshold scale-
-               invariant across competitions)
+               If config["metric"] == "rmsle":
+                   effective_gate_margin = config["gate_margin"]
+                   # RMSLE is scale-invariant by construction — computed
+                   # in log-space. Multiplying gate_margin by target_std
+                   # would apply original-scale target units to a
+                   # dimensionless log-ratio metric, producing a threshold
+                   # in the wrong units entirely. Raw threshold applies.
+               Else:
+                   effective_gate_margin =
+                       config["gate_margin"] *
+                       SKILL_STATE["eda"]["target_std"]
+                   # For original-scale regression metrics (RMSE, MAE),
+                   # target_std normalisation makes gate_margin
+                   # scale-invariant across competitions with different
+                   # target magnitudes. (gate_margin: 0.001 is trivially
+                   # small for RMSE on a target with σ_y = 500.)
+               If SKILL_STATE["eda"]["target_std"] == 0.0
+                  AND config["metric"] != "rmsle":
+                   effective_gate_margin = config["gate_margin"]
+                   # Degenerate target_std — fall back to raw threshold.
+                   # Warning written to SKILL_STATE["metadata_warnings"].
+                   # Pipeline does not halt — warning is advisory only.
            If config["task_type"] == "classification":
                effective_gate_margin = config["gate_margin"]
                (metrics are bounded — no normalisation)
+
        Baseline selection (safe lookup — pseudo_label_result
        may not exist on first pass through skill_11):
            retraining_active = SKILL_STATE.get(
@@ -2103,8 +2133,14 @@ optimisation.
     regression (RMSE): config["gate_margin"] * target_std
     regression (RMSLE): config["gate_margin"] raw (no scaling)
     classification: config["gate_margin"] raw
+[ ] If target_std == 0.0 and metric != "rmsle":
+    effective_gate_margin falls back to config["gate_margin"] raw
+    effective_variance_threshold falls back to config["variance_gate_threshold"] raw
+    Warning written to SKILL_STATE["metadata_warnings"]
+    Pipeline does not halt — warning is non-blocking and advisory only
 [ ] target_std read from SKILL_STATE["eda"]["target_std"]
     — written by skill_04 in Phase 1
+
 [ ] Gate condition 3 reads metric_direction from config
 [ ] Gate condition 3 baseline uses safe state lookup:
     SKILL_STATE.get("pseudo_label_result", {})
@@ -2335,6 +2371,18 @@ optimisation.
         anchor_challenge.active reflects operator selection
         Modification description and rationale non-empty
         No challenge writes present in challenge_config.json
+[ ] If both anchor_challenge.active == true AND
+    pseudo_label_result.retraining_required == true
+    in the same competition run:
+        Verify skill_11 gate comparisons used
+        anchor_oof_score_augmented as the baseline,
+        NOT anchor_oof_score_challenged.
+        anchor_oof_score_augmented takes precedence because
+        the training set has changed — comparing against any
+        pre-augmentation baseline (including the challenged
+        anchor) is mathematically invalid when pseudo-label
+        rows have been added to the training matrix.
+
 [ ] Competition history log entry written in correct
     schema to competition_history/history_log.jsonl
 [ ] All required history log fields populated before
@@ -2561,7 +2609,10 @@ optimisation.
 
 ---
 
-*End of Source of Truth Document v2.0.1-Canonical*
-*Patched from v2.0: 2 label fixes — Section 4 gate schema reference string updated to v2.0.1; 
-Section 8 skill_21 DoD Guard Condition 4 synchronized to effective_variance_threshold.*
-*Status: Fully signed off — zero open anomalies remaining.*
+*End of Source of Truth Document v2.1-Canonical*
+*Patched from v2.0.1: 4 changes — Section 4 skill_11_gate condition 3
+RMSLE carve-out added; Section 2 MAPE zero-target exclusion clarified;
+Section 8 skill_11 DoD degenerate target_std fallback item added;
+Section 8 skill_22 DoD simultaneous [C]+pseudo-label baseline
+precedence item added.*
+*Status: Fully signed off — zero open anomalies remaining.*

@@ -49,6 +49,8 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
     # Setup folders
     comp_dir = tmp_path / "competitions" / "testcomp"
     comp_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COMPETITION_SLUG", "testcomp")
     processed_dir = comp_dir / "data" / "processed"
     processed_dir.mkdir(parents=True)
     
@@ -73,7 +75,28 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
     
     # Write skeleton challenge_config.json
     config_path = comp_dir / "challenge_config.json"
-    config_path.write_text('{"slug": "testcomp", "target_col": "Occurrence Status", "target_column": "Occurrence Status"}', encoding="utf-8")
+    config_data = {
+        "name": "testcomp",
+        "slug": "testcomp",
+        "metric": "f1_score",
+        "metric_direction": "maximize",
+        "submission_format": "csv",
+        "use_probabilities": False,
+        "daily_limit": 10,
+        "total_limit": 100,
+        "public_split_pct": 20,
+        "private_split_pct": 80,
+        "team_allowed": True,
+        "code_review_tier": "top_10",
+        "allowed_external_data": True,
+        "automl_permitted": False,
+        "data_modality": "tabular",
+        "domain": "generic",
+        "task_type": "classification",
+        "target_col": "Occurrence Status",
+        "target_column": "Occurrence Status"
+    }
+    config_path.write_text(json.dumps(config_data), encoding="utf-8")
 
     class SimplePaths:
         def __init__(self):

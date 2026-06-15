@@ -156,7 +156,15 @@ def compute_oof_predictions(
             f"Unsupported anchor_challenge model_family '{model_family}' in skill_08; supported: 'lightgbm'"
         )
 
-    y = np.asarray(train[target_col].values, dtype=np.int32)
+    import random
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+
+    task_type = str(config.get("task_type", "classification")).lower()
+    if task_type == "regression":
+        y = np.asarray(train[target_col].values, dtype=np.float64)
+    else:
+        y = np.asarray(train[target_col].values, dtype=np.int32)
     groups = None
     group_col = (config.get("cv_strategy", {}) or {}).get("group_column")
     if group_col and group_col in train.columns:
@@ -186,12 +194,19 @@ def compute_oof_predictions(
         scale=True,
     )
 
-    from sklearn.metrics import log_loss
-
-    oof_logloss = float(log_loss(y, result.oof_probs))
-    print(f"\nOOF Log Loss : {oof_logloss:.6f}")
-    print(f"OOF AUC      : {result.oof_auc:.6f}")
-    print(f"OOF F1       : {result.oof_f1:.6f} (threshold={result.threshold:.2f})")
+    if task_type == "regression":
+        oof_rmse = result.oof_rmse
+        print(f"\nOOF RMSE     : {oof_rmse:.6f}")
+        oof_logloss = oof_rmse
+    else:
+        from sklearn.metrics import log_loss
+        try:
+            oof_logloss = float(log_loss(y, result.oof_probs))
+        except Exception:
+            oof_logloss = 0.0
+        print(f"\nOOF Log Loss : {oof_logloss:.6f}")
+        print(f"OOF AUC      : {result.oof_auc:.6f}")
+        print(f"OOF F1       : {result.oof_f1:.6f} (threshold={result.threshold:.2f})")
 
     cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
     return (
@@ -207,6 +222,7 @@ def compute_oof_predictions(
         feature_count,
         [float(score) for score in result.fold_aucs],
     )
+
 
 
 # ── Git ────────────────────────────────────────────────────────────────────────
@@ -307,6 +323,12 @@ def run(
     config = ChallengeConfig.load()
     state_store = SkillStateStore(paths.state_path)
     state = state_store.read()
+
+    if random_seed is None:
+        random_seed = get_seed()
+    import random
+    random.seed(random_seed)
+    np.random.seed(random_seed)
 
     print(f"Competition      : {config.slug}")
     print(f"Metric           : {config.metric}")
@@ -477,17 +499,45 @@ def run(
     if retraining_active:
         f1_key = "anchor_oof_f1_augmented"
         auc_key = "anchor_oof_auc_augmented"
+        score_key = "anchor_oof_score_augmented"
     else:
         f1_key = "anchor_oof_f1"
         auc_key = "anchor_oof_auc"
+        score_key = "anchor_oof_score"
 
-    state_store.update(
-        **{f1_key: oof_f1, auc_key: oof_auc},
-        anchor_git_branch="anchor-baseline",
-        anchor_cv_strategy_id=cv_strategy_id,
-        dag_phase="phase_2_anchor_confirmed",
-        last_updated=datetime.now(timezone.utc).isoformat(),
-    )
+    task_type = str(config.get("task_type", "classification")).lower()
+    metric_name = str(config.get("metric", "f1")).lower()
+    metric_map = {
+        "auc": oof_auc,
+        "f1": oof_f1,
+        "f1_score": oof_f1,
+        "rmse": oof_logloss if task_type == "regression" else oof_f1,
+        "mae": oof_logloss if task_type == "regression" else oof_f1,
+        "logloss": oof_logloss,
+        "log_loss": oof_logloss,
+        "rmsle": oof_logloss if task_type == "regression" else oof_f1,
+    }
+    anchor_oof_score = metric_map.get(metric_name, oof_f1)
+
+    secondary_metrics = None
+    if task_type == "regression":
+        from zindian.state import compute_secondary_metrics
+        y_true = np.asarray(train[training_target_col].values, dtype=np.float64)
+        secondary_metrics = compute_secondary_metrics(y_true, oof_preds)
+
+    updates = {
+        score_key: anchor_oof_score,
+        "anchor_git_branch": "anchor-baseline",
+        "anchor_cv_strategy_id": cv_strategy_id,
+        "dag_phase": "phase_2_anchor_confirmed",
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+    # Deprecated: anchor_oof_f1 and anchor_oof_auc are preserved for backward compatibility
+    updates[f1_key] = oof_f1
+    updates[auc_key] = oof_auc
+
+    state_store.update(**updates)
+
     branch_name = (
         "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
     )
@@ -508,9 +558,10 @@ def run(
             ),
             "fold_scores": fold_scores_list,
         },
+        secondary_metrics=secondary_metrics,
     )
     print(
-        f"✅ SKILL_STATE.json updated: f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}"
+        f"✅ SKILL_STATE.json updated: score={anchor_oof_score:.6f}  f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}"
     )
 
     # ── Create git branch ──────────────────────────────────────

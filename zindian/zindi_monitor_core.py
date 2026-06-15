@@ -860,9 +860,42 @@ def update_state(
     paths,
 ) -> None:
     store = SkillStateStore(paths.state_path)
+    state = store.read()
+
+    # Calculate overfit_risk using direction-aware drift check
+    try:
+        from zindian.config import ChallengeConfig
+        config_obj = ChallengeConfig.load()
+        metric_direction = str(config_obj.get("metric_direction", "maximize")).lower()
+        drift_threshold = float(state.get(
+            "drift_threshold",
+            config_obj.get("drift_threshold", 0.05)
+        ))
+
+        # Get anchor OOF score from generic key (fallback to metric-specific keys)
+        oof_score = state.get("anchor_oof_score")
+        if oof_score is None:
+            oof_score = state.get("anchor_oof_f1") or state.get("anchor_oof_rmse")
+
+        lb_score = sub_intel.get("best_score")
+
+        if oof_score is not None and lb_score is not None and lb_score > 0.0:
+            delta = float(oof_score) - float(lb_score)
+            if metric_direction == "maximize":
+                overfit_risk = delta > drift_threshold
+            else:
+                overfit_risk = -delta > drift_threshold
+            print(f"  [skill_00] Drift check: OOF={oof_score:.5f}, LB={lb_score:.5f}, Delta={delta:.5f}, Threshold={drift_threshold:.5f} -> overfit_risk={overfit_risk}")
+        else:
+            overfit_risk = False
+    except Exception as exc:
+        print(f"  ⚠️ Failed to calculate overfit_risk: {exc}")
+        overfit_risk = False
+
     store.update(
         anchor_rank=lb_intel.get("my_rank"),
         remaining_submissions=lb_intel.get("remaining"),
+        overfit_risk=overfit_risk,
         compliance={
             "last_checked": datetime.now(timezone.utc).isoformat(),
             "total_discussions": len(all_discussions),
@@ -1033,6 +1066,9 @@ def run(
     else:
         print("\n✅ No compliance issues — safe to proceed to Skill 03")
 
+    store = SkillStateStore(paths.state_path)
+    overfit_risk = store.read().get("overfit_risk", False)
+
     return {
         "status": status,
         "my_rank": lb_intel.get("my_rank"),
@@ -1044,6 +1080,7 @@ def run(
         "external_sources_in_discussions": list(
             set(src for f in flagged for src in f.get("external_sources", []))
         ),
+        "overfit_risk": overfit_risk,
     }
 
 

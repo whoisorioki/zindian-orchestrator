@@ -205,6 +205,38 @@ def check_human_gate_keys(state: dict, cfg: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Anchor OOF Score Presence Check
+# ---------------------------------------------------------------------------
+
+# DAG phase strings written by skill_08 and skill_11 that indicate the anchor
+# run should already have completed. anchor_oof_score being null in any of
+# these phases is anomalous and worth surfacing as a preflight warning.
+_POST_ANCHOR_PHASES = frozenset({
+    "phase_2_anchor_confirmed",   # written by skill_08
+    "phase_3_gate_blocked",       # written by skill_11 on gate fail
+    "phase_3_anchor_promoted",    # written by skill_11 on gate pass
+    "phase_3_features",           # written by skill_07 and skill_05
+})
+
+
+def check_anchor_oof_score(state: dict) -> None:
+    """Warn (non-blocking) when anchor_oof_score is null post-anchor phases."""
+    dag_phase = state.get("dag_phase", "uninitialized")
+    if dag_phase not in _POST_ANCHOR_PHASES:
+        # Phase hasn't reached the anchor run yet — null is expected.
+        return
+    if state.get("anchor_oof_score") is None:
+        print(
+            f"WARN: anchor_oof_score is null at dag_phase='{dag_phase}'. "
+            "Phase 2 anchor may not have written state correctly. "
+            "Run skill_08_anchor before proceeding to Phase 3."
+        )
+    else:
+        ok(f"anchor_oof_score present at dag_phase='{dag_phase}'")
+
+
+
+# ---------------------------------------------------------------------------
 # AST Static Code Auditing
 # ---------------------------------------------------------------------------
 
@@ -392,6 +424,8 @@ def main():
     state = json.loads(state_path.read_text(encoding="utf-8"))
     ok("SKILL_STATE.json loaded")
     check_human_gate_keys(state, cfg)
+    check_anchor_oof_score(state)
+
 
     print("\nPRELIGHT ENFORCE: ALL CHECKS PASSED")
     sys.exit(0)

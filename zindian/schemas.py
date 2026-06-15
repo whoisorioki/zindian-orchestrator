@@ -26,8 +26,7 @@ def _is_jsonable_scalar(x: Any) -> bool:
 SKILL_STATE_KEYS: Tuple[str, ...] = (
     "competition",
     "md5_target_hash",
-    "anchor_oof_f1",
-    "anchor_oof_rmse",
+    "anchor_oof_score",
     "anchor_lb_score",
     "submissions_used_today",
     "submissions_used_total",
@@ -61,7 +60,13 @@ CHALLENGE_CONFIG_KEYS: Tuple[str, ...] = (
 def validate_skill_state(obj: Any) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValidationError("SKILL_STATE must be a JSON object")
+    # Backward-compatibility shim: files written before anchor_oof_score was
+    # introduced (v2.0.1) will not carry the key. Insert null so the schema
+    # validator does not reject them on first read.
+    if "anchor_oof_score" not in obj:
+        obj["anchor_oof_score"] = None
     _require_keys(obj, SKILL_STATE_KEYS, path="SKILL_STATE")
+
 
     # Basic type checks (allow nulls where schema permits).
     for k in SKILL_STATE_KEYS:
@@ -108,6 +113,7 @@ def skill_state_skeleton() -> Dict[str, Any]:
     return {
         "competition": None,
         "md5_target_hash": None,
+        "anchor_oof_score": None,
         "anchor_oof_f1": None,
         # Legacy compatibility field; downstream logic should prefer anchor_oof_f1.
         "anchor_oof_rmse": None,
