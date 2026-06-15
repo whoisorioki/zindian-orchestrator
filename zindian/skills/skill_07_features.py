@@ -953,7 +953,7 @@ def run(
     else:
         anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
 
-    if baseline_score == 0.0:
+    if variant_name is not None and baseline_score == 0.0:
         raise RuntimeError(
             f"Baseline score not set in SKILL_STATE.json — run Skill 08 first or set baseline."
         )
@@ -1060,7 +1060,7 @@ def run(
     if is_generic:
         # Determine target, id, and coordinate columns to exclude
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
         lat_col = cols_cfg.get("latitude", "Latitude")
         lon_col = cols_cfg.get("longitude", "Longitude")
         DROP = {id_col, target_col, lat_col, lon_col, "ID", "target"}
@@ -1348,7 +1348,7 @@ def run(
         train_feat = pd.read_csv(full_train)
         test_feat = pd.read_csv(full_test)
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
         lat_col = cols_cfg.get("latitude", "Latitude")
         lon_col = cols_cfg.get("longitude", "Longitude")
         # target_col was resolved earlier from config into `target_col`
@@ -1437,7 +1437,7 @@ def run(
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
 
         oof_df = pd.DataFrame(
             {id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])}
@@ -1462,7 +1462,7 @@ def run(
         sample_file = input_files.get("sample", "SampleSubmission.csv")
         sample = pd.read_csv(paths.data_raw_dir / sample_file)
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
         sub_col = [c for c in sample.columns if c != id_col][0]
         test_probs = result["test_probs"]
         # Respect submission format policy: prefer probabilities when configured

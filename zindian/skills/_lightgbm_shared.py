@@ -14,7 +14,22 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
+import os
+import sys
+
+try:
+    orig_path = sys.path.copy()
+    sys.path = [
+        p
+        for p in sys.path
+        if p not in ("", ".", os.getcwd(), os.path.abspath(os.getcwd()))
+    ]
+    if "lightgbm" in sys.modules:
+        del sys.modules["lightgbm"]
+    import lightgbm as lgb
+finally:
+    sys.path = orig_path
+
 from sklearn.metrics import f1_score, roc_auc_score, root_mean_squared_error
 from sklearn.preprocessing import StandardScaler
 from zindian.cv import get_cv_splits
@@ -59,15 +74,23 @@ def train_lightgbm_cv(
         ]
         | None
     ) = None,
+    regression_metric: str | None = None,
 ) -> LightGBMRunResult:
     """Train a LightGBM CV model and return metrics.
     Supports both classification and regression based on challenge_config.task_type.
+    When task_type == "regression", uses regression_metric to apply the correct
+    target transformation and prediction inverse-mapping per the SoT v2.2
+    Regression Target Transformation Lifecycle:
+        "rmsle"                -> log1p(y) train, expm1(clip(raw, 0)) preds
+        "root_mean_squared_error" / "mean_absolute_error" -> identity scale,
+                                domain clipping via target_domain_bounds
     """
     from zindian.config import ChallengeConfig
 
     # Safely obtain task_type from provided config or fallback to default.
     try:
         from zindian.config import ChallengeConfig
+
         cfg = ChallengeConfig.load()
         task_type = str(cfg.get("task_type", "classification")).lower()
     except Exception:
@@ -97,15 +120,20 @@ def train_lightgbm_cv(
     # If per_fold_feature_fn is provided, X and X_test will be computed inside the fold loop
     if task_type == "regression":
         y = np.asarray(train[target_col].values, dtype=np.float64)
+        # Resolve target transformation based on regression metric (SoT v2.2)
+        metric = str(regression_metric or "").lower()
+        use_log1p = metric == "rmsle"
     else:
         y_raw = train[target_col].values
-        if y_raw.dtype.kind in ('U', 'S', 'O'):  # text or object targets
+        if y_raw.dtype.kind in ("U", "S", "O"):  # text or object targets
             from sklearn.preprocessing import LabelEncoder
+
             le = LabelEncoder()
             y = le.fit_transform(y_raw.astype(str))
         else:
             y = y_raw
         y = np.asarray(y, dtype=np.int32)
+        use_log1p = False
     if per_fold_feature_fn is None:
         X = np.asarray(train[feature_cols].values, dtype=np.float64)
         X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
@@ -123,7 +151,13 @@ def train_lightgbm_cv(
         # For non-binary/multiclass target spaces in special metrics, use multiclass objective
         n_classes = len(np.unique(y))
         if n_classes > 2:
-            lgb_params.update({"objective": "multiclass", "num_class": n_classes, "metric": "multi_logloss"})
+            lgb_params.update(
+                {
+                    "objective": "multiclass",
+                    "num_class": n_classes,
+                    "metric": "multi_logloss",
+                }
+            )
         else:
             lgb_params.update({"objective": "binary", "metric": "binary_logloss"})
     if params:
@@ -147,6 +181,19 @@ def train_lightgbm_cv(
         else:
             split_iter = iter(cv)
 
+    # Resolve target_domain_bounds for RMSE/MAE domain clipping
+    domain_bounds = None
+    if task_type == "regression" and not use_log1p:
+        try:
+            _cfg = ChallengeConfig.load()
+            _bounds = _cfg.get("target_domain_bounds") or {}
+            min_b = _bounds.get("min")
+            max_b = _bounds.get("max")
+            if min_b is not None and max_b is not None:
+                domain_bounds = (float(min_b), float(max_b))
+        except Exception:
+            domain_bounds = None
+
     for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
         # If per_fold_feature_fn is provided, recompute X and X_test for this fold
         if per_fold_feature_fn is not None:
@@ -161,8 +208,17 @@ def train_lightgbm_cv(
                 X_test = scaler.transform(X_test)
             X = X_full
 
-        train_set = lgb.Dataset(X[tr_idx], label=y[tr_idx])
-        val_set = lgb.Dataset(X[val_idx], label=y[val_idx], reference=train_set)
+        # Target transformation per SoT v2.2 Regression Target Transformation Lifecycle:
+        #   rmsle  -> log1p(y)  ;  RMSE/MAE -> identity
+        if task_type == "regression" and use_log1p:
+            y_train_fold = np.log1p(y[tr_idx])
+            y_val_fold = np.log1p(y[val_idx])
+        else:
+            y_train_fold = y[tr_idx]
+            y_val_fold = y[val_idx]
+
+        train_set = lgb.Dataset(X[tr_idx], label=y_train_fold)
+        val_set = lgb.Dataset(X[val_idx], label=y_val_fold, reference=train_set)
 
         model = lgb.train(
             lgb_params,
@@ -175,22 +231,52 @@ def train_lightgbm_cv(
             ],
         )
 
-        val_pred = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
-        test_pred = np.asarray(model.predict(X_test), dtype=np.float64)
-        
-        # If multiclass output, val_pred/test_pred will have shape (N, n_classes)
-        # For simplicity, extract the probability of class 1 or prediction index
-        if len(val_pred.shape) > 1 and val_pred.shape[1] > 1:
-            val_pred_flat = val_pred[:, 1] if val_pred.shape[1] == 2 else np.argmax(val_pred, axis=1).astype(np.float64)
-            test_pred_flat = test_pred[:, 1] if test_pred.shape[1] == 2 else np.argmax(test_pred, axis=1).astype(np.float64)
-        else:
-            val_pred_flat = val_pred
-            test_pred_flat = test_pred
+        val_pred_raw = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
+        test_pred_raw = np.asarray(model.predict(X_test), dtype=np.float64)
 
-        oof_probs[val_idx] = val_pred_flat
-        test_probs += test_pred_flat / n_splits
+        # If multiclass output, flatten to 1D
+        if len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] > 1:
+            val_pred_flat = (
+                val_pred_raw[:, 1]
+                if val_pred_raw.shape[1] == 2
+                else np.argmax(val_pred_raw, axis=1).astype(np.float64)
+            )
+            test_pred_flat = (
+                test_pred_raw[:, 1]
+                if test_pred_raw.shape[1] == 2
+                else np.argmax(test_pred_raw, axis=1).astype(np.float64)
+            )
+        else:
+            val_pred_flat = val_pred_raw
+            test_pred_flat = test_pred_raw
+
+        # Prediction inverse-mapping per SoT v2.2:
+        #   rmsle  -> clip(raw, 0) then expm1
+        #   RMSE/MAE -> clip(raw, domain_bounds)
         if task_type == "regression":
-            fold_rmse = root_mean_squared_error(y[val_idx], val_pred_flat)
+            if use_log1p:
+                val_pred_final = np.expm1(np.clip(val_pred_flat, 0, None))
+                test_pred_final = np.expm1(np.clip(test_pred_flat, 0, None))
+            else:
+                if domain_bounds is not None:
+                    val_pred_final = np.clip(
+                        val_pred_flat, domain_bounds[0], domain_bounds[1]
+                    )
+                    test_pred_final = np.clip(
+                        test_pred_flat, domain_bounds[0], domain_bounds[1]
+                    )
+                else:
+                    val_pred_final = val_pred_flat
+                    test_pred_final = test_pred_flat
+        else:
+            val_pred_final = val_pred_flat
+            test_pred_final = test_pred_flat
+
+        oof_probs[val_idx] = val_pred_final
+        test_probs += test_pred_final / n_splits
+        if task_type == "regression":
+            # Compute RMSE on back-transformed (original-space) predictions
+            fold_rmse = root_mean_squared_error(y[val_idx], val_pred_final)
             fold_aucs.append(fold_rmse)
             print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
@@ -200,15 +286,25 @@ def train_lightgbm_cv(
             except Exception:
                 # Secondary validation block for unconventional metrics/multiclass
                 from sklearn.metrics import accuracy_score
+
                 try:
-                    fold_auc = float(accuracy_score(y[val_idx], np.round(val_pred_flat).astype(int)))
+                    fold_auc = float(
+                        accuracy_score(y[val_idx], np.round(val_pred_flat).astype(int))
+                    )
                 except Exception:
                     fold_auc = 0.0
             fold_aucs.append(fold_auc)
             print(f"  Fold {fold_idx + 1}/{n_splits}: score={fold_auc:.6f}")
 
     if task_type == "regression":
-        oof_rmse = root_mean_squared_error(y, oof_probs)
+        # Score computation per SoT v2.2 Regression Target Transformation Lifecycle:
+        #   rmsle -> RMSLE in original space: sqrt(mean((log(y+1) - log(yhat+1))^2))
+        #   RMSE/MAE -> standard RMSE in original space (computed on back-transformed predictions)
+        if use_log1p:
+            rmsle_val = np.sqrt(np.mean((np.log1p(y) - np.log1p(oof_probs)) ** 2))
+            oof_rmse = float(rmsle_val)
+        else:
+            oof_rmse = float(root_mean_squared_error(y, oof_probs))
         return LightGBMRunResult(
             oof_probs=oof_probs,
             test_probs=test_probs,
@@ -223,18 +319,21 @@ def train_lightgbm_cv(
             oof_auc = float(roc_auc_score(y, oof_probs))
         except Exception:
             oof_auc = 0.0
-        
+
         try:
             if threshold_grid is None:
                 threshold_grid = np.arange(0.3, 0.7, 0.01)
             best_t = float(
-                max(threshold_grid, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+                max(
+                    threshold_grid,
+                    key=lambda t: f1_score(y, (oof_probs >= t).astype(int)),
+                )
             )
             oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
         except Exception:
             best_t = 0.0
             oof_f1 = 0.0
-            
+
         return LightGBMRunResult(
             oof_probs=oof_probs,
             test_probs=test_probs,

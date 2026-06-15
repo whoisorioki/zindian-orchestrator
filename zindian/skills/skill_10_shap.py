@@ -42,7 +42,12 @@ def _load_train_frame(paths: CompetitionPaths) -> pd.DataFrame:
 
     full = paths.competition_dir / "data" / "processed" / "features_full_train.csv"
     processed = paths.competition_dir / "data" / "processed" / "features_train.csv"
-    fallback = paths.data_raw_dir / "Training_Data.csv"
+    try:
+        config = ChallengeConfig.load()
+        train_file = (config.get("input_files") or {}).get("train", "Training_Data.csv")
+    except Exception:
+        train_file = "Training_Data.csv"
+    fallback = paths.data_raw_dir / train_file
     if full.exists():
         return pd.read_csv(full)
     if processed.exists():

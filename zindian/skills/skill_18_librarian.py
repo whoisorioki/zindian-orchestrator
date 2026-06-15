@@ -12,6 +12,7 @@ import requests
 from pathlib import Path
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
+from zindian.state import SkillStateStore
 
 from zindian.constants import TC_VARIABLES as _CANONICAL_TC
 
@@ -330,6 +331,15 @@ def run_librarian(
     )
 
     return cache
+
+
+def run(config: dict, state_store: SkillStateStore) -> None:
+    """Standard entry point wrapper that logs a warning or executes librarian."""
+    print("WARNING: Standard skill_18 entry point run() called. This skill utilizes run_librarian() instead.")
+    # Log a "Not Implemented" warning through the state store as requested
+    state_store.update(
+        librarian_warning="skill_18 run() called but is not implemented in the standard loop; execute via run_librarian() instead."
+    )
 
 
 if __name__ == "__main__":

@@ -213,6 +213,14 @@ def run(
             except Exception:
                 pass
 
+        def _rel(p) -> str:
+            if not p:
+                return ""
+            try:
+                return str(Path(p).resolve().relative_to(paths.root.resolve()))
+            except Exception:
+                return str(p)
+
         # ── Phase transition event (session-scoped) ────────────────
         phase_event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -220,17 +228,17 @@ def run(
             "competition_id": config.slug,
             "task_type": task_type,
             "metric_label": metric_label,
-            "report_path": str(report_path),
+            "report_path": _rel(report_path),
         }
         _log_startup_event(session_log_path, phase_event)
 
         return {
             "status": "GO",
-            "ledger_path": str(ledger_path),
+            "ledger_path": _rel(ledger_path),
             "experiments_count": exp_count,
             "submissions_count": sub_count,
-            "phase_1_summary_path": str(report_path),
-            "session_log": str(session_log_path),
+            "phase_1_summary_path": _rel(report_path),
+            "session_log": _rel(session_log_path),
             "message": "Session log initialised, phase summary generated.",
         }
 

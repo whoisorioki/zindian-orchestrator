@@ -520,6 +520,15 @@ Generate feature engineering hypotheses as a raw JSON array now.
     return validated
 
 
+def run(config: dict, state_store: SkillStateStore) -> None:
+    """Standard entry point wrapper that logs a warning or executes scientist."""
+    print("WARNING: Standard skill_20 entry point run() called. This skill utilizes run_scientist() instead.")
+    # Log a "Not Implemented" warning through the state store as requested
+    state_store.update(
+        scientist_warning="skill_20 run() called but is not implemented in the standard loop; execute via run_scientist() instead."
+    )
+
+
 if __name__ == "__main__":
     from zindian.paths import resolve_competition_paths
 

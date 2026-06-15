@@ -390,11 +390,13 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
         if config.get("use_probabilities") is not None:
             scraped["use_probabilities"] = config.get("use_probabilities")
         if config.get("allowed_external_data") is not None:
-            competition_intel["external_banned"] = not config.get(
-                "allowed_external_data"
-            )
+            val = not config.get("allowed_external_data")
+            scraped["external_banned"] = val
+            competition_intel["external_banned"] = val
         if config.get("automl_permitted") is not None:
-            competition_intel["automl_banned"] = not config.get("automl_permitted")
+            val = not config.get("automl_permitted")
+            scraped["automl_banned"] = val
+            competition_intel["automl_banned"] = val
         if config.get("code_review_tier"):
             scraped["code_review_tier"] = config.get("code_review_tier")
         if config.get("daily_limit"):

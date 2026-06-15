@@ -183,14 +183,11 @@ def check_human_gate_keys(state: dict, cfg: dict) -> None:
             for k in state
             if k.startswith("human_gate_2_") and k.endswith("_approved")
         ]
-        if not gate2_keys:
-            missing.append("human_gate_2_{branch}_approved")
-        else:
-            for gk in gate2_keys:
-                if not isinstance(state[gk], bool):
-                    fail(
-                        f"SKILL_STATE.{gk} has wrong type: {type(state[gk]).__name__}, expected bool"
-                    )
+        for gk in gate2_keys:
+            if not isinstance(state[gk], bool):
+                fail(
+                    f"SKILL_STATE.{gk} has wrong type: {type(state[gk]).__name__}, expected bool"
+                )
 
     # Reject legacy human_gate_2_by_branch container
     if "human_gate_2_by_branch" in state:

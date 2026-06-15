@@ -306,7 +306,8 @@ def run(strategy: str = "compare") -> dict:
         str(config.get("longitude_column", "Longitude")),
     }
     group_col = decision.get("group_col")
-    excluded_cols = {"ID", target_col, *coord_names, *policy_blocked}
+    id_col = config.get("id_col") or config.get("id_column") or "ID"
+    excluded_cols = {id_col, target_col, *coord_names, *policy_blocked}
     if group_col is not None:
         excluded_cols.add(str(group_col))
 

@@ -53,7 +53,9 @@ def load_data(
         # excluding common coordinate/id columns. This keeps the module config-driven
         # while remaining robust for old fixtures.
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = (
+            config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+        )
         lat_col = cols_cfg.get("latitude", "Latitude")
         lon_col = cols_cfg.get("longitude", "Longitude")
         candidate_cols = [
@@ -70,7 +72,7 @@ def load_data(
     input_files = config.get("input_files", {}) or {}
     sample_file = input_files.get("sample", "SampleSubmission.csv")
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
     sample = pd.read_csv(paths.data_raw_dir / sample_file)
     submission_col = [c for c in sample.columns if c != id_col][0]
 
@@ -110,7 +112,7 @@ def compute_oof_predictions(
         random_seed = get_seed()
 
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
 
     # Resolve active CV strategy from state override first, then config.
     state = state or {}
@@ -129,9 +131,7 @@ def compute_oof_predictions(
         if col is not None:
             excluded_cols.add(str(col))
 
-    feature_cols = [
-        c for c in train.columns if c not in excluded_cols
-    ]
+    feature_cols = [c for c in train.columns if c not in excluded_cols]
     feature_count = len(feature_cols)
 
     # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
@@ -157,6 +157,7 @@ def compute_oof_predictions(
         )
 
     import random
+
     random.seed(random_seed)
     np.random.seed(random_seed)
 
@@ -180,6 +181,9 @@ def compute_oof_predictions(
     else:
         split_iter = list(splitter.split(X_dummy, y))
 
+    # Resolve regression metric for target transformation lifecycle (SoT v2.2)
+    regression_metric = config.get("metric") if task_type == "regression" else None
+
     result = train_lightgbm_cv(
         train=train,
         test=test,
@@ -192,6 +196,7 @@ def compute_oof_predictions(
         num_boost_round=500,
         early_stopping_rounds=50,
         scale=True,
+        regression_metric=regression_metric,
     )
 
     if task_type == "regression":
@@ -200,6 +205,7 @@ def compute_oof_predictions(
         oof_logloss = oof_rmse
     else:
         from sklearn.metrics import log_loss
+
         try:
             oof_logloss = float(log_loss(y, result.oof_probs))
         except Exception:
@@ -222,7 +228,6 @@ def compute_oof_predictions(
         feature_count,
         [float(score) for score in result.fold_aucs],
     )
-
 
 
 # ── Git ────────────────────────────────────────────────────────────────────────
@@ -327,6 +332,7 @@ def run(
     if random_seed is None:
         random_seed = get_seed()
     import random
+
     random.seed(random_seed)
     np.random.seed(random_seed)
 
@@ -418,7 +424,11 @@ def run(
             ]
             # Reconstruct required metadata in compatibility path.
             cols_cfg = config.get("columns", {}) or {}
-            id_col = cols_cfg.get("id", "ID")
+            id_col = (
+                config.get("id_col")
+                or config.get("id_column")
+                or cols_cfg.get("id", "ID")
+            )
             lat_col = cols_cfg.get("latitude", "Latitude")
             lon_col = cols_cfg.get("longitude", "Longitude")
             feature_cols = [
@@ -446,7 +456,7 @@ def run(
     for _, val_idx in split_iter:
         oof_index[np.asarray(val_idx, dtype=int)] = np.asarray(val_idx, dtype=int)
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
     pd.DataFrame(
         {
             id_col: np.asarray(train[id_col].values),
@@ -462,7 +472,8 @@ def run(
     input_files = config.get("input_files", {}) or {}
     input_files.get("sample", "SampleSubmission.csv")
     # Probability-aware output format from config
-    if config.get("use_probabilities", True):
+    task_type = str(config.get("task_type", "classification")).lower()
+    if task_type == "regression" or config.get("use_probabilities", True):
         predictions_to_save = np.asarray(test_preds, dtype=np.float64)
     else:
         print(f"\nApplying optimal F1 threshold: {best_t:.2f}")
@@ -507,12 +518,17 @@ def run(
 
     task_type = str(config.get("task_type", "classification")).lower()
     metric_name = str(config.get("metric", "f1")).lower()
+    # SoT v2.2 metric_map: covers all canonical metric name variants
+    # including the explicit root_mean_squared_error and mean_absolute_error
+    # strings defined in the Regression Target Transformation Lifecycle.
     metric_map = {
         "auc": oof_auc,
         "f1": oof_f1,
         "f1_score": oof_f1,
         "rmse": oof_logloss if task_type == "regression" else oof_f1,
+        "root_mean_squared_error": oof_logloss if task_type == "regression" else oof_f1,
         "mae": oof_logloss if task_type == "regression" else oof_f1,
+        "mean_absolute_error": oof_logloss if task_type == "regression" else oof_f1,
         "logloss": oof_logloss,
         "log_loss": oof_logloss,
         "rmsle": oof_logloss if task_type == "regression" else oof_f1,
@@ -522,6 +538,7 @@ def run(
     secondary_metrics = None
     if task_type == "regression":
         from zindian.state import compute_secondary_metrics
+
         y_true = np.asarray(train[training_target_col].values, dtype=np.float64)
         secondary_metrics = compute_secondary_metrics(y_true, oof_preds)
 
