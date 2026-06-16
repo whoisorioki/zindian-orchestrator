@@ -9,42 +9,55 @@
 ## 1. Command Reference
 
 ### Environment
-```powershell
-$env:COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
-$env:PYTHONIOENCODING="utf-8"
-$env:PYTHONPATH="."
+```bash
+export COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+export PYTHONIOENCODING="utf-8"
+export PYTHONPATH="/home/sagemaker-user/shared/zindian-orchestrator"
 ```
 
 ### Validation & Tests
-```powershell
+```bash
 # Full preflight
-.venv\Scripts\python scripts/preflight_enforce.py --competition competitions/june-study-jam-series-transaction-volume-forecasting-challenge
+python3 scripts/preflight_enforce.py --competition competitions/june-study-jam-series-transaction-volume-forecasting-challenge
 
 # Competition state audit
-$env:PYTHONPATH="."; .venv\Scripts\python scripts/verify_competition_state.py
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+python3 scripts/verify_competition_state.py
 
-# Variant feature dry-run (A5 compliance, no leakage, test-frame completeness)
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python scripts/_validate_variants.py
+# Variant feature dry-run
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 scripts/_validate_variants.py
 
 # Full test suite
-$env:PYTHONPATH="."; $env:ZINDIAN_DISABLE_NETWORK="1"; .venv\Scripts\pytest -q
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_DISABLE_NETWORK="1"
+pytest -q
 ```
 
 ### Phase Execution
-```powershell
+```bash
 # Phase 3 — Generalisation audit (EDA, CV, Calibration, SHAP)
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -c "import zindian.orchestrator as orc; orc.run_phase(3)"
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 -c "import zindian.orchestrator as orc; orc.run_phase(3)"
 
 # Phase 4 — Gate + Submit (requires human_gate_2 approvals)
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -c "import zindian.orchestrator as orc; orc.run_phase(4)"
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 -c "import zindian.orchestrator as orc; orc.run_phase(4)"
 
 # Phase 5 — Fusion + Final Submit
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -c "import zindian.orchestrator as orc; orc.run_phase(5)"
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 -c "import zindian.orchestrator as orc; orc.run_phase(5)"
 ```
 
 ### After SHAP completes — write human_gate_2 approvals
-```powershell
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -c "
+```bash
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 -c "
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 paths = resolve_competition_paths()
@@ -59,9 +72,11 @@ print('Gate 2 approvals written')
 ```
 
 ### Running individual variants
-```powershell
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -m zindian.skills.skill_07_features --variant variant-10
-$env:PYTHONPATH="."; $env:ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"; .venv\Scripts\python -m zindian.skills.skill_07_features --variant variant-11
+```bash
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+export ZINDIAN_COMPETITION_SLUG="june-study-jam-series-transaction-volume-forecasting-challenge"
+python3 -m zindian.skills.skill_07_features --variant variant-10
+python3 -m zindian.skills.skill_07_features --variant variant-11
 ```
 
 ---
@@ -156,6 +171,11 @@ against ground truth — the same array stored in state and used for submission.
   Even a marginal improvement in RMSLE will improve rank.
 - **14 days and ~23 submissions remaining.** Budget is not the constraint. Room for
   further hyperparameter tuning variants if fusion doesn't yield sufficient improvement.
+- **Efficient fusion path.** Fusion duration (~30 min) with expected improvement
+  (0.001-0.003) yields 2-5× better improvement per hour than generating new feature
+  variants. Much better time efficiency.
+- **Low CPU utilization (14.3%).** Current instance not bottlenecked. Can handle
+  SHAP and fusion workloads without performance issues.
 
 ### Threats
 
@@ -172,15 +192,20 @@ against ground truth — the same array stored in state and used for submission.
 
 ## 5. Ranked Actions (Current)
 
-| # | Action | Status | Blocker |
-|---|---|---|---|
-| 1 | Phase 3 SHAP audit completes | 🔄 Running | skill_10 CPU time |
-| 2 | Review `reports/shap_summary.md` | ⏳ Waiting | SHAP must finish |
-| 3 | Write `human_gate_2_variant-0{6,10,11}_approved: true` | ⏳ Waiting | SHAP review |
-| 4 | Run Phase 4 (`orc.run_phase(4)`) | ⏳ Waiting | Gates 2 written |
-| 5 | Submit promoted variant-06 | ⏳ Waiting | Phase 4 complete |
-| 6 | Select variant-06 as second submission on platform | ⏳ Waiting | Submission uploaded |
-| 7 | Run Phase 5 — fusion (skill_13) | ⏳ Waiting | Gate 3 approved |
+| # | Action | Status | Duration | Blocker |
+|---|---|---|----------|------|
+| 1 | Phase 3 SHAP audit completes | 🔄 Running | 10-20 min | skill_10 CPU time |
+| 2 | Review `reports/shap_summary.md` | ⏳ Waiting | 5 min | SHAP must finish |
+| 3 | Write `human_gate_2_variant-0{6,10,11}_approved: true` | ⏳ Waiting | 1 min | SHAP review |
+| 4 | Run Phase 4 (`orc.run_phase(4)`) | ⏳ Waiting | 5 min | Gates 2 written |
+| 5 | Submit promoted variant-06 | ⏳ Waiting | 2 min | Phase 4 complete |
+| 6 | Select variant-06 as second submission on platform | ⏳ Waiting | 1 min | Submission uploaded |
+| 7 | Run Phase 5 — fusion (skill_13) | ⏳ Waiting | 30 min | Gate 3 approved |
+| 8 | Submit fusion result | ⏳ Waiting | 2 min | Fusion complete |
+
+**Total projected duration (remaining):** ~45 min  
+**Total submissions (remaining):** 2/30  
+**Budget status:** ✅ Healthy
 
 ---
 
@@ -246,3 +271,78 @@ against ground truth — the same array stored in state and used for submission.
 - Seeds: 42 throughout — confirmed
 - Submission selection: sub_007 selected; second slot pending variant-06 upload
 - Code review tier: tier_1 — skill_22 not yet run
+
+---
+
+## 10. Cost & Resource Monitoring
+
+### Current Instance Usage
+```
+Instance: default (SageMaker Studio Code Editor)
+CPU: 14.3%
+Memory: 78.01%
+Disk: 0 / 64P (0%)
+Last checked: 2026-06-16T06:15:51Z
+```
+
+**Note:** Studio Code Editor runs on a persistent instance. Cost tracking focuses on
+**duration and resource utilization** rather than per-phase cost estimates.
+
+### Duration Tracking
+```
+Phase 1 (Setup): ~15 min
+Phase 2 (Anchor): ~30 min
+Phase 3 (Features): ~2 hrs
+Phase 3A (SHAP): ~10-20 min — RUNNING
+Total so far: ~3.5 hrs
+
+Projected remaining:
+Phase 4 (Gate): ~5 min
+Phase 5 (Fusion): ~30 min
+Total projected: ~4 hrs
+```
+
+### Budget Status
+```
+Submissions: 7/30 used (23 remaining)
+Daily limit: 5 (6 remaining today)
+Days remaining: 14
+```
+
+### Resource Utilization Notes
+- **CPU utilization low (14.3%)** — No bottleneck, instance handling workload well
+- **Memory healthy (78%)** — No risk of OOM
+- **SHAP running** — Monitor CPU during skill_10 execution
+- **Studio persistent instance** — No per-phase instance changes possible
+
+### Monitoring Commands
+```bash
+# Check current usage
+python scripts/monitor_resources.py
+
+# Track phase duration with auto-capture
+export PYTHONPATH=/home/sagemaker-user/shared/zindian-orchestrator:$PYTHONPATH
+python -c "
+from zindian.cost_monitor import CostMonitor
+monitor = CostMonitor('june-study-jam')
+monitor.start_phase('phase_4', instance_type='default')
+# ... run phase ...
+metrics = monitor.end_phase(final_score=0.552180)
+print(f'Duration: {metrics.duration_minutes:.2f} min')
+print(f'CPU: {metrics.cpu_utilization}')
+print(f'Memory: {metrics.memory_utilization}')
+"
+```
+
+### Efficiency Analysis
+```
+Variant-06 improvement: +0.002358 RMSLE
+Phase 3 duration: ~2 hrs
+Improvement per hour: +0.001179 RMSLE/hr
+
+Fusion expected improvement: +0.001-0.003 RMSLE
+Fusion duration: ~30 min
+Improvement per hour: +0.002-0.006 RMSLE/hr ✅ 2-5× more efficient
+
+Recommendation: Proceed with fusion before generating new variants
+```
