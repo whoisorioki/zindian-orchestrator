@@ -95,7 +95,8 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
             "train": "Training_Data.csv",
             "test": "Test_Data.csv",
             "sample": "SampleSubmission.csv"
-        }
+        },
+        "feature_extraction_plugin": "tests._mock_plugin_07"
     }
     (comp_dir / "challenge_config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
@@ -169,15 +170,30 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     assert isinstance(sec["r2"], float)
 
     # 6. Execute Skill 07: Feature Engineering
-    # We run variant-06
-    # Touch dummy tiff file to bypass existence check in skill_07
-    dummy_tiff = proc_dir / "TerraClimate_14band.tiff"
-    dummy_tiff.touch()
+    # Patch importlib.import_module so skill_07 receives a mock plugin with extract().
+    import importlib as _importlib
 
-    def mock_extract(paths_arg, tiff_path_arg, config_arg):
-        return pd.read_csv(paths_arg.data_processed_dir / "features_train.csv"), pd.read_csv(paths_arg.data_processed_dir / "features_test.csv")
+    def mock_extract_fn(paths_arg, tiff_path_arg, config_arg):
+        return (
+            pd.read_csv(paths_arg.data_processed_dir / "features_train.csv"),
+            pd.read_csv(paths_arg.data_processed_dir / "features_test.csv"),
+        )
 
-    monkeypatch.setattr(skill_07_features, "extract_features", mock_extract)
+    class _MockPlugin:
+        @staticmethod
+        def extract(paths_arg, tiff_path_arg, config_arg):
+            return mock_extract_fn(paths_arg, tiff_path_arg, config_arg)
+
+    _real_import = _importlib.import_module
+
+    def _patched_import(name, *args, **kwargs):
+        if name == "tests._mock_plugin_07":
+            return _MockPlugin()
+        return _real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(_importlib, "import_module", _patched_import)
+    # Also patch skill_07's own importlib reference
+    monkeypatch.setattr(skill_07_features.importlib, "import_module", _patched_import)
 
     skill_07_features.run(variant_name="variant-06")
     assert (proc_dir / "features_train.csv").exists()

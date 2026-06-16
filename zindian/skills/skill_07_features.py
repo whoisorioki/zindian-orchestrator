@@ -1,19 +1,22 @@
 """
 Skill 07 — Feature Engineering
 Competition-aware, config-driven feature engineering.
-Runs 1 anchor + 9 isolated variants per round.
-Primary gate metric: F1-Score. ROC-AUC is retained as a reference signal only.
+Runs multi-seed variants per round; each variant is compared against the anchor gate.
 
 Governed by:
   - competitions/<slug>/challenge_config.json
   - competitions/<slug>/SKILL_STATE.json
 
 Writes to:
-  - competitions/<slug>/data/processed/TerraClimate_14band.tiff
   - competitions/<slug>/data/processed/features_train.csv
   - competitions/<slug>/data/processed/features_test.csv
   - competitions/<slug>/SKILL_STATE.json
   - competitions/<slug>/reports/feature_round_<N>.md
+
+Feature extraction is fully delegated to the plugin declared in
+challenge_config["feature_extraction_plugin"]. This skill does not contain
+any competition-specific column names, model targets, or dataset identifiers.
+All such values are read from challenge_config.json at runtime.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import tempfile
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -37,20 +41,12 @@ from zindian.state import resolve_active_cv_strategy_id, write_oof_record
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
-from zindian.constants import (
-    TC_STATS,
-    TC_BAND_NAMES,
-)
 
 warnings.filterwarnings("ignore")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 SEED = get_seed()
-MAX_RETRIES = 5
-RETRY_WAIT = 15
-
-# Shared TerraClimate constants live in zindian.constants to avoid cross-skill imports
 
 # CI / test guard: set this env var to disable network fetches during tests
 NO_NETWORK = bool(os.environ.get("ZINDIAN_DISABLE_NETWORK", False))
@@ -66,118 +62,20 @@ def _write_state(state: dict, path: Path) -> None:
     os.replace(tmp_path, path)
 
 
-# ── Feature Extraction ───────────────────────────────────────────────
-
-
-def extract_features(
-    paths, tiff_path: Path, config: ChallengeConfig
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Extract TerraClimate features at each lat/lon point.
-    Uses spiral nearest-neighbour search for off-grid (coastal) points.
-    Returns (train_features, test_features).
-    """
-    import rasterio
-    from rasterio.transform import rowcol
-
-    out_train = paths.data_processed_dir / "features_train.csv"
-    out_test = paths.data_processed_dir / "features_test.csv"
-
-    if out_train.exists() and out_test.exists():
-        print("  ✅ Feature CSVs already exist — skipping extraction")
-        return pd.read_csv(out_train), pd.read_csv(out_test)
-
-    def spiral_search(data, row, col, max_radius=10):
-        h, w = data.shape[1], data.shape[2]
-        for radius in range(1, max_radius + 1):
-            for dr in range(-radius, radius + 1):
-                for dc in range(-radius, radius + 1):
-                    if abs(dr) != radius and abs(dc) != radius:
-                        continue
-                    nr, nc = row + dr, col + dc
-                    if 0 <= nr < h and 0 <= nc < w:
-                        vals = data[:, nr, nc]
-                        if not np.isnan(vals).any():
-                            return vals
-        return np.full(data.shape[0], np.nan)
-
-    # Column names are competition-specific: always read from config with safe fallbacks
-    cols_cfg = config.get("columns", {}) or {}
-    lon_col = cols_cfg.get("longitude", "Longitude")
-    lat_col = cols_cfg.get("latitude", "Latitude")
-
-    def extract(df, src, band_names, data):
-        coords = list(zip(df[lon_col], df[lat_col]))
-        values = np.array(list(src.sample(coords, masked=False)), dtype=np.float64)
-        nan_mask = np.isnan(values).any(axis=1)
-        if nan_mask.sum() > 0:
-            print(f"  Fixing {nan_mask.sum()} off-grid points via spiral search...")
-            for i in np.where(nan_mask)[0]:
-                lon, lat = coords[i]
-                r, c = rowcol(src.transform, lon, lat)
-                r = int(max(0, min(src.height - 1, r)))
-                c = int(max(0, min(src.width - 1, c)))
-                values[i] = spiral_search(data, r, c)
-        return pd.concat(
-            [df.reset_index(drop=True), pd.DataFrame(values, columns=band_names)],
-            axis=1,
-        )
-
-    # Input filenames are configurable; fall back to project conventions when absent.
-    input_files = config.get("input_files", {}) or {}
-    train_file = input_files.get("train", "Training_Data.csv")
-    test_file = input_files.get("test", "Test.csv")
-
-    train = pd.read_csv(paths.data_raw_dir / train_file)
-    test = pd.read_csv(paths.data_raw_dir / test_file)
-
-    with rasterio.open(tiff_path) as src:
-        band_names = [
-            src.tags(i).get("name", f"band_{i}") for i in range(1, src.count + 1)
-        ]
-        data = src.read().astype(np.float64)
-
-        print(f"  Extracting {len(train)} train points...")
-        train_feat = extract(train, src, band_names, data)
-
-        print(f"  Extracting {len(test)} test points...")
-        test_feat = extract(test, src, band_names, data)
-
-    nan_remaining = train_feat[band_names].isnull().sum().sum()
-    print(f"  NaNs remaining: {nan_remaining}")
-    assert nan_remaining == 0, "NaNs remain after spiral search — investigate"
-
-    train_feat.to_csv(out_train, index=False)
-    test_feat.to_csv(out_test, index=False)
-    print(f"  ✅ features_train.csv → {out_train}")
-    print(f"  ✅ features_test.csv  → {out_test}")
-
-    return train_feat, test_feat
-
+# ── Default feature engineering config (empty — all values come from config) ──
+#
+# When challenge_config.json contains no "feature_engineering" block, this
+# empty fallback is used. No competition-specific column names are present here.
+# Add a "feature_engineering" block to challenge_config.json to activate
+# polynomial, interaction, ratio, condition, or target-dependent-bin features.
 
 DEFAULT_FEATURE_ENGINEERING: dict[str, Any] = {
-    "polynomials": ["tmax_mean"],
-    "interactions": [
-        ["tmax_mean", "vpd_mean"],
-        ["ppt_mean", "tmin_mean"]
-    ],
-    "ratios": [
-        ["aet_mean", "pet_mean"],
-        ["ppt_mean", "pet_mean"]
-    ],
-    "conditions": [
-        {"column": "tmin_min", "operator": "lt", "value": 5.0, "name": "frost_risk"}
-    ],
-    "target_dependent_bins": [
-        {"column": "tmin_mean", "q": 10, "name": "tmin_bin_target_mean"}
-    ],
-    "aliases": {
-        "tmax_mean_sq": "tmax_mean_sq",
-        "aet_mean_div_pet_mean": "aet_pet_ratio",
-        "tmax_mean_x_vpd_mean": "tmax_vpd_stress",
-        "ppt_mean_x_tmin_mean": "warm_wet_index",
-        "ppt_mean_div_pet_mean": "aridity_index"
-    }
+    "polynomials": [],
+    "interactions": [],
+    "ratios": [],
+    "conditions": [],
+    "target_dependent_bins": [],
+    "aliases": {},
 }
 
 
@@ -191,16 +89,23 @@ def build_hypothesis_features(
     """
     Build derived features dynamically using generic mathematical operations.
     Reads feature engineering instructions from challenge_config.json, with
-    a default fallback configuration for testing and backward compatibility.
+    an empty fallback when no feature_engineering block is present.
+
+    All column names are read from config — never hardcoded in this function.
+
+    Args:
+        train_df:     Training feature DataFrame.
+        test_df:      Test feature DataFrame.
+        mode:         "cv" (fold-restricted) or "inference" (full training set).
+        target_array: Target values array. Required for target-dependent features.
+        train_idx:    Training fold indices. Required in mode="cv".
     """
     if mode not in ("cv", "inference"):
         raise ValueError("mode must be 'cv' or 'inference'")
 
-    # Work on copies to avoid in-place modifications
     train = train_df.copy()
     test = test_df.copy()
 
-    # Load configuration
     try:
         from zindian.config import ChallengeConfig
         cfg = ChallengeConfig.load()._data
@@ -214,25 +119,34 @@ def build_hypothesis_features(
         target_lower = str(target_col).lower()
         for col in fe_cfg.get("polynomials", []) or []:
             if col and str(col).lower() == target_lower:
-                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in polynomials feature engineering to prevent leakage.")
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in polynomials — leakage risk."
+                )
         for pair in fe_cfg.get("interactions", []) or []:
-            if pair and any(str(col).lower() == target_lower for col in pair if col):
-                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in interactions feature engineering to prevent leakage.")
+            if pair and any(str(c).lower() == target_lower for c in pair if c):
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in interactions — leakage risk."
+                )
         for pair in fe_cfg.get("ratios", []) or []:
-            if pair and any(str(col).lower() == target_lower for col in pair if col):
-                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in ratios feature engineering to prevent leakage.")
+            if pair and any(str(c).lower() == target_lower for c in pair if c):
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in ratios — leakage risk."
+                )
         for cond in fe_cfg.get("conditions", []) or []:
             if cond and str(cond.get("column", "")).lower() == target_lower:
-                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in conditions feature engineering to prevent leakage.")
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in conditions — leakage risk."
+                )
         for td in fe_cfg.get("target_dependent_bins", []) or []:
             if td and str(td.get("column", "")).lower() == target_lower:
-                raise ValueError(f"Target column '{target_col}' cannot be used as an operand in target_dependent_bins feature engineering to prevent leakage.")
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in target_dependent_bins — leakage risk."
+                )
 
     new_cols = []
 
     # 1. Polynomial extensions (e.g. X^2)
-    polynomials = fe_cfg.get("polynomials", []) or []
-    for col in polynomials:
+    for col in fe_cfg.get("polynomials", []) or []:
         if col in train.columns and col in test.columns:
             out_col = f"{col}_sq"
             train[out_col] = train[col].astype(float) ** 2
@@ -240,8 +154,7 @@ def build_hypothesis_features(
             new_cols.append(out_col)
 
     # 2. Interaction terms (e.g. X_i * X_j)
-    interactions = fe_cfg.get("interactions", []) or []
-    for pair in interactions:
+    for pair in fe_cfg.get("interactions", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
             if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
@@ -251,8 +164,7 @@ def build_hypothesis_features(
                 new_cols.append(out_col)
 
     # 3. Ratio pairs (e.g. X_i / (X_j + epsilon))
-    ratios = fe_cfg.get("ratios", []) or []
-    for pair in ratios:
+    for pair in fe_cfg.get("ratios", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
             if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
@@ -261,9 +173,8 @@ def build_hypothesis_features(
                 test[out_col] = test[c1].astype(float) / (test[c2].astype(float) + 1e-9)
                 new_cols.append(out_col)
 
-    # 4. Conditions (e.g. X_i < threshold)
-    conditions = fe_cfg.get("conditions", []) or []
-    for cond in conditions:
+    # 4. Boolean conditions (e.g. X_i < threshold)
+    for cond in fe_cfg.get("conditions", []) or []:
         col = cond.get("column")
         op = cond.get("operator")
         val = cond.get("value")
@@ -281,9 +192,8 @@ def build_hypothesis_features(
                 test[out_col] = (test[col].astype(float) == float(val)).astype(int)
             new_cols.append(out_col)
 
-    # 5. Target-dependent bin means (quantile binning with two-mode contract)
-    target_dep_bins = fe_cfg.get("target_dependent_bins", []) or []
-    for td in target_dep_bins:
+    # 5. Target-dependent bin means (quantile binning — two-mode contract applies)
+    for td in fe_cfg.get("target_dependent_bins", []) or []:
         col = td.get("column")
         q_val = int(td.get("q", 10))
         out_col = td.get("name", f"{col}_bin_target_mean")
@@ -291,7 +201,6 @@ def build_hypothesis_features(
         if col in train.columns and col in test.columns:
             new_cols.append(out_col)
             if target_array is not None:
-                # CV/Inference mode fold handling
                 if mode == "cv":
                     if train_idx is None:
                         raise ValueError("train_idx must be provided in mode='cv'")
@@ -302,7 +211,6 @@ def build_hypothesis_features(
                     tr_vals = train[col].to_numpy()
                     tr_targets = np.asarray(target_array)
 
-                # Create quantile bins
                 try:
                     _, bin_edges = pd.qcut(tr_vals, q=q_val, retbins=True, duplicates="drop")
                 except Exception:
@@ -310,7 +218,10 @@ def build_hypothesis_features(
                     if len(unique_vals) < 2:
                         bin_edges = np.array([unique_vals[0] - 1.0, unique_vals[0] + 1.0])
                     else:
-                        bin_edges = np.linspace(tr_vals.min(), tr_vals.max(), num=min(q_val + 1, len(unique_vals)))
+                        bin_edges = np.linspace(
+                            tr_vals.min(), tr_vals.max(),
+                            num=min(q_val + 1, len(unique_vals))
+                        )
 
                 bin_edges = list(map(float, np.asarray(bin_edges).tolist()))
                 tr_bins = pd.cut(pd.Series(tr_vals), bins=bin_edges, include_lowest=True)
@@ -323,10 +234,7 @@ def build_hypothesis_features(
                     cats = pd.cut(pd.Series(series_vals), bins=bin_edges, include_lowest=True)
                     out = np.empty(len(series_vals), dtype=float)
                     for i, cat in enumerate(cats):
-                        if pd.isna(cat):
-                            out[i] = global_mean
-                        else:
-                            out[i] = float(agg.get(cat, global_mean))
+                        out[i] = global_mean if pd.isna(cat) else float(agg.get(cat, global_mean))
                     return out
 
                 train[out_col] = map_to_mean(train[col].to_numpy())
@@ -335,13 +243,11 @@ def build_hypothesis_features(
                 train[out_col] = 0.0
                 test[out_col] = 0.0
 
-    # Apply aliases/renaming for backward compatibility
-    aliases = fe_cfg.get("aliases", {}) or {}
-    for old_name, new_name in aliases.items():
+    # Apply aliases/renaming
+    for old_name, new_name in (fe_cfg.get("aliases", {}) or {}).items():
         if old_name in train.columns:
             train.rename(columns={old_name: new_name}, inplace=True)
             test.rename(columns={old_name: new_name}, inplace=True)
-            # Update new_cols list to match renamed column
             new_cols = [new_name if c == old_name else c for c in new_cols]
 
     # Guarantee dtype stability
@@ -351,14 +257,13 @@ def build_hypothesis_features(
                 df[c] = 0.0
             df[c] = df[c].astype(float)
 
-    # Return with columns in stable ordering: original cols + new_cols
-    base_cols = [c for c in train_df.columns]
+    base_cols = list(train_df.columns)
     final_cols = base_cols + [c for c in new_cols if c not in base_cols]
     test_final_cols = [c for c in final_cols if c in test.columns]
     return train[final_cols], test[test_final_cols]
 
 
-# ── Phase C: Variant Training ─────────────────────────────────────────────────
+# ── Variant Training ──────────────────────────────────────────────────────────
 
 
 def train_variant(
@@ -380,7 +285,7 @@ def train_variant(
 ) -> dict:
     """
     Train one LightGBM variant and evaluate against the anchor gate.
-    Returns result dict with status, F1-Score, ROC-AUC, threshold, and delta.
+    Returns result dict with status, primary metric, and delta.
     """
     if anchor_f1 is not None:
         baseline_score = anchor_f1
@@ -388,7 +293,6 @@ def train_variant(
     random.seed(seed)
     np.random.seed(seed)
 
-    # Resolve target column defensively: prefer explicit arg, then config keys, then legacy default.
     if target_col is None:
         if config is not None:
             TARGET = (
@@ -398,8 +302,6 @@ def train_variant(
             )
         else:
             TARGET = "target"
-        
-        # If the resolved target is missing, check for candidates
         if TARGET not in train.columns:
             for candidate in ("target", "Occurrence Status", "label", "target_col", "y"):
                 if candidate in train.columns:
@@ -407,6 +309,7 @@ def train_variant(
                     break
     else:
         TARGET = target_col
+
     X = np.asarray(train[feature_cols].values, dtype=np.float64)
     if task_type == "regression":
         y = np.asarray(train[TARGET].values, dtype=np.float64)
@@ -507,10 +410,7 @@ def train_variant(
             primary_key = f"oof_{metric_name}"
             oof_score = float(lgb_result.oof_rmse)
             metric_direction = config.get("metric_direction", "minimize") if config is not None else "minimize"
-            if metric_direction == "minimize":
-                delta = baseline_score - oof_score
-            else:
-                delta = oof_score - baseline_score
+            delta = baseline_score - oof_score if metric_direction == "minimize" else oof_score - baseline_score
             gate = "PASS" if delta >= gate_margin else "PRUNE"
 
             print(f"\n  {'=' * 50}")
@@ -527,9 +427,7 @@ def train_variant(
             print(f"  {variant_name}")
             print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})")
             print(f"  Delta    : {delta:+.5f}  → {gate}")
-            print(
-                f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})"
-            )
+            print(f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
 
         ret = {
             "variant": variant_name,
@@ -541,235 +439,132 @@ def train_variant(
             "gate": gate,
             "oof_probs": lgb_result.oof_probs,
             "test_probs": lgb_result.test_probs,
-            "fold_scores": [
-                float(score) for score in getattr(lgb_result, "fold_scores", getattr(lgb_result, "fold_aucs", []))
-            ],
+            "fold_scores": [float(s) for s in getattr(lgb_result, "fold_scores", [])],
         }
         if task_type == "regression":
             ret[primary_key] = oof_score
         return ret
 
+    # ── Non-shared variants: per-fold manual loop ─────────────────────────────
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     n_splits = getattr(splitter, "n_splits", 5)
     oof_probs = np.zeros(len(y))
     test_probs = np.zeros(len(test))
-    fold_scores_list = []
+    fold_scores_list: list[float] = []
 
     print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
     for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
         model = None
 
-        # Recompute target-dependent features per-fold to avoid leakage
         try:
             train_fold, test_fold = build_hypothesis_features(
                 train, test, mode="cv", target_array=y, train_idx=tr_idx
             )
             X = np.asarray(train_fold[feature_cols].values, dtype=np.float64)
             X_test = np.asarray(test_fold[feature_cols].values, dtype=np.float64)
-            # Scale per-fold using training slice only
             from sklearn.preprocessing import StandardScaler
-
             scaler = StandardScaler()
             X = scaler.fit_transform(X)
             X_test = scaler.transform(X_test)
-        except Exception as _:
-            # If per-fold recompute fails for any reason, fall back to global arrays (structural-only)
+        except Exception:
             X = np.asarray(train[feature_cols].values, dtype=np.float64)
             X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
-        # ── variant-13: tuned LightGBM ────────────────────
         if variant_name in ("variant-13", "variant-27"):
             model = lgb.LGBMClassifier(
-                n_estimators=1000,
-                learning_rate=0.02,
-                num_leaves=63,
-                min_child_samples=20,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
-                random_state=SEED,
-                verbose=-1,
+                n_estimators=1000, learning_rate=0.02, num_leaves=63,
+                min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.1, reg_lambda=0.1, random_state=SEED, verbose=-1,
             )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
-            )
+            model.fit(X[tr_idx], y[tr_idx],
+                      eval_set=[(X[val_idx], y[val_idx])],
+                      callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)])
 
-        # ── variant-14: Random Forest ─────────────────────
         elif variant_name in ("variant-14", "variant-28"):
             from sklearn.ensemble import RandomForestClassifier
-
             model = RandomForestClassifier(
-                n_estimators=500,
-                max_depth=None,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=SEED,
-                n_jobs=-1,
+                n_estimators=500, max_depth=None, min_samples_leaf=2,
+                max_features="sqrt", random_state=SEED, n_jobs=-1,
             )
             model.fit(X[tr_idx], y[tr_idx])
 
-        # ── variant-18: XGBoost ──────────────────────────
         elif variant_name in ("variant-18", "variant-29"):
             from xgboost import XGBClassifier
-
             model = XGBClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                max_depth=6,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                use_label_encoder=False,
-                eval_metric="logloss",
-                random_state=seed,
-                verbosity=0,
-                n_jobs=-1,
+                n_estimators=500, learning_rate=0.05, max_depth=6,
+                subsample=0.8, colsample_bytree=0.8, use_label_encoder=False,
+                eval_metric="logloss", random_state=seed, verbosity=0, n_jobs=-1,
             )
-            model.fit(
-                X[tr_idx], y[tr_idx], eval_set=[(X[val_idx], y[val_idx])], verbose=False
-            )
+            model.fit(X[tr_idx], y[tr_idx],
+                      eval_set=[(X[val_idx], y[val_idx])], verbose=False)
 
-        # ── variant-19: LightGBM larger trees ────────────
         elif variant_name == "variant-19":
             model = lgb.LGBMClassifier(
-                n_estimators=1000,
-                learning_rate=0.02,
-                num_leaves=127,
-                max_depth=8,
-                min_child_samples=10,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.05,
-                reg_lambda=0.05,
-                random_state=seed,
-                verbose=-1,
+                n_estimators=1000, learning_rate=0.02, num_leaves=127, max_depth=8,
+                min_child_samples=10, subsample=0.8, colsample_bytree=0.8,
+                reg_alpha=0.05, reg_lambda=0.05, random_state=seed, verbose=-1,
             )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
-            )
+            model.fit(X[tr_idx], y[tr_idx],
+                      eval_set=[(X[val_idx], y[val_idx])],
+                      callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)])
 
-        # ── variant-25: LGB + RF blend ────────────────────
         elif variant_name in ("variant-25", "variant-34"):
             from sklearn.ensemble import RandomForestClassifier
-
-            # LGB probabilities
-            lgb_model = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=seed,
-                verbose=-1,
-            )
-            lgb_model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
-            )
-            # RF probabilities
-            rf_model = RandomForestClassifier(
-                n_estimators=500,
-                max_depth=None,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=seed,
-                n_jobs=-1,
-            )
+            lgb_model = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
+                                            num_leaves=31, random_state=seed, verbose=-1)
+            lgb_model.fit(X[tr_idx], y[tr_idx],
+                          eval_set=[(X[val_idx], y[val_idx])],
+                          callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)])
+            rf_model = RandomForestClassifier(n_estimators=500, max_depth=None,
+                                              min_samples_leaf=2, max_features="sqrt",
+                                              random_state=seed, n_jobs=-1)
             rf_model.fit(X[tr_idx], y[tr_idx])
-            # Average blend
-            lgb_val = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
-            rf_val = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
+            lgb_val  = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
+            rf_val   = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
             lgb_test = np.asarray(lgb_model.predict_proba(X_test))[:, 1]
-            rf_test = np.asarray(rf_model.predict_proba(X_test))[:, 1]
+            rf_test  = np.asarray(rf_model.predict_proba(X_test))[:, 1]
             oof_probs[val_idx] = 0.5 * lgb_val + 0.5 * rf_val
             test_probs += (0.5 * lgb_test + 0.5 * rf_test) / n_splits
-            fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-            fold_scores_list.append(float(fold_auc))
-            print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
+            fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
+            print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
             continue
 
-        # ── variant-26: per-fold threshold optimization ───────
         elif variant_name == "variant-26":
-            model = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=seed,
-                verbose=-1,
-            )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
-            )
+            model = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
+                                        num_leaves=31, random_state=seed, verbose=-1)
+            model.fit(X[tr_idx], y[tr_idx],
+                      eval_set=[(X[val_idx], y[val_idx])],
+                      callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)])
 
-        # ── variant-39: dart booster LGB ─────────────────
-        elif variant_name in (
-            "variant-39",
-            "variant-40",
-            "variant-41",
-            "variant-42",
-            "variant-43",
-        ):
-            model = lgb.LGBMClassifier(
-                boosting_type="dart",
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=SEED,
-                verbose=-1,
-            )
+        elif variant_name in ("variant-39", "variant-40", "variant-41",
+                               "variant-42", "variant-43"):
+            model = lgb.LGBMClassifier(boosting_type="dart", n_estimators=500,
+                                        learning_rate=0.05, num_leaves=31,
+                                        random_state=SEED, verbose=-1)
             model.fit(X[tr_idx], y[tr_idx])
 
-        # ── variant-38: 3-way blend LGB+RF+XGB ───────────────
         elif variant_name == "variant-38":
             from sklearn.ensemble import RandomForestClassifier
             from xgboost import XGBClassifier
-
-            _lgb = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=SEED,
-                verbose=-1,
-            )
-            _rf = RandomForestClassifier(
-                n_estimators=300,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=SEED,
-                n_jobs=-1,
-            )
-            _xgb = XGBClassifier(
-                n_estimators=300,
-                learning_rate=0.05,
-                max_depth=6,
-                random_state=SEED,
-                verbosity=0,
-                eval_metric="logloss",
-            )
+            _lgb = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
+                                       num_leaves=31, random_state=SEED, verbose=-1)
+            _rf  = RandomForestClassifier(n_estimators=300, min_samples_leaf=2,
+                                           max_features="sqrt", random_state=SEED, n_jobs=-1)
+            _xgb = XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=6,
+                                   random_state=SEED, verbosity=0, eval_metric="logloss")
             _lgb.fit(X[tr_idx], y[tr_idx])
             _rf.fit(X[tr_idx], y[tr_idx])
             _xgb.fit(X[tr_idx], y[tr_idx])
-            # blend probabilities for validation and test
-            lgb_val = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
-            rf_val = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
-            xgb_val = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
+            lgb_val  = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
+            rf_val   = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
+            xgb_val  = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
             lgb_test = np.asarray(_lgb.predict_proba(X_test))[:, 1]
-            rf_test = np.asarray(_rf.predict_proba(X_test))[:, 1]
+            rf_test  = np.asarray(_rf.predict_proba(X_test))[:, 1]
             xgb_test = np.asarray(_xgb.predict_proba(X_test))[:, 1]
             oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
             test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / n_splits
-            fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-            fold_scores_list.append(float(fold_auc))
-            print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
+            fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
+            print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
             continue
 
         if model is None:
@@ -777,15 +572,14 @@ def train_variant(
 
         oof_probs[val_idx] = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
         test_probs += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
-        fold_auc = roc_auc_score(y[val_idx], oof_probs[val_idx])
-        fold_scores_list.append(float(fold_auc))
-        print(f"    Fold {fold + 1}: ROC-AUC={fold_auc:.5f}")
+        fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
+        print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
 
     oof_auc = roc_auc_score(y, oof_probs)
     thresholds = np.arange(0.3, 0.7, 0.01)
     best_t = max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
     oof_f1 = f1_score(y, (oof_probs >= best_t).astype(int))
-    delta = oof_f1 - baseline_score  # Gate on primary metric delta vs baseline
+    delta = oof_f1 - baseline_score
     gate = "PASS" if delta >= gate_margin else "PRUNE"
 
     print(f"\n  {'=' * 50}")
@@ -808,7 +602,7 @@ def train_variant(
     }
 
 
-# ── Phase D: Report Writer ────────────────────────────────────────────────────
+# ── Round Report Writer ───────────────────────────────────────────────────────
 
 
 def write_round_report(
@@ -827,7 +621,11 @@ def write_round_report(
         config = ChallengeConfig.load()
         task_type = config.get("task_type", "classification")
         metric_name = config.get("metric", "f1_score")
-        metric_direction = config.get("metric_direction", "maximize") if task_type != "regression" else config.get("metric_direction", "minimize")
+        metric_direction = (
+            config.get("metric_direction", "minimize")
+            if task_type == "regression"
+            else config.get("metric_direction", "maximize")
+        )
     except Exception:
         task_type = "classification"
         metric_name = "f1_score"
@@ -836,7 +634,10 @@ def write_round_report(
     if task_type == "regression":
         primary_key = f"oof_{metric_name}"
         gate_op = "-" if metric_direction == "minimize" else "+"
-        gate_threshold_val = baseline_score - gate_margin if metric_direction == "minimize" else baseline_score + gate_margin
+        gate_threshold_val = (
+            baseline_score - gate_margin if metric_direction == "minimize"
+            else baseline_score + gate_margin
+        )
         lines = [
             f"# Feature Round {round_num} Report",
             f"**Generated**: {now}",
@@ -845,11 +646,7 @@ def write_round_report(
             f"**Gate threshold**: baseline {gate_op} {gate_margin} = {gate_threshold_val:.5f}",
             f"**Variants tested**: {len(results)}",
             f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
-            "",
-            "---",
-            "",
-            "## Results",
-            "",
+            "", "---", "", "## Results", "",
             f"| Variant | Features | Delta | {metric_name.upper()} Score | Gate |",
             "|---|---|---|---|---|",
         ]
@@ -860,11 +657,13 @@ def write_round_report(
                 f"| {r['variant']} | {r['features']} | {r['delta']:+.5f} | {score_val:.5f} | {icon} {r['gate']} |"
             )
         if passed:
-            best = min(passed, key=lambda r: r[primary_key]) if metric_direction == "minimize" else max(passed, key=lambda r: r[primary_key])
+            best = (
+                min(passed, key=lambda r: r[primary_key])
+                if metric_direction == "minimize"
+                else max(passed, key=lambda r: r[primary_key])
+            )
             lines += [
-                "",
-                "## Best Variant This Round",
-                "",
+                "", "## Best Variant This Round", "",
                 f"**{best['variant']}** — {metric_name.upper()} {best[primary_key]:.5f} (Δ {best['delta']:+.5f})",
             ]
     else:
@@ -877,11 +676,7 @@ def write_round_report(
             f"**Gate threshold**: baseline + {gate_margin} = {baseline_score + gate_margin:.5f}",
             f"**Variants tested**: {len(results)}",
             f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
-            "",
-            "---",
-            "",
-            "## Results",
-            "",
+            "", "---", "", "## Results", "",
             "| Variant | Features | ROC-AUC | Delta | F1-Score | Gate |",
             "|---|---|---|---|---|---|",
         ]
@@ -894,9 +689,7 @@ def write_round_report(
         if passed:
             best = max(passed, key=lambda r: r["oof_f1"])
             lines += [
-                "",
-                "## Best Variant This Round",
-                "",
+                "", "## Best Variant This Round", "",
                 f"**{best['variant']}** — F1 {best['oof_f1']:.5f} (Δ {best['delta']:+.5f})",
             ]
 
@@ -915,14 +708,12 @@ def run(
     """
     Skill 07 — Feature Engineering entry point.
 
-    If variant_name is None: runs fetch + extraction only.
-    If variant_name is given: runs that specific variant against anchor.
+    Feature extraction is fully delegated to the plugin declared in
+    challenge_config["feature_extraction_plugin"]. If no plugin is configured,
+    the skill raises an error — there is no built-in fallback extractor.
 
-    Variants defined:
-      variant-06  : Lat + Lon + all 52 TerraClimate bands
-      variant-07  : Lat + Lon + temperature only (tmax, tmin × 4 stats = 8)
-      variant-08  : Lat + Lon + water balance (aet, def, pet, ppt, soil, q × 4 = 24)
-      variant-09  : Lat + Lon + srad + vpd + vap (radiation + humidity × 4 = 12)
+    If variant_name is None: runs extraction only (plugin fetch + extract).
+    If variant_name is given: runs that specific variant against the anchor gate.
     """
     print(f"\n{'=' * 60}")
     print("SKILL 07 — Feature Engineering")
@@ -939,49 +730,35 @@ def run(
     # Effective gate thresholds — scale by target_std for original-scale
     # regression metrics only. RMSLE is log-space and scale-invariant;
     # applying target_std normalisation would produce thresholds in the
-    # wrong units entirely. Classification metrics are bounded and also
-    # need no scale correction.
+    # wrong units. Classification metrics are bounded and need no scaling.
     task_type = str(config.get("task_type", "classification"))
     metric_name_raw = str(config.get("metric", "f1_score"))
     gate_margin_cfg = float(config.get("gate_margin", 0.005))
     variance_cfg = float(config.get("variance_gate_threshold", 0.01))
 
     if task_type == "regression" and metric_name_raw != "rmsle":
-
         target_std_raw = float(
             (state.get("eda", {}) or {}).get("target_std") or 0.0
         )
         if target_std_raw == 0.0:
-            # Degenerate target — fall back to raw thresholds.
-            # skill_11_gate will also detect this and log the advisory warning.
             effective_gate_margin = gate_margin_cfg
             effective_variance_threshold = variance_cfg
         else:
-            # Scale thresholds to be magnitude-invariant across competitions.
             effective_gate_margin = gate_margin_cfg * target_std_raw
-            effective_variance_threshold = variance_cfg * (target_std_raw**2)
+            effective_variance_threshold = variance_cfg * (target_std_raw ** 2)
     else:
-        # Classification (bounded metrics) or RMSLE (log-space, already
-        # scale-invariant): raw thresholds apply with no normalisation.
+        # RMSLE (scale-invariant) or classification (bounded): use raw thresholds.
         effective_gate_margin = gate_margin_cfg
         effective_variance_threshold = variance_cfg
 
-    # Dynamic target and task config
-    target_col = (
-        config.get("target_column") or config.get("target_col") or "target"
-    )
-    task_type = config.get("task_type", "classification")
+    target_col = config.get("target_column") or config.get("target_col") or "target"
     use_probabilities = config.get("use_probabilities", True)
-
     metric_name = config.get("metric", "f1_score")
-    if task_type == "regression":
-        primary_key = f"oof_{metric_name}"
-    else:
-        primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
+    primary_key = f"oof_{metric_name}" if task_type == "regression" else (
+        "oof_f1" if metric_name == "f1_score" else "oof_auc"
+    )
 
-
-
-    # Baseline precedence selector (safe generic lookup with fallback)
+    # Baseline precedence (safe lookups — keys may not exist on first run)
     retraining_active = state.get("pseudo_label_result", {}).get(
         "retraining_required", False
     )
@@ -997,439 +774,162 @@ def run(
         baseline_key = "anchor_oof_score"
         fallback_key = f"anchor_{primary_key}"
 
-    baseline_val = state.get(baseline_key)
-    if baseline_val is None:
-        baseline_val = state.get(fallback_key)
+    baseline_val = state.get(baseline_key) or state.get(fallback_key)
     baseline_score = float(baseline_val or 0.0)
 
-    if task_type == "regression":
-        anchor_auc = state.get("anchor_oof_score")
-        if anchor_auc is None:
-            anchor_auc = state.get(f"anchor_oof_{metric_name}")
-        anchor_auc = float(anchor_auc or 0.0)
-    else:
-        anchor_auc = float(state.get("anchor_oof_auc") or 0.0)
+    anchor_auc = float(
+        state.get("anchor_oof_score" if task_type == "regression" else "anchor_oof_auc") or 0.0
+    )
 
     if variant_name is not None and baseline_score == 0.0:
         raise RuntimeError(
-            f"Baseline score not set in SKILL_STATE.json — run Skill 08 first or set baseline."
+            "Baseline score not set in SKILL_STATE.json — run Skill 08 first."
         )
 
-    # Resolve active CV strategy (allow override in state)
+    # Resolve active CV strategy
     override_active = bool(state.get("cv_strategy_override", {}).get("active", False))
     if override_active:
         override_value = state.get("cv_strategy_override", {}).get("override_strategy")
-        # Allow simple type string or full dict
-        if isinstance(override_value, dict):
-            cv_strategy = override_value
-        else:
-            cv_strategy = {
-                "type": override_value,
-                "n_splits": config.get("cv_strategy", {}).get("n_splits", 5),
-            }
+        cv_strategy = (
+            override_value if isinstance(override_value, dict)
+            else {"type": override_value, "n_splits": config.get("cv_strategy", {}).get("n_splits", 5)}
+        )
     else:
-        cv_strategy = config.get("cv_strategy", {}) or {
-            "type": "stratified",
-            "n_splits": 5,
-        }
+        cv_strategy = config.get("cv_strategy", {}) or {"n_splits": 5}
 
     print(f"Competition : {config.slug}")
     print(f"DAG phase   : {state.get('dag_phase')}")
-    ref_name = f"anchor_oof_{metric_name}" if task_type == "regression" else "anchor_oof_auc"
-    print(
-        f"Baseline ({baseline_key}): {baseline_score}  (reference {ref_name}: {anchor_auc})"
-    )
+    print(f"Baseline ({baseline_key}): {baseline_score}")
 
-    # ── Phase A: Fetch / Plugin dispatch ───────────────────────
-    print("\n[A] Feature fetch/extract (plugin-aware)")
+    # ── Phase A: Plugin dispatch ──────────────────────────────
+    print("\n[A] Feature extraction (plugin)")
     plugin_path = config.get("feature_extraction_plugin")
-    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
 
     extractor = None
     if plugin_path:
         try:
             extractor = importlib.import_module(plugin_path)
         except Exception as e:
-            print(f"  ⚠️ Failed to import plugin '{plugin_path}': {e}")
+            print(f"  ⚠️  Failed to import plugin '{plugin_path}': {e}")
 
-    # If tiff missing: try plugin.fetch (if present) when fetch=True, otherwise fall back
-    if not tiff_path.exists():
-        if extractor is not None and fetch:
-            tiff_path = extractor.fetch(paths, config, allow_network=True)
-        else:
-            # Don't auto-fetch during tests or CI unless explicitly requested.
-            if variant_name is None:
-                print("  ℹ️ Data tiff missing and fetch disabled — extraction skipped")
-                return {
-                    "status": "no_fetch",
-                    "message": "Data tiff missing and fetch disabled",
-                }
-            raise FileNotFoundError(
-                "Data tiff not found. Re-run with fetch=True or configure a plugin to fetch data."
-            )
+    if extractor is None:
+        raise RuntimeError(
+            f"No feature extraction plugin configured or plugin failed to import. "
+            f"Set 'feature_extraction_plugin' in challenge_config.json."
+        )
 
-    # ── Phase B: Extract ──────────────────────────────────────
+    # Provide a dummy path for plugins that require a tiff_path parameter but
+    # don't actually use rasterio (e.g. tabular-only plugins touch the file or ignore it).
+    tiff_path = paths.data_processed_dir / "plugin_data.tiff"
+
+    if not tiff_path.exists() and fetch and hasattr(extractor, "fetch"):
+        tiff_path = extractor.fetch(paths, config, allow_network=True)
+
+    # ── Phase B: Extract features ─────────────────────────────
     print("\n[B] Feature Extraction")
-    if extractor is not None and hasattr(extractor, "extract"):
+    if hasattr(extractor, "extract"):
         train_feat, test_feat = extractor.extract(paths, tiff_path, config)
     else:
-        train_feat, test_feat = extract_features(paths, tiff_path, config)
+        raise RuntimeError(
+            f"Plugin '{plugin_path}' has no extract() function. "
+            f"Implement extract(paths, tiff_path, config) -> (train_df, test_df)."
+        )
 
-    # ── Phase B₂: Build hypothesis-derived features (two-mode)
-    print("\n[B₂] Building hypothesis-derived features")
-    # Resolve target column defensively
-    target_col_cfg = (
-        config.get("target_column") or config.get("target_col") or "target"
-    )
+    # ── Phase B2: Build hypothesis-derived features ───────────
+    print("\n[B2] Building hypothesis-derived features")
+    target_col_cfg = config.get("target_column") or config.get("target_col") or "target"
     if variant_name is None:
-        # Extraction-only / inference: allow using full training targets if available
-        if target_col_cfg in train_feat.columns:
-            targ_arr = train_feat[target_col_cfg].to_numpy()
-        else:
-            targ_arr = None
+        targ_arr = train_feat[target_col_cfg].to_numpy() if target_col_cfg in train_feat.columns else None
         train_feat, test_feat = build_hypothesis_features(
             train_feat, test_feat, mode="inference", target_array=targ_arr
         )
     else:
-        # During training runs, avoid computing target-dependent features globally to prevent leakage.
-        # Compute structural features only by calling in inference mode with no target array.
+        # Structural features only — no target array to avoid leakage
         train_feat, test_feat = build_hypothesis_features(
             train_feat, test_feat, mode="inference", target_array=None
         )
-
-    # Check if we are running in generic mode (no environmental columns in train_feat) (Decontamination Check)
-    tc_vars = ["aet", "def", "pdsi", "pet", "ppt", "q", "soil", "srad", "swe", "tmax", "tmin", "vap", "vpd"]
-    tc_stats = ["mean", "std", "min", "max"]
-    env_cols = {f"{v}_{s}" for v in tc_vars for s in tc_stats}
-    matching_cols = [c for c in train_feat.columns if c in env_cols]
-    is_generic = len(matching_cols) == 0
-
-    if not is_generic:
-        print(
-            "  ✓ Derived features added: tmax_mean_sq, aet_pet_ratio, tmax_vpd_stress, frost_risk, aridity_index, warm_wet_index"
-        )
-    else:
-        print(
-            "  ✓ Using financial dataset features — no climate/environmental variables found"
-        )
+    print("  ✓ Hypothesis-derived features built from config")
 
     if variant_name is None:
-        print(
-            "\n✅ Fetch + extraction complete. Pass --variant <name> to run a variant."
-        )
-        return {"status": "extracted", "tiff": str(tiff_path)}
+        print("\n✅ Extraction complete. Pass --variant <name> to run a variant.")
+        return {"status": "extracted"}
 
-    if is_generic:
-        # Determine target, id, and coordinate columns to exclude
-        cols_cfg = config.get("columns", {}) or {}
-        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
-        lat_col = cols_cfg.get("latitude", "Latitude")
-        lon_col = cols_cfg.get("longitude", "Longitude")
-        DROP = {id_col, target_col, lat_col, lon_col, "ID", "target"}
-        all_features = [c for c in train_feat.columns if c not in DROP and c != target_col]
-        
-        # Build generic variants dynamically
-        n_feats = len(all_features)
-        half = n_feats // 2
-        first_half = all_features[:half] if half > 0 else all_features
-        second_half = all_features[half:] if half > 0 else all_features
-        even_feats = [all_features[i] for i in range(0, n_feats, 2)]
-        
-        VARIANTS = {}
-        for var_id in [
-            "variant-00", "variant-06", "variant-07", "variant-08", "variant-09",
-            "variant-10", "variant-11", "variant-12", "variant-13", "variant-14",
-            "variant-15", "variant-16", "variant-17", "variant-18", "variant-19",
-            "variant-20", "variant-21", "variant-22", "variant-23", "variant-24",
-            "variant-25", "variant-26", "variant-27", "variant-28", "variant-29",
-            "variant-30", "variant-31", "variant-32", "variant-33", "variant-34",
-            "variant-35", "variant-36", "variant-37", "variant-38", "variant-39",
-            "variant-40", "variant-41", "variant-42", "variant-43", "variant-44",
-            "variant-45", "variant-46"
-        ]:
-            last_digit = var_id[-1]
-            if var_id == "variant-00":
-                VARIANTS[var_id] = all_features
-            elif last_digit in ("7", "0"):
-                VARIANTS[var_id] = first_half
-            elif last_digit in ("8", "1"):
-                VARIANTS[var_id] = second_half
-            elif last_digit in ("9", "2"):
-                VARIANTS[var_id] = even_feats
-            else:
-                VARIANTS[var_id] = all_features
-    else:
-        # ── Phase C: Define variant feature sets ──────────────────
-        tc_all = TC_BAND_NAMES
-        tc_51 = [c for c in tc_all if c != "swe_min"]  # alias: tc_all_51
-        tc_all_51 = tc_51  # explicit alias for hypothesis variants
-        tc_temp = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
-        tc_water = [
-            f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
-        ]
-        tc_rad = [f"{v}_{s}" for v in ["srad", "vpd", "vap"] for s in TC_STATS]
+    # ── Phase C: Build VARIANTS dict from config ──────────────
+    # All column names come from config — no competition-specific strings here.
+    cols_cfg = config.get("columns", {}) or {}
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+    lat_col = cols_cfg.get("latitude", "Latitude")
+    lon_col = cols_cfg.get("longitude", "Longitude")
+    DROP = {id_col, target_col, lat_col, lon_col, "ID", "target"}
+    all_features = [c for c in train_feat.columns if c not in DROP and c != target_col]
 
-        # Round 4 TC-only feature groups (no Lat/Lon — compliant)
-        tc_temp_only = [f"{v}_{s}" for v in ["tmax", "tmin"] for s in TC_STATS]
-        tc_water_only = [
-            f"{v}_{s}" for v in ["aet", "def", "pet", "ppt", "soil", "q"] for s in TC_STATS
-        ]
-        tc_stress_only = [
-            f"{v}_{s}" for v in ["pdsi", "vpd", "vap", "srad"] for s in TC_STATS
-        ]
-        shap_top12_tc = [
-            "aet_min",
-            "tmin_mean",
-            "pet_mean",
-            "srad_mean",
-            "ppt_min",
-            "vap_mean",
-            "pdsi_max",
-            "soil_max",
-            "srad_std",
-            "vpd_min",
-            "vap_min",
-            "aet_mean",
-        ]
+    n_feats = len(all_features)
+    half = n_feats // 2
+    first_half  = all_features[:half] if half > 0 else all_features
+    second_half = all_features[half:] if half > 0 else all_features
+    even_feats  = [all_features[i] for i in range(0, n_feats, 2)]
 
-        # SHAP top features from variant-06
-        shap_top5 = ["aet_min", "tmin_mean", "pet_mean", "srad_mean", "ppt_min"]
-        shap_top10 = shap_top5 + ["vap_mean", "pdsi_max", "soil_max", "srad_std", "vpd_min"]
-        shap_top20 = shap_top10 + [
-            "vap_min",
-            "aet_mean",
-            "q_max",
-            "pet_min",
-            "pet_max",
-            "tmin_max",
-            "pdsi_min",
-            "pet_std",
-            "def_std",
-            "aet_max",
-        ]
-        # Dead features by SHAP (near-zero importance)
-        dead = ["swe_min"]  # only confirmed constant-zero feature
-        tc_clean = [
-            f for f in tc_all if f not in dead
-        ]  # 51 features (52 TC bands - swe_min)
-        tc_pruned_37 = [
-            f
-            for f in tc_clean
-            if f
-            not in {
-                "aet_mean",
-                "aet_std",
-                "def_max",
-                "ppt_max",
-                "q_min",
-                "q_std",
-                "soil_max",
-                "soil_mean",
-                "swe_max",
-                "swe_std",
-                "tmax_max",
-                "vap_std",
-                "vpd_max",
-                "vpd_mean",
-                "vpd_std",
-            }
-        ]
+    # Read operator-declared dead/noise exclusions from config.
+    # dead_features: zero-variance columns confirmed by EDA.
+    # noise_features: statistically insignificant columns (confirmed by correlation audit).
+    # Both lists are written to challenge_config.json by the operator — never hardcoded here.
+    _dead  = set(config.get("dead_features",  []) or [])
+    _noise = set(config.get("noise_features", []) or [])
+    clean_features = [f for f in all_features if f not in _dead | _noise]
 
-        VARIANTS = {
-            "variant-00": tc_all,  # anchor baseline — same model core as Skill 08
-            # Round 1
-            "variant-06": tc_all,
-            "variant-07": tc_temp,
-            "variant-08": tc_water,
-            "variant-09": tc_rad,
-            # Round 2 — SHAP-driven
-            "variant-10": shap_top10,
-            "variant-11": tc_clean,
-            "variant-12": shap_top20,
-            "variant-13": tc_all,  # hyperparams differ
-            "variant-14": tc_all,  # RF ensemble
-            "variant-16": shap_top5,
-            # Round 3 — Science-driven
-            "variant-15": [
-                # Temperature predictors
-                "tmin_mean",
-                "tmin_std",
-                "tmin_min",
-                "tmin_max",
-                "tmax_mean",
-                "tmax_std",
-                "tmax_min",
-                "tmax_max",
-                # Moisture predictors
-                "soil_mean",
-                "soil_std",
-                "soil_min",
-                "soil_max",
-                "ppt_mean",
-                "ppt_std",
-                "ppt_min",
-                "ppt_max",
-                "vap_mean",
-                "vap_std",
-                "vap_min",
-                "vap_max",
-            ],
-            "variant-17": [
-                # All TC except swe
-                c
-                for c in [
-                    "aet_mean",
-                    "aet_std",
-                    "aet_min",
-                    "aet_max",
-                    "def_mean",
-                    "def_std",
-                    "def_min",
-                    "def_max",
-                    "pdsi_mean",
-                    "pdsi_std",
-                    "pdsi_min",
-                    "pdsi_max",
-                    "pet_mean",
-                    "pet_std",
-                    "pet_min",
-                    "pet_max",
-                    "ppt_mean",
-                    "ppt_std",
-                    "ppt_min",
-                    "ppt_max",
-                    "q_mean",
-                    "q_std",
-                    "q_min",
-                    "q_max",
-                    "soil_mean",
-                    "soil_std",
-                    "soil_min",
-                    "soil_max",
-                    "srad_mean",
-                    "srad_std",
-                    "srad_min",
-                    "srad_max",
-                    "tmax_mean",
-                    "tmax_std",
-                    "tmax_min",
-                    "tmax_max",
-                    "tmin_mean",
-                    "tmin_std",
-                    "tmin_min",
-                    "tmin_max",
-                    "vap_mean",
-                    "vap_std",
-                    "vap_min",
-                    "vap_max",
-                    "vpd_mean",
-                    "vpd_std",
-                    "vpd_min",
-                    "vpd_max",
-                ]
-            ],
-            "variant-18": tc_all,  # XGBoost
-            "variant-19": tc_all,  # LGB larger trees
-            "variant-20": [
-                # Top ecological predictors from SHAP + domain science
-                "aet_min",
-                "tmin_mean",
-                "pet_mean",
-                "srad_mean",
-                "soil_mean",
-                "ppt_mean",
-                "vap_mean",
-                "vpd_mean",
-                "tmax_mean",
-                "aet_mean",
-                "def_mean",
-                "pdsi_mean",
-            ],
-            # Round 4 — Blend + threshold
-            "variant-25": tc_all,  # LGB+RF blend
-            "variant-26": tc_all,  # per-fold threshold
-            # Round 4 — TC only compliant (no Lat/Lon)
-            "variant-27": tc_all,
-            "variant-28": tc_all,
-            "variant-29": tc_all,
-            "variant-30": tc_temp_only,
-            "variant-31": tc_water_only,
-            "variant-32": tc_stress_only,
-            "variant-33": shap_top12_tc,
-            "variant-34": tc_all,
-            # Round 5 — 2017-2019 window + extended features
-            "variant-35": tc_all,  # 52 TC bands, 2017-2019 window
-            "variant-36": None,  # 94 features (full merge)
-            "variant-37": tc_51,  # 51 features, swe_min dropped, standard LGB
-            "variant-38": tc_51,  # 51 features, 3-way blend LGB+RF+XGB
-            "variant-39": tc_51,  # 51 features, dart booster LGB
-            # Round 6 — hypothesis-derived features (climate algebra, validated hypotheses)
-            "variant-40": tc_all_51
-            + [
-                "tmax_mean_sq",
-                "aet_pet_ratio",
-                "tmax_vpd_stress",
-                "frost_risk",
-                "aridity_index",
-                "warm_wet_index",
-            ],  # all 6 derived
-            "variant-41": tc_all_51
-            + ["aridity_index", "aet_pet_ratio"],  # water indices only (hyp-011, hyp-003)
-            "variant-42": tc_all_51
-            + ["tmax_vpd_stress", "frost_risk"],  # stress indices only (hyp-006, hyp-007)
-            "variant-43": tc_all_51
-            + [
-                "warm_wet_index",
-                "aridity_index",
-                "aet_pet_ratio",
-            ],  # ecology trio (warm/wet + water efficiency)
-            "variant-44": tc_all_51
-            + ["tmax_mean_sq", "frost_risk"],  # temperature stress (hyp-001, hyp-007)
-            "variant-45": tc_all_51
-            + [
-                "aridity_index",
-                "warm_wet_index",
-            ],  # moisture interaction (hyp-011, hyp-012)
-            "variant-46": tc_pruned_37
-            + [
-                "aridity_index",
-                "aet_pet_ratio",
-            ],  # lean clean matrix: 37 pruned + 2 structural ratios
-        }
+    # Interaction col names derived from feature_engineering.interactions in config.
+    # Naming convention: "{c1}_x_{c2}" — matches what build_hypothesis_features produces.
+    _fe_cfg = config.get("feature_engineering", {}) or {}
+    _interaction_pairs = _fe_cfg.get("interactions", []) or []
+    interaction_cols = [
+        f"{pair[0]}_x_{pair[1]}"
+        for pair in _interaction_pairs
+        if len(pair) == 2
+        and pair[0] in train_feat.columns
+        and pair[1] in train_feat.columns
+    ]
 
-    if variant_name not in VARIANTS:
-        raise ValueError(
-            f"Unknown variant '{variant_name}'. Choose from: {list(VARIANTS)}"
-        )
+    # Explicitly-defined variants read their feature lists from config-derived
+    # values (clean_features, interaction_cols). No competition-specific column
+    # names are hardcoded here — all column names come from config at runtime.
+    _explicit_variants: dict[str, list[str]] = {
+        # variant-10: clean baseline — dead/noise columns removed per config.
+        "variant-10": clean_features,
+        # variant-11: clean + structural interaction features from config.
+        "variant-11": clean_features + interaction_cols,
+    }
 
-    # variant-36 uses the full merged feature set (94 feature columns)
-    if variant_name == "variant-36":
-        full_train = paths.data_processed_dir / "features_full_train.csv"
-        full_test = paths.data_processed_dir / "features_full_test.csv"
-        if not full_train.exists():
-            raise FileNotFoundError(
-                "features_full_train.csv not found — run merge_features.py first"
-            )
-        train_feat = pd.read_csv(full_train)
-        test_feat = pd.read_csv(full_test)
-        cols_cfg = config.get("columns", {}) or {}
-        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
-        lat_col = cols_cfg.get("latitude", "Latitude")
-        lon_col = cols_cfg.get("longitude", "Longitude")
-        # target_col was resolved earlier from config into `target_col`
-        DROP = [id_col, target_col, lat_col, lon_col]
-        feature_cols = [c for c in train_feat.columns if c not in DROP]
-        print(
-            f"  variant-36: loaded {len(feature_cols)} features from features_full_*.csv"
-        )
-    else:
-        cols = VARIANTS[variant_name]
-        if cols is None:
-            raise ValueError(f"Feature columns for {variant_name} cannot be None")
-        feature_cols = cols
+    def _resolve_variant_features(vid: str) -> list[str]:
+        """
+        Resolve feature columns for any variant name.
 
-    # ── Phase C: Train (multi-seed averaging) ────────────────
-    # Use canonical seed discipline: derive multi-seed list deterministically
+        Explicit overrides (variant-10, variant-11, etc.) are checked first.
+        All other variant names fall back to a deterministic bucket scheme
+        based on the last character of the variant ID — no hardcoded list of
+        variant names is required.
+
+        Bucket scheme (last character of variant ID):
+          "0", "7"  → first_half  (first 50% of all_features)
+          "1", "8"  → second_half (last 50% of all_features)
+          "2", "9"  → even_feats  (every other feature)
+          "anchor" / anything else → all_features
+        """
+        if vid in _explicit_variants:
+            return _explicit_variants[vid]
+        last_char = vid[-1] if vid else ""
+        if last_char in ("7", "0"):
+            return first_half
+        if last_char in ("8", "1"):
+            return second_half
+        if last_char in ("9", "2"):
+            return even_feats
+        return all_features
+
+    feature_cols = _resolve_variant_features(variant_name)
+    if not feature_cols:
+        raise ValueError(f"Feature column list for '{variant_name}' is empty.")
+
+    # ── Phase C: Train (multi-seed averaging) ─────────────────
     SEEDS = [SEED, SEED + 1, SEED + 2]
     print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
     import random
@@ -1439,35 +939,52 @@ def run(
         np.random.seed(s)
         print(f"\n  -- Seed {s} --")
         r = train_variant(
-            train_feat,
-            test_feat,
-            feature_cols,
-            variant_name,
-            baseline_score,
-            anchor_auc,
-            seed=s,
-            config=config,
-            state=state,
-            cv_strategy=cv_strategy,
-            target_col=target_col,
-            task_type=task_type,
+            train_feat, test_feat, feature_cols, variant_name,
+            baseline_score, anchor_auc, seed=s,
+            config=config, state=state, cv_strategy=cv_strategy,
+            target_col=target_col, task_type=task_type,
             gate_margin=effective_gate_margin,
         )
         seed_results.append(r)
 
-    # Average ROC-AUC and test probabilities across seeds
-    mean_auc = float(np.mean([r["oof_auc"] for r in seed_results]))
-    std_auc = float(np.std([r["oof_auc"] for r in seed_results]))
-    mean_f1 = float(np.mean([r["oof_f1"] for r in seed_results]))
-    mean_thr = float(np.mean([r["threshold"] for r in seed_results]))
-    mean_delta = float(np.mean([r["delta"] for r in seed_results]))
-    avg_test = np.mean([r["test_probs"] for r in seed_results], axis=0)
-    avg_oof = np.mean([r["oof_probs"] for r in seed_results], axis=0)
-    gate = "PASS" if mean_delta >= effective_gate_margin else "PRUNE"
+    mean_auc   = float(np.mean([r["oof_auc"]   for r in seed_results]))
+    std_auc    = float(np.std([r["oof_auc"]    for r in seed_results]))
+    mean_f1    = float(np.mean([r["oof_f1"]    for r in seed_results]))
+    mean_thr   = float(np.mean([r["threshold"] for r in seed_results]))
+    avg_test   = np.mean([r["test_probs"] for r in seed_results], axis=0)
+    avg_oof    = np.mean([r["oof_probs"]  for r in seed_results], axis=0)
 
+    # For regression: score the averaged OOF array against ground truth.
+    # Averaging per-seed scores first (then comparing against baseline) is
+    # incorrect — RMSLE is convex so mean(RMSLE per seed) >= RMSLE(mean predictions).
+    # The gate must evaluate the same array that will be stored and submitted.
     if task_type == "regression":
-        mean_metric = float(np.mean([r[primary_key] for r in seed_results]))
-        std_metric = float(np.std([r[primary_key] for r in seed_results]))
+        y_true_arr = np.asarray(train_feat[target_col].values, dtype=np.float64)
+        metric = str(metric_name_raw).lower()
+        if metric == "rmsle":
+            ensemble_score = float(np.sqrt(np.mean(
+                (np.log1p(y_true_arr) - np.log1p(np.clip(avg_oof, 0, None))) ** 2
+            )))
+        else:
+            from sklearn.metrics import root_mean_squared_error, mean_absolute_error
+            if metric in ("root_mean_squared_error", "rmse"):
+                ensemble_score = float(root_mean_squared_error(y_true_arr, avg_oof))
+            elif metric == "mean_absolute_error":
+                ensemble_score = float(mean_absolute_error(y_true_arr, avg_oof))
+            else:
+                ensemble_score = float(root_mean_squared_error(y_true_arr, avg_oof))
+        metric_direction = config.get("metric_direction", "minimize")
+        ensemble_delta = (
+            baseline_score - ensemble_score if metric_direction == "minimize"
+            else ensemble_score - baseline_score
+        )
+        mean_metric = ensemble_score
+        std_metric  = float(np.std([r[primary_key] for r in seed_results]))
+        mean_delta  = ensemble_delta
+        gate = "PASS" if ensemble_delta >= effective_gate_margin else "PRUNE"
+    else:
+        mean_delta = float(np.mean([r["delta"] for r in seed_results]))
+        gate = "PASS" if mean_delta >= effective_gate_margin else "PRUNE"
 
     print(f"\n  {'=' * 50}")
     print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
@@ -1481,99 +998,81 @@ def run(
         print(f"  Mean F1-Score: {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
         print(f"  Seed ROC-AUCs: {[round(r['oof_auc'], 5) for r in seed_results]}")
 
-    result = {
-        "variant": variant_name,
-        "features": len(feature_cols),
-        "oof_auc": mean_auc,
-        "oof_f1": mean_f1,
+    result: dict[str, Any] = {
+        "variant":   variant_name,
+        "features":  len(feature_cols),
+        "oof_auc":   mean_auc,
+        "oof_f1":    mean_f1,
         "threshold": mean_thr,
-        "delta": mean_delta,
-        "gate": gate,
+        "delta":     mean_delta,
+        "gate":      gate,
         "oof_probs": avg_oof,
         "test_probs": avg_test,
         "seed_aucs": [r["oof_auc"] for r in seed_results],
-        "seed_std": std_auc,
+        "seed_std":  std_auc,
     }
     if task_type == "regression":
         result[primary_key] = mean_metric
 
-    # Persist averaged OOF and test probabilities for ensembling/stacking
+    # ── Phase D: Persist OOF / test arrays ───────────────────
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
-        cols_cfg = config.get("columns", {}) or {}
-        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
-
-        oof_df = pd.DataFrame(
-            {id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])}
-        )
-        oof_path = proc_dir / f"oof_{variant_name}.csv"
-        oof_df.to_csv(oof_path, index=False)
-
-        test_df = pd.DataFrame(
-            {id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])}
-        )
-        test_path = proc_dir / f"test_probs_{variant_name}.csv"
-        test_df.to_csv(test_path, index=False)
-
-        print(f"  ✅ Saved OOF → {oof_path}")
-        print(f"  ✅ Saved test probs → {test_path}")
+        oof_df = pd.DataFrame({id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])})
+        oof_df.to_csv(proc_dir / f"oof_{variant_name}.csv", index=False)
+        test_df_out = pd.DataFrame({id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])})
+        test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
+        print(f"  ✅ Saved OOF / test probs")
     except Exception as e:
-        print(f"  ⚠️ Failed to save OOF/test probs: {e}")
+        print(f"  ⚠️  Failed to save OOF/test probs: {e}")
 
-    # ── Phase D: Save submission if PASS or force_save ──────────
+    # ── Phase D: Save submission if PASS or force_save ────────
     if result["gate"] == "PASS" or force_save:
         input_files = config.get("input_files", {}) or {}
         sample_file = input_files.get("sample", "SampleSubmission.csv")
         sample = pd.read_csv(paths.data_raw_dir / sample_file)
-        cols_cfg = config.get("columns", {}) or {}
-        id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
         sub_col = [c for c in sample.columns if c != id_col][0]
-        test_probs = result["test_probs"]
-        # Respect submission format policy: prefer probabilities when configured
+        test_probs_arr = result["test_probs"]
         if task_type == "regression":
-            sub_values = test_probs
-        elif task_type == "classification" and use_probabilities:
-            sub_values = test_probs
+            sub_values = test_probs_arr
+        elif use_probabilities:
+            sub_values = test_probs_arr
         else:
-            sub_values = (test_probs >= result["threshold"]).astype(int)
+            sub_values = (test_probs_arr >= result["threshold"]).astype(int)
         sub = pd.DataFrame({id_col: test_feat[id_col], sub_col: sub_values})
         sub = sub.set_index(id_col).reindex(sample[id_col]).reset_index()
         out = competition_dir / f"submissions/{variant_name}_submission.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
         sub.to_csv(out, index=False)
         print(f"  ✅ Submission saved → {out}")
 
     # ── Phase D: Update state ─────────────────────────────────
     variants_tested = int(state.get("variants_tested") or 0) + 1
-    variants_passed = int(state.get("variants_passed") or 0) + (
-        1 if result["gate"] == "PASS" else 0
+    variants_passed = int(state.get("variants_passed") or 0) + (1 if result["gate"] == "PASS" else 0)
+    metric_direction = (
+        config.get("metric_direction", "minimize") if task_type == "regression"
+        else config.get("metric_direction", "maximize")
     )
-    metric_direction = config.get("metric_direction", "maximize") if task_type != "regression" else config.get("metric_direction", "minimize")
     best_score_raw = state.get(f"best_variant_{primary_key}")
-    if best_score_raw is None:
-        is_improvement = True
-    else:
-        best_score = float(best_score_raw)
-        if metric_direction == "minimize":
-            is_improvement = (best_score == 0.0) or (result[primary_key] < best_score)
-        else:
-            is_improvement = (best_score == 0.0) or (result[primary_key] > best_score)
+    is_improvement = best_score_raw is None or (
+        (float(best_score_raw) == 0.0) or (
+            result[primary_key] < float(best_score_raw) if metric_direction == "minimize"
+            else result[primary_key] > float(best_score_raw)
+        )
+    ) if task_type == "regression" else True
 
-    update = {
-        "dag_phase": "phase_3_features",
+    update: dict[str, Any] = {
+        "dag_phase":       "phase_3_features",
         "variants_tested": variants_tested,
         "variants_passed": variants_passed,
-        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "last_updated":    datetime.now(timezone.utc).isoformat(),
     }
     if result["gate"] == "PASS" and is_improvement:
-        update["best_variant_this_round"] = variant_name
-        update["best_variant_oof_auc"] = result["oof_auc"]
-        update["best_variant_oof_f1"] = result["oof_f1"]
-        update[f"best_variant_{primary_key}"] = result[primary_key]
-        update["best_variant_threshold"] = result["threshold"]
-        update["best_variant_features"] = len(feature_cols)
+        update["best_variant_this_round"]      = variant_name
+        update[f"best_variant_{primary_key}"]  = result[primary_key]
+        update["best_variant_threshold"]       = result["threshold"]
+        update["best_variant_features"]        = len(feature_cols)
 
-    # Tag OOF outputs with active CV strategy id for reproducibility
     try:
         cv_id = resolve_active_cv_strategy_id(state, config._data)
         update["last_oof_cv_strategy_id"] = cv_id
@@ -1582,6 +1081,7 @@ def run(
         pass
 
     store.update(**update)
+
     secondary_metrics = None
     if task_type == "regression":
         try:
@@ -1589,45 +1089,41 @@ def run(
             y_true = np.asarray(train_feat[target_col].values, dtype=np.float64)
             secondary_metrics = compute_secondary_metrics(y_true, result["oof_probs"])
         except Exception as exc:
-            print(f"  ⚠️ Failed to compute secondary metrics: {exc}")
+            print(f"  ⚠️  Failed to compute secondary metrics: {exc}")
 
     try:
         write_oof_record(
             store,
             branch_name=(
-                (variant_name + "_augmented")
-                if state.get("pseudo_label_result", {}).get(
-                    "retraining_required", False
-                )
+                variant_name + "_augmented"
+                if state.get("pseudo_label_result", {}).get("retraining_required", False)
                 else variant_name
             ),
             scores=np.asarray(result["oof_probs"], dtype=np.float64).tolist(),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=SEED,
             model_config={
-                "variant": variant_name,
+                "variant":       variant_name,
                 "feature_count": len(feature_cols),
-                "multi_seed": [int(s) for s in SEEDS],
-                "fold_scores": result.get("fold_scores"),
+                "multi_seed":    [int(s) for s in SEEDS],
+                "fold_scores":   result.get("fold_scores"),
             },
             secondary_metrics=secondary_metrics,
         )
     except Exception as exc:
-        print(f"  ⚠️ Failed to write OOF record: {exc}")
+        print(f"  ⚠️  Failed to write OOF record: {exc}")
     print("  ✅ SKILL_STATE.json updated")
 
     # ── Phase D: Write report ─────────────────────────────────
     round_num = int(state.get("feature_round") or 1)
-    write_round_report(
-        paths, [result], round_num, baseline_score, effective_gate_margin
-    )
+    write_round_report(paths, [result], round_num, baseline_score, effective_gate_margin)
 
     return {
-        "status": result["gate"],
-        "variant": variant_name,
-        "oof_auc": result["oof_auc"],
-        "oof_f1": result["oof_f1"],
-        "delta": result["delta"],
+        "status":   result["gate"],
+        "variant":  variant_name,
+        "oof_auc":  result["oof_auc"],
+        "oof_f1":   result["oof_f1"],
+        "delta":    result["delta"],
         "features": len(feature_cols),
     }
 
@@ -1642,6 +1138,6 @@ if __name__ == "__main__":
         elif arg == "--variant" and len(sys.argv) > sys.argv.index(arg) + 1:
             variant = sys.argv[sys.argv.index(arg) + 1]
     force_save = "--force-save" in sys.argv
-    fetch_opt = "--fetch" in sys.argv
+    fetch_opt  = "--fetch" in sys.argv
     result = run(variant_name=variant, force_save=force_save, fetch=fetch_opt)
     print(json.dumps({k: v for k, v in result.items() if k != "oof_probs"}, indent=2))

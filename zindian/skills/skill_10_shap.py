@@ -60,8 +60,25 @@ def _load_train_frame(paths: CompetitionPaths) -> pd.DataFrame:
 
 
 def _feature_columns(frame: pd.DataFrame, target: str) -> list[str]:
-    excluded = {"id", "latitude", "longitude", target.lower()}
-    return [column for column in frame.columns if column.lower() not in excluded]
+    """
+    Return feature columns from frame, excluding target, id, and coordinate columns.
+    Column names are read from config — never hardcoded — to satisfy A5.
+    """
+    try:
+        config = ChallengeConfig.load()
+        cols_cfg = config.get("columns", {}) or {}
+        id_col   = (
+            config.get("id_col")
+            or config.get("id_column")
+            or cols_cfg.get("id", "ID")
+        )
+        lat_col  = cols_cfg.get("latitude", "Latitude")
+        lon_col  = cols_cfg.get("longitude", "Longitude")
+    except Exception:
+        id_col, lat_col, lon_col = "ID", "Latitude", "Longitude"
+
+    excluded = {target.lower(), id_col.lower(), lat_col.lower(), lon_col.lower()}
+    return [col for col in frame.columns if col.lower() not in excluded]
 
 
 def _as_positive_shap_values(raw_values: object) -> np.ndarray:

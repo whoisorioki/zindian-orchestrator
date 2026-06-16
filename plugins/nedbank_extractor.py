@@ -25,8 +25,8 @@ from zindian.config import ChallengeConfig
 
 
 def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
-    """Touch dummy tiff file to satisfy skill_07 check and return it."""
-    tiff_path = paths.data_processed_dir / "TerraClimate_14band.tiff"
+    """Touch dummy tiff file to satisfy plugin interface contract and return it."""
+    tiff_path = paths.data_processed_dir / "plugin_data.tiff"
     tiff_path.parent.mkdir(parents=True, exist_ok=True)
     tiff_path.touch()
     return tiff_path

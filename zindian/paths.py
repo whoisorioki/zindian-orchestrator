@@ -35,7 +35,14 @@ def resolve_competition_paths(
     4) Legacy root fallback (unless require_competition=True)
     """
     root = Path.cwd()
-    selected_slug = slug or os.environ.get("COMPETITION_SLUG")
+    # Accept both COMPETITION_SLUG (canonical) and ZINDIAN_COMPETITION_SLUG (alias).
+    # The alias is widely used in run commands and diagnostic scripts throughout
+    # this repository. Both resolve identically — COMPETITION_SLUG takes precedence.
+    selected_slug = (
+        slug
+        or os.environ.get("COMPETITION_SLUG")
+        or os.environ.get("ZINDIAN_COMPETITION_SLUG")
+    )
     comp_dir: Optional[Path] = None
 
     if selected_slug:
