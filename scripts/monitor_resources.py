@@ -78,10 +78,12 @@ def get_disk_usage():
         if len(lines) > 1:
             parts = lines[1].split()
             return {
+                "filesystem": parts[0],
                 "total": parts[1],
                 "used": parts[2],
                 "available": parts[3],
                 "use_percent": parts[4],
+                "mount": parts[5] if len(parts) > 5 else "/home/sagemaker-user/shared",
             }
     except Exception:
         pass
