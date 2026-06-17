@@ -86,6 +86,7 @@ def build_hypothesis_features(
     mode: str,
     target_array: np.ndarray | None = None,
     train_idx: np.ndarray | None = None,
+    variant_name: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Build derived features dynamically using generic mathematical operations.
@@ -114,6 +115,28 @@ def build_hypothesis_features(
         cfg = {}
 
     fe_cfg = cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING) or DEFAULT_FEATURE_ENGINEERING
+
+    # Per-variant sidecar override mechanism
+    if variant_name is not None:
+        import pathlib as _pathlib
+        import json as _json
+        _comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
+        if _comp_slug:
+            _variant_sidecar = (
+                _pathlib.Path(__file__).parent.parent.parent
+                / "competitions"
+                / _comp_slug
+                / "variants"
+                / f"{variant_name}.json"
+            )
+            if _variant_sidecar.exists():
+                try:
+                    _sidecar_data = _json.loads(_variant_sidecar.read_text())
+                    _sidecar_fe = _sidecar_data.get("feature_engineering", {})
+                    if _sidecar_fe:
+                        fe_cfg = {**fe_cfg, **_sidecar_fe}
+                except Exception:
+                    pass
 
     target_col = cfg.get("target_col") or cfg.get("target_column")
     if target_col:
@@ -840,12 +863,12 @@ def run(
     if variant_name is None:
         targ_arr = train_feat[target_col_cfg].to_numpy() if target_col_cfg in train_feat.columns else None
         train_feat, test_feat = build_hypothesis_features(
-            train_feat, test_feat, mode="inference", target_array=targ_arr
+            train_feat, test_feat, mode="inference", target_array=targ_arr, variant_name=variant_name
         )
     else:
         # Structural features only — no target array to avoid leakage
         train_feat, test_feat = build_hypothesis_features(
-            train_feat, test_feat, mode="inference", target_array=None
+            train_feat, test_feat, mode="inference", target_array=None, variant_name=variant_name
         )
     print("  ✓ Hypothesis-derived features built from config")
 
