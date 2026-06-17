@@ -18,10 +18,10 @@ SoT §4 / §8 references:
     Falls back to raw thresholds; returns non-None warning string.
     Pipeline does not halt — warning is advisory only.
 """
+
 import pytest
 
 from zindian.skills.skill_11_gate import _effective_thresholds
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +37,9 @@ def _reg_config(metric: str, variance: float = 0.01, margin: float = 0.001) -> d
     }
 
 
-def _clf_config(metric: str = "auc", variance: float = 0.01, margin: float = 0.001) -> dict:
+def _clf_config(
+    metric: str = "auc", variance: float = 0.01, margin: float = 0.001
+) -> dict:
     return {
         "task_type": "classification",
         "metric": metric,
@@ -62,7 +64,9 @@ class TestRMSEScaling:
         eff_var, eff_margin, warning = _effective_thresholds(
             _reg_config("rmse"), _state(2.5)
         )
-        assert abs(eff_var - 0.01 * (2.5**2)) < 1e-9, f"Expected {0.01 * 6.25}, got {eff_var}"
+        assert (
+            abs(eff_var - 0.01 * (2.5**2)) < 1e-9
+        ), f"Expected {0.01 * 6.25}, got {eff_var}"
         assert abs(eff_margin - 0.001 * 2.5) < 1e-9
         assert warning is None
 
@@ -114,9 +118,9 @@ class TestRMSLERawPassthrough:
             f"RMSLE gate_margin must be raw 0.001; "
             f"got {eff_margin} — target_std scaling was incorrectly applied."
         )
-        assert eff_var == 0.01, (
-            f"RMSLE variance_threshold must be raw 0.01; got {eff_var}."
-        )
+        assert (
+            eff_var == 0.01
+        ), f"RMSLE variance_threshold must be raw 0.01; got {eff_var}."
         assert warning is None
 
     def test_rmsle_zero_std_still_returns_raw(self):
@@ -133,9 +137,7 @@ class TestRMSLERawPassthrough:
 
     def test_rmsle_no_eda_key_still_raw(self):
         """State with no eda key at all: RMSLE still returns raw."""
-        eff_var, eff_margin, warning = _effective_thresholds(
-            _reg_config("rmsle"), {}
-        )
+        eff_var, eff_margin, warning = _effective_thresholds(_reg_config("rmsle"), {})
         assert eff_var == 0.01
         assert eff_margin == 0.001
         assert warning is None
@@ -150,9 +152,7 @@ class TestDegenerateTargetStd:
     """Zero target_std on non-RMSLE regression: fall back to raw, return warning."""
 
     def test_zero_std_returns_raw_thresholds(self):
-        eff_var, eff_margin, _ = _effective_thresholds(
-            _reg_config("rmse"), _state(0.0)
-        )
+        eff_var, eff_margin, _ = _effective_thresholds(_reg_config("rmse"), _state(0.0))
         assert eff_var == 0.01
         assert eff_margin == 0.001
 

@@ -45,6 +45,7 @@ def test_compute_shap_audit_monkeypatch(monkeypatch):
     assert len(result["fold_scores"]) == 3
     assert "ranking" in result and not result["ranking"].empty
 
+
 def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
     # Setup folders
     comp_dir = tmp_path / "competitions" / "testcomp"
@@ -53,26 +54,31 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
     monkeypatch.setenv("COMPETITION_SLUG", "testcomp")
     processed_dir = comp_dir / "data" / "processed"
     processed_dir.mkdir(parents=True)
-    
+
     # Save a training frame with 1 feature
-    df = pd.DataFrame({
-        "feat1": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
-        "Occurrence Status": [0, 1, 0, 1, 0, 1]
-    })
+    df = pd.DataFrame(
+        {
+            "feat1": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            "Occurrence Status": [0, 1, 0, 1, 0, 1],
+        }
+    )
     df.to_csv(processed_dir / "features_train.csv", index=False)
-    
+
     # Write skeleton SKILL_STATE.json
     import json
     from zindian.schemas import skill_state_skeleton
+
     state_path = comp_dir / "SKILL_STATE.json"
     state = skill_state_skeleton()
-    state.update({
-        "competition": "testcomp",
-        "dag_phase": "phase_3_features",
-        "last_updated": "2026-06-14T12:00:00Z"
-    })
+    state.update(
+        {
+            "competition": "testcomp",
+            "dag_phase": "phase_3_features",
+            "last_updated": "2026-06-14T12:00:00Z",
+        }
+    )
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    
+
     # Write skeleton challenge_config.json
     config_path = comp_dir / "challenge_config.json"
     config_data = {
@@ -94,7 +100,7 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
         "domain": "generic",
         "task_type": "classification",
         "target_col": "Occurrence Status",
-        "target_column": "Occurrence Status"
+        "target_column": "Occurrence Status",
     }
     config_path.write_text(json.dumps(config_data), encoding="utf-8")
 
@@ -107,7 +113,9 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
             self.reports_dir = comp_dir / "reports"
 
     monkeypatch.setattr(
-        shap_mod, "resolve_competition_paths", lambda require_competition=False: SimplePaths()
+        shap_mod,
+        "resolve_competition_paths",
+        lambda require_competition=False: SimplePaths(),
     )
 
     # Fake fold model to avoid lightgbm dependency errors
@@ -115,7 +123,7 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
         def predict_proba(self, X):
             probs = np.tile([0.3, 0.7], (X.shape[0], 1))
             return probs
-            
+
     monkeypatch.setattr(
         shap_mod, "_train_shap_fold_model", lambda a, b, c, d, seed: FakeModel()
     )
@@ -123,9 +131,9 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
     # Run
     res = shap_mod.run(n_splits=3, seed=42)
     assert res["shap_audit_skipped_reason"] == "single_feature"
-    
+
     # Verify State
     import json
+
     updated_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert updated_state.get("shap_audit_skipped_reason") == "single_feature"
-

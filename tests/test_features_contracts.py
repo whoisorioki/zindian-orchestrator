@@ -20,14 +20,14 @@ import pytest
 
 from zindian.skills.skill_07_features import build_hypothesis_features
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_frames():
     cols = ["col_a", "col_b", "col_c"]
     n = 4
     train = pd.DataFrame({c: np.linspace(0.1, 1.0, n) for c in cols})
-    test  = pd.DataFrame({c: np.linspace(1.0, 2.0, n) for c in cols})
+    test = pd.DataFrame({c: np.linspace(1.0, 2.0, n) for c in cols})
     return train, test
 
 
@@ -47,6 +47,7 @@ def _patch_config(monkeypatch, fe_cfg, target_col="y"):
     class _FakeCfg:
         def __init__(self):
             self._data = _data
+
         def get(self, key, default=None):
             return _data.get(key, default)
 
@@ -60,29 +61,31 @@ def _patch_config(monkeypatch, fe_cfg, target_col="y"):
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
+
 def test_build_hypothesis_features_adds_columns(monkeypatch):
     """Config-declared interaction and polynomial columns are added to both frames."""
     train, test = _make_frames()
 
     fe_cfg = {
-        "polynomials":           ["col_a"],
-        "interactions":          [["col_a", "col_b"], ["col_b", "col_c"]],
-        "ratios":                [["col_a", "col_c"]],
-        "conditions":            [{"column": "col_b", "operator": "lt",
-                                   "value": 0.5, "name": "col_b_low"}],
+        "polynomials": ["col_a"],
+        "interactions": [["col_a", "col_b"], ["col_b", "col_c"]],
+        "ratios": [["col_a", "col_c"]],
+        "conditions": [
+            {"column": "col_b", "operator": "lt", "value": 0.5, "name": "col_b_low"}
+        ],
         "target_dependent_bins": [],
-        "aliases":               {},
+        "aliases": {},
     }
     _patch_config(monkeypatch, fe_cfg)
 
     tr, te = build_hypothesis_features(train.copy(), test.copy(), mode="inference")
 
     expected = [
-        "col_a_sq",        # polynomial
-        "col_a_x_col_b",   # interaction
-        "col_b_x_col_c",   # interaction
-        "col_a_div_col_c", # ratio
-        "col_b_low",       # condition
+        "col_a_sq",  # polynomial
+        "col_a_x_col_b",  # interaction
+        "col_b_x_col_c",  # interaction
+        "col_a_div_col_c",  # ratio
+        "col_b_low",  # condition
     ]
     for col in expected:
         assert col in tr.columns, f"Missing in train: {col}"
@@ -95,10 +98,10 @@ def test_target_dependent_feature_modes(monkeypatch):
     target_array = np.array([1.0, 0.0, 1.0, 0.0])
 
     fe_cfg = {
-        "polynomials":           [],
-        "interactions":          [],
-        "ratios":                [],
-        "conditions":            [],
+        "polynomials": [],
+        "interactions": [],
+        "ratios": [],
+        "conditions": [],
         "target_dependent_bins": [
             {"column": "col_a", "q": 2, "name": "col_a_bin_mean"}
         ],
@@ -115,8 +118,11 @@ def test_target_dependent_feature_modes(monkeypatch):
     # 2. Correct computation in mode="cv" with train_idx
     train_idx = np.array([0, 1])
     tr_cv, te_cv = build_hypothesis_features(
-        train.copy(), test.copy(), mode="cv",
-        target_array=target_array, train_idx=train_idx,
+        train.copy(),
+        test.copy(),
+        mode="cv",
+        target_array=target_array,
+        train_idx=train_idx,
     )
     assert "col_a_bin_mean" in tr_cv.columns
     assert "col_a_bin_mean" in te_cv.columns
@@ -133,10 +139,17 @@ def test_no_config_returns_frames_unchanged(monkeypatch):
     """With an empty feature_engineering config, frames come back unmodified."""
     train, test = _make_frames()
 
-    _patch_config(monkeypatch, {
-        "polynomials": [], "interactions": [], "ratios": [],
-        "conditions": [], "target_dependent_bins": [], "aliases": {},
-    })
+    _patch_config(
+        monkeypatch,
+        {
+            "polynomials": [],
+            "interactions": [],
+            "ratios": [],
+            "conditions": [],
+            "target_dependent_bins": [],
+            "aliases": {},
+        },
+    )
 
     tr, te = build_hypothesis_features(train.copy(), test.copy(), mode="inference")
     assert list(tr.columns) == list(train.columns)
