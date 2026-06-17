@@ -3,23 +3,16 @@
     "md5_target_hash": null,
     "current_git_branch": "main",
     "anchor_git_branch": null,
-
     "anchor_oof_score": null,
-    "anchor_oof_score_augmented": null,
-    "anchor_oof_score_challenged": null,
     "anchor_lb_score": null,
-
-    "best_variant_oof_score": null,
-
     "feature_round": 0,
     "variants_tested": 0,
     "variants_passed": 0,
     "best_variant_this_round": null,
-
+    "best_variant_oof_score": null,
     "submissions_used_today": 0,
     "submissions_used_total": 0,
     "remaining_submissions": null,
-
     "dag_phase": "uninitialized",
     "human_gate_1_approved": false,
     "human_gate_3_approved": false,
@@ -27,12 +20,65 @@
     "human_gate_5_selection": [],
     "selected_submissions": [],
     "last_updated": null,
-
-    "_legacy_note": "Keys below are DEPRECATED as of v2.0.1. Use anchor_oof_score and best_variant_oof_score instead.",
-    "_legacy_anchor_oof_rmse": "DEPRECATED — use anchor_oof_score",
-    "_legacy_anchor_oof_f1": "DEPRECATED — use anchor_oof_score",
-    "_legacy_anchor_oof_auc": "DEPRECATED — use anchor_oof_score",
-    "_legacy_best_variant_oof_rmse": "DEPRECATED — use best_variant_oof_score",
-    "_legacy_best_variant_oof_f1": "DEPRECATED — use best_variant_oof_score",
-    "_legacy_best_variant_oof_auc": "DEPRECATED — use best_variant_oof_score"
+    "competition_slug": null,
+    "md5_train_file": null,
+    "md5_test_file": null,
+    "md5_sample_sub_file": null,
+    "anchor_rank": null,
+    "overfit_risk": false,
+    "compliance": {
+        "last_checked": null,
+        "total_discussions": 0,
+        "flagged_count": 0,
+        "flagged_titles": [],
+        "external_sources": [],
+        "agent_must_read": false
+    },
+    "legality_status": null,
+    "feature_policy_written": null,
+    "last_legality_checked": null,
+    "anchor_cv_strategy_id": null,
+    "cv_strategy": {
+        "type": null,
+        "n_splits": 5,
+        "shuffle": false,
+        "random_state": 42,
+        "group_col": null,
+        "selection_reason": null
+    },
+    "cv_strategy_type": null,
+    "cv_strategy_selection_reason": null,
+    "cv_group_col": null,
+    "last_submission_comment": null,
+    "last_submission_at": null,
+    "best_variant_threshold": 0.0,
+    "best_variant_features": null,
+    "last_oof_cv_strategy_id": null,
+    "eda": {
+        "eda_completed_at": null,
+        "dead_features": [],
+        "high_corr_pairs_count": 0,
+        "target_std": null,
+        "mnar_columns": [],
+        "mcar_columns": []
+    },
+    "metric_analysis": {
+        "fold_scores": [],
+        "fold_score_variance": null,
+        "recommended_threshold": 0.5,
+        "oof_vs_lb_delta": null
+    },
+    "shap_completed_at": null,
+    "shap_feature_count": null,
+    "shap_top_feature": null,
+    "shap_top_features": [],
+    "high_corr_pairs_count": 0,
+    "pruning_delta_f1": 0.0,
+    "pruning_pass": null,
+    "shap_oof_cv_strategy_id": null,
+    "reproducibility_audit": {
+        "success": null,
+        "timestamp": null
+    },
+    "metadata_warnings": []
 }

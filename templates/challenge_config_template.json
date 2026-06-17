@@ -1,6 +1,7 @@
 {
     "name": null,
     "slug": null,
+    "feature_extraction_plugin": null,
     "task_type": null,
     "metric": null,
     "metric_direction": null,
@@ -11,8 +12,9 @@
         "max": null
     },
     "use_probabilities": false,
+    "submission_log1p": false,
     "drift_threshold": 0.05,
-    "submission_format": null,
+    "submission_format": "csv",
     "submission_budget": {
         "total": 0,
         "daily": 0,
@@ -56,12 +58,30 @@
         "selection_reason": ""
     },
     "input_files": {
-        "train": "Training_Data.csv",
+        "train": "Train.csv",
         "test": "Test.csv",
         "sample": "SampleSubmission.csv"
     },
     "variants": [],
     "community_signals": [],
     "policy_filters": [],
-    "file_hashes": {}
+    "file_hashes": {},
+    "subtitle": null,
+    "end_time": null,
+    "max_team_size": null,
+    "code_review_hours": null,
+    "skills_required": [],
+    "banned_features": [],
+    "compliance_notes": [],
+    "populated_at": null,
+    "dead_features": [],
+    "noise_features": [],
+    "feature_engineering": {
+        "polynomials": [],
+        "interactions": [],
+        "ratios": [],
+        "conditions": [],
+        "target_dependent_bins": [],
+        "aliases": {}
+    }
 }
