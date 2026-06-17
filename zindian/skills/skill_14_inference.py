@@ -264,11 +264,21 @@ def run(
 
     if task_type == "regression":
         corrected = _enforce_submission_values(
-            corrected, target_column, task_type, use_probabilities, target_domain_bounds, submission_log1p
+            corrected,
+            target_column,
+            task_type,
+            use_probabilities,
+            target_domain_bounds,
+            submission_log1p,
         )
     else:
         corrected = _enforce_submission_values(
-            corrected, target_column, task_type, use_probabilities, target_domain_bounds, submission_log1p
+            corrected,
+            target_column,
+            task_type,
+            use_probabilities,
+            target_domain_bounds,
+            submission_log1p,
         )
 
     # Placeholder: future group-level smoothing or prevalence-correction hooks

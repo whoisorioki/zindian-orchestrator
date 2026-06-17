@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 
 try:
     from zindian.paths import resolve_competition_paths
+
     paths = resolve_competition_paths()
     COMP_DIR = paths.competition_dir or (ROOT / "competitions" / "ey-frogs")
 except Exception as e:
@@ -160,9 +161,15 @@ else:
     print(f"  remaining            : {remaining}")
     print(f"  selected_submissions : {selected}")
 
-    effective_anchor = anchor_score if anchor_score is not None else (anchor_rmse if anchor_rmse is not None else anchor_f1)
+    effective_anchor = (
+        anchor_score
+        if anchor_score is not None
+        else (anchor_rmse if anchor_rmse is not None else anchor_f1)
+    )
     if effective_anchor is None:
-        warn("anchor_oof_score (or legacy baseline keys) is null — Phase 2 not completed in state")
+        warn(
+            "anchor_oof_score (or legacy baseline keys) is null — Phase 2 not completed in state"
+        )
     if anchor_lb is None:
         warn("anchor_lb_score is null — update after Zindi scores submission")
     if not selected:
@@ -286,7 +293,9 @@ else:
     if ft_path.exists():
         target_col = config.get("target_col") or "Occurrence Status"
         train_non_target = [
-            c for c in ft.columns if c not in (target_col, "Target", "Occurrence Status")
+            c
+            for c in ft.columns
+            if c not in (target_col, "Target", "Occurrence Status")
         ]
         test_cols = list(ftest.columns)
         missing_in_test = set(train_non_target) - set(test_cols)
@@ -356,14 +365,19 @@ else:
                     max_val = bounds.get("max")
                     if config.get("submission_log1p", False):
                         import numpy as np
+
                         if min_val is not None:
                             min_val = float(np.log1p(min_val))
                         if max_val is not None:
                             max_val = float(np.log1p(max_val))
                     if min_val is not None and vals.min() < min_val:
-                        sub_errors.append(f"value below min bound {min_val}: {vals.min():.4f}")
+                        sub_errors.append(
+                            f"value below min bound {min_val}: {vals.min():.4f}"
+                        )
                     if max_val is not None and vals.max() > max_val:
-                        sub_errors.append(f"value above max bound {max_val}: {vals.max():.4f}")
+                        sub_errors.append(
+                            f"value above max bound {max_val}: {vals.max():.4f}"
+                        )
 
         if sub_errors:
             fail(f"{sub_path.name}: {'; '.join(sub_errors)}")
@@ -376,7 +390,9 @@ section("7. skill_08_anchor.py — Check 8 (use_probabilities aware?)")
 
 task_type = config.get("task_type", "classification")
 if task_type != "classification":
-    ok(f"Skipping Check 8 logic validation: active task type is '{task_type}' (not classification)")
+    ok(
+        f"Skipping Check 8 logic validation: active task type is '{task_type}' (not classification)"
+    )
 else:
     skill08 = SKILLS / "skill_08_anchor.py"
     if not skill08.exists():

@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 def get_current_utilization() -> Tuple[Optional[float], Optional[float]]:
     """Get current CPU and memory utilization.
-    
+
     Returns:
         Tuple of (cpu_percent, memory_percent)
     """

@@ -67,7 +67,6 @@ def validate_skill_state(obj: Any) -> Dict[str, Any]:
         obj["anchor_oof_score"] = None
     _require_keys(obj, SKILL_STATE_KEYS, path="SKILL_STATE")
 
-
     # Basic type checks (allow nulls where schema permits).
     for k in SKILL_STATE_KEYS:
         if k not in ("selected_submissions",):

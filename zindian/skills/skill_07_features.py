@@ -110,16 +110,21 @@ def build_hypothesis_features(
 
     try:
         from zindian.config import ChallengeConfig
+
         cfg = ChallengeConfig.load()._data
     except Exception:
         cfg = {}
 
-    fe_cfg = cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING) or DEFAULT_FEATURE_ENGINEERING
+    fe_cfg = (
+        cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING)
+        or DEFAULT_FEATURE_ENGINEERING
+    )
 
     # Per-variant sidecar override mechanism
     if variant_name is not None:
         import pathlib as _pathlib
         import json as _json
+
         _comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
         if _comp_slug:
             _variant_sidecar = (
@@ -181,7 +186,12 @@ def build_hypothesis_features(
     for pair in fe_cfg.get("interactions", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
-            if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
+            if (
+                c1 in train.columns
+                and c2 in train.columns
+                and c1 in test.columns
+                and c2 in test.columns
+            ):
                 out_col = f"{c1}_x_{c2}"
                 train[out_col] = train[c1].astype(float) * train[c2].astype(float)
                 test[out_col] = test[c1].astype(float) * test[c2].astype(float)
@@ -191,9 +201,16 @@ def build_hypothesis_features(
     for pair in fe_cfg.get("ratios", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
-            if c1 in train.columns and c2 in train.columns and c1 in test.columns and c2 in test.columns:
+            if (
+                c1 in train.columns
+                and c2 in train.columns
+                and c1 in test.columns
+                and c2 in test.columns
+            ):
                 out_col = f"{c1}_div_{c2}"
-                train[out_col] = train[c1].astype(float) / (train[c2].astype(float) + 1e-9)
+                train[out_col] = train[c1].astype(float) / (
+                    train[c2].astype(float) + 1e-9
+                )
                 test[out_col] = test[c1].astype(float) / (test[c2].astype(float) + 1e-9)
                 new_cols.append(out_col)
 
@@ -236,29 +253,44 @@ def build_hypothesis_features(
                     tr_targets = np.asarray(target_array)
 
                 try:
-                    _, bin_edges = pd.qcut(tr_vals, q=q_val, retbins=True, duplicates="drop")
+                    _, bin_edges = pd.qcut(
+                        tr_vals, q=q_val, retbins=True, duplicates="drop"
+                    )
                 except Exception:
                     unique_vals = np.unique(tr_vals)
                     if len(unique_vals) < 2:
-                        bin_edges = np.array([unique_vals[0] - 1.0, unique_vals[0] + 1.0])
+                        bin_edges = np.array(
+                            [unique_vals[0] - 1.0, unique_vals[0] + 1.0]
+                        )
                     else:
                         bin_edges = np.linspace(
-                            tr_vals.min(), tr_vals.max(),
-                            num=min(q_val + 1, len(unique_vals))
+                            tr_vals.min(),
+                            tr_vals.max(),
+                            num=min(q_val + 1, len(unique_vals)),
                         )
 
                 bin_edges = list(map(float, np.asarray(bin_edges).tolist()))
-                tr_bins = pd.cut(pd.Series(tr_vals), bins=bin_edges, include_lowest=True)
+                tr_bins = pd.cut(
+                    pd.Series(tr_vals), bins=bin_edges, include_lowest=True
+                )
                 bin_map = tr_bins.to_frame(name="bin")
                 bin_map["target"] = tr_targets
                 agg = bin_map.groupby("bin").target.mean()
-                global_mean = float(np.nanmean(tr_targets)) if len(tr_targets) > 0 else 0.0
+                global_mean = (
+                    float(np.nanmean(tr_targets)) if len(tr_targets) > 0 else 0.0
+                )
 
                 def map_to_mean(series_vals: np.ndarray) -> np.ndarray:
-                    cats = pd.cut(pd.Series(series_vals), bins=bin_edges, include_lowest=True)
+                    cats = pd.cut(
+                        pd.Series(series_vals), bins=bin_edges, include_lowest=True
+                    )
                     out = np.empty(len(series_vals), dtype=float)
                     for i, cat in enumerate(cats):
-                        out[i] = global_mean if pd.isna(cat) else float(agg.get(cat, global_mean))
+                        out[i] = (
+                            global_mean
+                            if pd.isna(cat)
+                            else float(agg.get(cat, global_mean))
+                        )
                     return out
 
                 train[out_col] = map_to_mean(train[col].to_numpy())
@@ -314,20 +346,23 @@ def train_variant(
     if anchor_f1 is not None:
         baseline_score = anchor_f1
     import random
+
     random.seed(seed)
     np.random.seed(seed)
 
     if target_col is None:
         if config is not None:
-            TARGET = (
-                config.get("target_column")
-                or config.get("target_col")
-                or "target"
-            )
+            TARGET = config.get("target_column") or config.get("target_col") or "target"
         else:
             TARGET = "target"
         if TARGET not in train.columns:
-            for candidate in ("target", "Occurrence Status", "label", "target_col", "y"):
+            for candidate in (
+                "target",
+                "Occurrence Status",
+                "label",
+                "target_col",
+                "y",
+            ):
                 if candidate in train.columns:
                     TARGET = candidate
                     break
@@ -427,19 +462,35 @@ def train_variant(
                     dtype=np.float64,
                 ),
             ),
-            regression_metric=config.get("metric") if task_type == "regression" and config is not None else None,
+            regression_metric=(
+                config.get("metric")
+                if task_type == "regression" and config is not None
+                else None
+            ),
         )
-        metric_name = config.get("metric", "f1_score") if config is not None else "f1_score"
+        metric_name = (
+            config.get("metric", "f1_score") if config is not None else "f1_score"
+        )
         if task_type == "regression":
             primary_key = f"oof_{metric_name}"
             oof_score = float(lgb_result.oof_rmse)
-            metric_direction = config.get("metric_direction", "minimize") if config is not None else "minimize"
-            delta = baseline_score - oof_score if metric_direction == "minimize" else oof_score - baseline_score
+            metric_direction = (
+                config.get("metric_direction", "minimize")
+                if config is not None
+                else "minimize"
+            )
+            delta = (
+                baseline_score - oof_score
+                if metric_direction == "minimize"
+                else oof_score - baseline_score
+            )
             gate = "PASS" if delta >= gate_margin else "PRUNE"
 
             print(f"\n  {'=' * 50}")
             print(f"  {variant_name}")
-            print(f"  OOF {metric_name.upper()} : {oof_score:.5f}  (baseline: {baseline_score:.5f})")
+            print(
+                f"  OOF {metric_name.upper()} : {oof_score:.5f}  (baseline: {baseline_score:.5f})"
+            )
             print(f"  Delta    : {delta:+.5f}  → {gate}")
         else:
             primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
@@ -449,9 +500,13 @@ def train_variant(
 
             print(f"\n  {'=' * 50}")
             print(f"  {variant_name}")
-            print(f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})")
+            print(
+                f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})"
+            )
             print(f"  Delta    : {delta:+.5f}  → {gate}")
-            print(f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})")
+            print(
+                f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})"
+            )
 
         ret = {
             "variant": variant_name,
@@ -487,6 +542,7 @@ def train_variant(
             X = np.asarray(train_fold[feature_cols].values, dtype=np.float64)
             X_test = np.asarray(test_fold[feature_cols].values, dtype=np.float64)
             from sklearn.preprocessing import StandardScaler
+
             scaler = StandardScaler()
             X = scaler.fit_transform(X)
             X_test = scaler.transform(X_test)
@@ -496,98 +552,186 @@ def train_variant(
 
         if variant_name in ("variant-13", "variant-27"):
             model = lgb.LGBMClassifier(
-                n_estimators=1000, learning_rate=0.02, num_leaves=63,
-                min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.1, reg_lambda=0.1, random_state=SEED, verbose=-1,
+                n_estimators=1000,
+                learning_rate=0.02,
+                num_leaves=63,
+                min_child_samples=20,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.1,
+                reg_lambda=0.1,
+                random_state=SEED,
+                verbose=-1,
             )
-            model.fit(X[tr_idx], y[tr_idx],
-                      eval_set=[(X[val_idx], y[val_idx])],
-                      callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)])
+            model.fit(
+                X[tr_idx],
+                y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
+            )
 
         elif variant_name in ("variant-14", "variant-28"):
             from sklearn.ensemble import RandomForestClassifier
+
             model = RandomForestClassifier(
-                n_estimators=500, max_depth=None, min_samples_leaf=2,
-                max_features="sqrt", random_state=SEED, n_jobs=-1,
+                n_estimators=500,
+                max_depth=None,
+                min_samples_leaf=2,
+                max_features="sqrt",
+                random_state=SEED,
+                n_jobs=-1,
             )
             model.fit(X[tr_idx], y[tr_idx])
 
         elif variant_name in ("variant-18", "variant-29"):
             from xgboost import XGBClassifier
+
             model = XGBClassifier(
-                n_estimators=500, learning_rate=0.05, max_depth=6,
-                subsample=0.8, colsample_bytree=0.8, use_label_encoder=False,
-                eval_metric="logloss", random_state=seed, verbosity=0, n_jobs=-1,
+                n_estimators=500,
+                learning_rate=0.05,
+                max_depth=6,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                use_label_encoder=False,
+                eval_metric="logloss",
+                random_state=seed,
+                verbosity=0,
+                n_jobs=-1,
             )
-            model.fit(X[tr_idx], y[tr_idx],
-                      eval_set=[(X[val_idx], y[val_idx])], verbose=False)
+            model.fit(
+                X[tr_idx], y[tr_idx], eval_set=[(X[val_idx], y[val_idx])], verbose=False
+            )
 
         elif variant_name == "variant-19":
             model = lgb.LGBMClassifier(
-                n_estimators=1000, learning_rate=0.02, num_leaves=127, max_depth=8,
-                min_child_samples=10, subsample=0.8, colsample_bytree=0.8,
-                reg_alpha=0.05, reg_lambda=0.05, random_state=seed, verbose=-1,
+                n_estimators=1000,
+                learning_rate=0.02,
+                num_leaves=127,
+                max_depth=8,
+                min_child_samples=10,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_alpha=0.05,
+                reg_lambda=0.05,
+                random_state=seed,
+                verbose=-1,
             )
-            model.fit(X[tr_idx], y[tr_idx],
-                      eval_set=[(X[val_idx], y[val_idx])],
-                      callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)])
+            model.fit(
+                X[tr_idx],
+                y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
+            )
 
         elif variant_name in ("variant-25", "variant-34"):
             from sklearn.ensemble import RandomForestClassifier
-            lgb_model = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
-                                            num_leaves=31, random_state=seed, verbose=-1)
-            lgb_model.fit(X[tr_idx], y[tr_idx],
-                          eval_set=[(X[val_idx], y[val_idx])],
-                          callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)])
-            rf_model = RandomForestClassifier(n_estimators=500, max_depth=None,
-                                              min_samples_leaf=2, max_features="sqrt",
-                                              random_state=seed, n_jobs=-1)
+
+            lgb_model = lgb.LGBMClassifier(
+                n_estimators=500,
+                learning_rate=0.05,
+                num_leaves=31,
+                random_state=seed,
+                verbose=-1,
+            )
+            lgb_model.fit(
+                X[tr_idx],
+                y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
+            )
+            rf_model = RandomForestClassifier(
+                n_estimators=500,
+                max_depth=None,
+                min_samples_leaf=2,
+                max_features="sqrt",
+                random_state=seed,
+                n_jobs=-1,
+            )
             rf_model.fit(X[tr_idx], y[tr_idx])
-            lgb_val  = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
-            rf_val   = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
+            lgb_val = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
+            rf_val = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
             lgb_test = np.asarray(lgb_model.predict_proba(X_test))[:, 1]
-            rf_test  = np.asarray(rf_model.predict_proba(X_test))[:, 1]
+            rf_test = np.asarray(rf_model.predict_proba(X_test))[:, 1]
             oof_probs[val_idx] = 0.5 * lgb_val + 0.5 * rf_val
             test_probs += (0.5 * lgb_test + 0.5 * rf_test) / n_splits
-            fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
+            fold_scores_list.append(
+                float(roc_auc_score(y[val_idx], oof_probs[val_idx]))
+            )
             print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
             continue
 
         elif variant_name == "variant-26":
-            model = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
-                                        num_leaves=31, random_state=seed, verbose=-1)
-            model.fit(X[tr_idx], y[tr_idx],
-                      eval_set=[(X[val_idx], y[val_idx])],
-                      callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)])
+            model = lgb.LGBMClassifier(
+                n_estimators=500,
+                learning_rate=0.05,
+                num_leaves=31,
+                random_state=seed,
+                verbose=-1,
+            )
+            model.fit(
+                X[tr_idx],
+                y[tr_idx],
+                eval_set=[(X[val_idx], y[val_idx])],
+                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
+            )
 
-        elif variant_name in ("variant-39", "variant-40", "variant-41",
-                               "variant-42", "variant-43"):
-            model = lgb.LGBMClassifier(boosting_type="dart", n_estimators=500,
-                                        learning_rate=0.05, num_leaves=31,
-                                        random_state=SEED, verbose=-1)
+        elif variant_name in (
+            "variant-39",
+            "variant-40",
+            "variant-41",
+            "variant-42",
+            "variant-43",
+        ):
+            model = lgb.LGBMClassifier(
+                boosting_type="dart",
+                n_estimators=500,
+                learning_rate=0.05,
+                num_leaves=31,
+                random_state=SEED,
+                verbose=-1,
+            )
             model.fit(X[tr_idx], y[tr_idx])
 
         elif variant_name == "variant-38":
             from sklearn.ensemble import RandomForestClassifier
             from xgboost import XGBClassifier
-            _lgb = lgb.LGBMClassifier(n_estimators=500, learning_rate=0.05,
-                                       num_leaves=31, random_state=SEED, verbose=-1)
-            _rf  = RandomForestClassifier(n_estimators=300, min_samples_leaf=2,
-                                           max_features="sqrt", random_state=SEED, n_jobs=-1)
-            _xgb = XGBClassifier(n_estimators=300, learning_rate=0.05, max_depth=6,
-                                   random_state=SEED, verbosity=0, eval_metric="logloss")
+
+            _lgb = lgb.LGBMClassifier(
+                n_estimators=500,
+                learning_rate=0.05,
+                num_leaves=31,
+                random_state=SEED,
+                verbose=-1,
+            )
+            _rf = RandomForestClassifier(
+                n_estimators=300,
+                min_samples_leaf=2,
+                max_features="sqrt",
+                random_state=SEED,
+                n_jobs=-1,
+            )
+            _xgb = XGBClassifier(
+                n_estimators=300,
+                learning_rate=0.05,
+                max_depth=6,
+                random_state=SEED,
+                verbosity=0,
+                eval_metric="logloss",
+            )
             _lgb.fit(X[tr_idx], y[tr_idx])
             _rf.fit(X[tr_idx], y[tr_idx])
             _xgb.fit(X[tr_idx], y[tr_idx])
-            lgb_val  = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
-            rf_val   = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
-            xgb_val  = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
+            lgb_val = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
+            rf_val = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
+            xgb_val = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
             lgb_test = np.asarray(_lgb.predict_proba(X_test))[:, 1]
-            rf_test  = np.asarray(_rf.predict_proba(X_test))[:, 1]
+            rf_test = np.asarray(_rf.predict_proba(X_test))[:, 1]
             xgb_test = np.asarray(_xgb.predict_proba(X_test))[:, 1]
             oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
             test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / n_splits
-            fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
+            fold_scores_list.append(
+                float(roc_auc_score(y[val_idx], oof_probs[val_idx]))
+            )
             print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
             continue
 
@@ -642,6 +786,7 @@ def write_round_report(
 
     try:
         from zindian.config import ChallengeConfig
+
         config = ChallengeConfig.load()
         task_type = config.get("task_type", "classification")
         metric_name = config.get("metric", "f1_score")
@@ -659,7 +804,8 @@ def write_round_report(
         primary_key = f"oof_{metric_name}"
         gate_op = "-" if metric_direction == "minimize" else "+"
         gate_threshold_val = (
-            baseline_score - gate_margin if metric_direction == "minimize"
+            baseline_score - gate_margin
+            if metric_direction == "minimize"
             else baseline_score + gate_margin
         )
         lines = [
@@ -670,7 +816,11 @@ def write_round_report(
             f"**Gate threshold**: baseline {gate_op} {gate_margin} = {gate_threshold_val:.5f}",
             f"**Variants tested**: {len(results)}",
             f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
-            "", "---", "", "## Results", "",
+            "",
+            "---",
+            "",
+            "## Results",
+            "",
             f"| Variant | Features | Delta | {metric_name.upper()} Score | Gate |",
             "|---|---|---|---|---|",
         ]
@@ -687,7 +837,9 @@ def write_round_report(
                 else max(passed, key=lambda r: r[primary_key])
             )
             lines += [
-                "", "## Best Variant This Round", "",
+                "",
+                "## Best Variant This Round",
+                "",
                 f"**{best['variant']}** — {metric_name.upper()} {best[primary_key]:.5f} (Δ {best['delta']:+.5f})",
             ]
     else:
@@ -700,7 +852,11 @@ def write_round_report(
             f"**Gate threshold**: baseline + {gate_margin} = {baseline_score + gate_margin:.5f}",
             f"**Variants tested**: {len(results)}",
             f"**Passed**: {len(passed)}  |  **Pruned**: {len(pruned)}",
-            "", "---", "", "## Results", "",
+            "",
+            "---",
+            "",
+            "## Results",
+            "",
             "| Variant | Features | ROC-AUC | Delta | F1-Score | Gate |",
             "|---|---|---|---|---|---|",
         ]
@@ -713,7 +869,9 @@ def write_round_report(
         if passed:
             best = max(passed, key=lambda r: r["oof_f1"])
             lines += [
-                "", "## Best Variant This Round", "",
+                "",
+                "## Best Variant This Round",
+                "",
                 f"**{best['variant']}** — F1 {best['oof_f1']:.5f} (Δ {best['delta']:+.5f})",
             ]
 
@@ -761,15 +919,13 @@ def run(
     variance_cfg = float(config.get("variance_gate_threshold", 0.01))
 
     if task_type == "regression" and metric_name_raw != "rmsle":
-        target_std_raw = float(
-            (state.get("eda", {}) or {}).get("target_std") or 0.0
-        )
+        target_std_raw = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
         if target_std_raw == 0.0:
             effective_gate_margin = gate_margin_cfg
             effective_variance_threshold = variance_cfg
         else:
             effective_gate_margin = gate_margin_cfg * target_std_raw
-            effective_variance_threshold = variance_cfg * (target_std_raw ** 2)
+            effective_variance_threshold = variance_cfg * (target_std_raw**2)
     else:
         # RMSLE (scale-invariant) or classification (bounded): use raw thresholds.
         effective_gate_margin = gate_margin_cfg
@@ -778,8 +934,10 @@ def run(
     target_col = config.get("target_column") or config.get("target_col") or "target"
     use_probabilities = config.get("use_probabilities", True)
     metric_name = config.get("metric", "f1_score")
-    primary_key = f"oof_{metric_name}" if task_type == "regression" else (
-        "oof_f1" if metric_name == "f1_score" else "oof_auc"
+    primary_key = (
+        f"oof_{metric_name}"
+        if task_type == "regression"
+        else ("oof_f1" if metric_name == "f1_score" else "oof_auc")
     )
 
     # Baseline precedence (safe lookups — keys may not exist on first run)
@@ -813,8 +971,12 @@ def run(
     if override_active:
         override_value = state.get("cv_strategy_override", {}).get("override_strategy")
         cv_strategy = (
-            override_value if isinstance(override_value, dict)
-            else {"type": override_value, "n_splits": config.get("cv_strategy", {}).get("n_splits", 5)}
+            override_value
+            if isinstance(override_value, dict)
+            else {
+                "type": override_value,
+                "n_splits": config.get("cv_strategy", {}).get("n_splits", 5),
+            }
         )
     else:
         cv_strategy = config.get("cv_strategy", {}) or {"n_splits": 5}
@@ -861,14 +1023,26 @@ def run(
     print("\n[B2] Building hypothesis-derived features")
     target_col_cfg = config.get("target_column") or config.get("target_col") or "target"
     if variant_name is None:
-        targ_arr = train_feat[target_col_cfg].to_numpy() if target_col_cfg in train_feat.columns else None
+        targ_arr = (
+            train_feat[target_col_cfg].to_numpy()
+            if target_col_cfg in train_feat.columns
+            else None
+        )
         train_feat, test_feat = build_hypothesis_features(
-            train_feat, test_feat, mode="inference", target_array=targ_arr, variant_name=variant_name
+            train_feat,
+            test_feat,
+            mode="inference",
+            target_array=targ_arr,
+            variant_name=variant_name,
         )
     else:
         # Structural features only — no target array to avoid leakage
         train_feat, test_feat = build_hypothesis_features(
-            train_feat, test_feat, mode="inference", target_array=None, variant_name=variant_name
+            train_feat,
+            test_feat,
+            mode="inference",
+            target_array=None,
+            variant_name=variant_name,
         )
     print("  ✓ Hypothesis-derived features built from config")
 
@@ -887,15 +1061,15 @@ def run(
 
     n_feats = len(all_features)
     half = n_feats // 2
-    first_half  = all_features[:half] if half > 0 else all_features
+    first_half = all_features[:half] if half > 0 else all_features
     second_half = all_features[half:] if half > 0 else all_features
-    even_feats  = [all_features[i] for i in range(0, n_feats, 2)]
+    even_feats = [all_features[i] for i in range(0, n_feats, 2)]
 
     # Read operator-declared dead/noise exclusions from config.
     # dead_features: zero-variance columns confirmed by EDA.
     # noise_features: statistically insignificant columns (confirmed by correlation audit).
     # Both lists are written to challenge_config.json by the operator — never hardcoded here.
-    _dead  = set(config.get("dead_features",  []) or [])
+    _dead = set(config.get("dead_features", []) or [])
     _noise = set(config.get("noise_features", []) or [])
     clean_features = [f for f in all_features if f not in _dead | _noise]
 
@@ -955,26 +1129,35 @@ def run(
     SEEDS = [SEED, SEED + 1, SEED + 2]
     print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
     import random
+
     seed_results = []
     for s in SEEDS:
         random.seed(s)
         np.random.seed(s)
         print(f"\n  -- Seed {s} --")
         r = train_variant(
-            train_feat, test_feat, feature_cols, variant_name,
-            baseline_score, anchor_auc, seed=s,
-            config=config, state=state, cv_strategy=cv_strategy,
-            target_col=target_col, task_type=task_type,
+            train_feat,
+            test_feat,
+            feature_cols,
+            variant_name,
+            baseline_score,
+            anchor_auc,
+            seed=s,
+            config=config,
+            state=state,
+            cv_strategy=cv_strategy,
+            target_col=target_col,
+            task_type=task_type,
             gate_margin=effective_gate_margin,
         )
         seed_results.append(r)
 
-    mean_auc   = float(np.mean([r["oof_auc"]   for r in seed_results]))
-    std_auc    = float(np.std([r["oof_auc"]    for r in seed_results]))
-    mean_f1    = float(np.mean([r["oof_f1"]    for r in seed_results]))
-    mean_thr   = float(np.mean([r["threshold"] for r in seed_results]))
-    avg_test   = np.mean([r["test_probs"] for r in seed_results], axis=0)
-    avg_oof    = np.mean([r["oof_probs"]  for r in seed_results], axis=0)
+    mean_auc = float(np.mean([r["oof_auc"] for r in seed_results]))
+    std_auc = float(np.std([r["oof_auc"] for r in seed_results]))
+    mean_f1 = float(np.mean([r["oof_f1"] for r in seed_results]))
+    mean_thr = float(np.mean([r["threshold"] for r in seed_results]))
+    avg_test = np.mean([r["test_probs"] for r in seed_results], axis=0)
+    avg_oof = np.mean([r["oof_probs"] for r in seed_results], axis=0)
 
     # For regression: score the averaged OOF array against ground truth.
     # Averaging per-seed scores first (then comparing against baseline) is
@@ -984,11 +1167,17 @@ def run(
         y_true_arr = np.asarray(train_feat[target_col].values, dtype=np.float64)
         metric = str(metric_name_raw).lower()
         if metric == "rmsle":
-            ensemble_score = float(np.sqrt(np.mean(
-                (np.log1p(y_true_arr) - np.log1p(np.clip(avg_oof, 0, None))) ** 2
-            )))
+            ensemble_score = float(
+                np.sqrt(
+                    np.mean(
+                        (np.log1p(y_true_arr) - np.log1p(np.clip(avg_oof, 0, None)))
+                        ** 2
+                    )
+                )
+            )
         else:
             from sklearn.metrics import root_mean_squared_error, mean_absolute_error
+
             if metric in ("root_mean_squared_error", "rmse"):
                 ensemble_score = float(root_mean_squared_error(y_true_arr, avg_oof))
             elif metric == "mean_absolute_error":
@@ -997,12 +1186,13 @@ def run(
                 ensemble_score = float(root_mean_squared_error(y_true_arr, avg_oof))
         metric_direction = config.get("metric_direction", "minimize")
         ensemble_delta = (
-            baseline_score - ensemble_score if metric_direction == "minimize"
+            baseline_score - ensemble_score
+            if metric_direction == "minimize"
             else ensemble_score - baseline_score
         )
         mean_metric = ensemble_score
-        std_metric  = float(np.std([r[primary_key] for r in seed_results]))
-        mean_delta  = ensemble_delta
+        std_metric = float(np.std([r[primary_key] for r in seed_results]))
+        mean_delta = ensemble_delta
         gate = "PASS" if ensemble_delta >= effective_gate_margin else "PRUNE"
     else:
         mean_delta = float(np.mean([r["delta"] for r in seed_results]))
@@ -1013,7 +1203,9 @@ def run(
     if task_type == "regression":
         print(f"  Mean {metric_name.upper()} : {mean_metric:.5f}  ±{std_metric:.5f}")
         print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
-        print(f"  Seed {metric_name.upper()}s: {[round(r[primary_key], 5) for r in seed_results]}")
+        print(
+            f"  Seed {metric_name.upper()}s: {[round(r[primary_key], 5) for r in seed_results]}"
+        )
     else:
         print(f"  Mean ROC-AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
         print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
@@ -1021,17 +1213,17 @@ def run(
         print(f"  Seed ROC-AUCs: {[round(r['oof_auc'], 5) for r in seed_results]}")
 
     result: dict[str, Any] = {
-        "variant":   variant_name,
-        "features":  len(feature_cols),
-        "oof_auc":   mean_auc,
-        "oof_f1":    mean_f1,
+        "variant": variant_name,
+        "features": len(feature_cols),
+        "oof_auc": mean_auc,
+        "oof_f1": mean_f1,
         "threshold": mean_thr,
-        "delta":     mean_delta,
-        "gate":      gate,
+        "delta": mean_delta,
+        "gate": gate,
         "oof_probs": avg_oof,
         "test_probs": avg_test,
         "seed_aucs": [r["oof_auc"] for r in seed_results],
-        "seed_std":  std_auc,
+        "seed_std": std_auc,
     }
     if task_type == "regression":
         result[primary_key] = mean_metric
@@ -1040,9 +1232,13 @@ def run(
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
-        oof_df = pd.DataFrame({id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])})
+        oof_df = pd.DataFrame(
+            {id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])}
+        )
         oof_df.to_csv(proc_dir / f"oof_{variant_name}.csv", index=False)
-        test_df_out = pd.DataFrame({id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])})
+        test_df_out = pd.DataFrame(
+            {id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])}
+        )
         test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
         print(f"  ✅ Saved OOF / test probs")
     except Exception as e:
@@ -1070,30 +1266,40 @@ def run(
 
     # ── Phase D: Update state ─────────────────────────────────
     variants_tested = int(state.get("variants_tested") or 0) + 1
-    variants_passed = int(state.get("variants_passed") or 0) + (1 if result["gate"] == "PASS" else 0)
+    variants_passed = int(state.get("variants_passed") or 0) + (
+        1 if result["gate"] == "PASS" else 0
+    )
     metric_direction = (
-        config.get("metric_direction", "minimize") if task_type == "regression"
+        config.get("metric_direction", "minimize")
+        if task_type == "regression"
         else config.get("metric_direction", "maximize")
     )
     best_score_raw = state.get(f"best_variant_{primary_key}")
-    is_improvement = best_score_raw is None or (
-        (float(best_score_raw) == 0.0) or (
-            result[primary_key] < float(best_score_raw) if metric_direction == "minimize"
-            else result[primary_key] > float(best_score_raw)
+    is_improvement = (
+        best_score_raw is None
+        or (
+            (float(best_score_raw) == 0.0)
+            or (
+                result[primary_key] < float(best_score_raw)
+                if metric_direction == "minimize"
+                else result[primary_key] > float(best_score_raw)
+            )
         )
-    ) if task_type == "regression" else True
+        if task_type == "regression"
+        else True
+    )
 
     update: dict[str, Any] = {
-        "dag_phase":       "phase_3_features",
+        "dag_phase": "phase_3_features",
         "variants_tested": variants_tested,
         "variants_passed": variants_passed,
-        "last_updated":    datetime.now(timezone.utc).isoformat(),
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }
     if result["gate"] == "PASS" and is_improvement:
-        update["best_variant_this_round"]      = variant_name
-        update[f"best_variant_{primary_key}"]  = result[primary_key]
-        update["best_variant_threshold"]       = result["threshold"]
-        update["best_variant_features"]        = len(feature_cols)
+        update["best_variant_this_round"] = variant_name
+        update[f"best_variant_{primary_key}"] = result[primary_key]
+        update["best_variant_threshold"] = result["threshold"]
+        update["best_variant_features"] = len(feature_cols)
 
     try:
         cv_id = resolve_active_cv_strategy_id(state, config._data)
@@ -1108,6 +1314,7 @@ def run(
     if task_type == "regression":
         try:
             from zindian.state import compute_secondary_metrics
+
             y_true = np.asarray(train_feat[target_col].values, dtype=np.float64)
             secondary_metrics = compute_secondary_metrics(y_true, result["oof_probs"])
         except Exception as exc:
@@ -1118,17 +1325,19 @@ def run(
             store,
             branch_name=(
                 variant_name + "_augmented"
-                if state.get("pseudo_label_result", {}).get("retraining_required", False)
+                if state.get("pseudo_label_result", {}).get(
+                    "retraining_required", False
+                )
                 else variant_name
             ),
             scores=np.asarray(result["oof_probs"], dtype=np.float64).tolist(),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=SEED,
             model_config={
-                "variant":       variant_name,
+                "variant": variant_name,
                 "feature_count": len(feature_cols),
-                "multi_seed":    [int(s) for s in SEEDS],
-                "fold_scores":   result.get("fold_scores"),
+                "multi_seed": [int(s) for s in SEEDS],
+                "fold_scores": result.get("fold_scores"),
             },
             secondary_metrics=secondary_metrics,
         )
@@ -1138,14 +1347,16 @@ def run(
 
     # ── Phase D: Write report ─────────────────────────────────
     round_num = int(state.get("feature_round") or 1)
-    write_round_report(paths, [result], round_num, baseline_score, effective_gate_margin)
+    write_round_report(
+        paths, [result], round_num, baseline_score, effective_gate_margin
+    )
 
     return {
-        "status":   result["gate"],
-        "variant":  variant_name,
-        "oof_auc":  result["oof_auc"],
-        "oof_f1":   result["oof_f1"],
-        "delta":    result["delta"],
+        "status": result["gate"],
+        "variant": variant_name,
+        "oof_auc": result["oof_auc"],
+        "oof_f1": result["oof_f1"],
+        "delta": result["delta"],
         "features": len(feature_cols),
     }
 
@@ -1160,6 +1371,6 @@ if __name__ == "__main__":
         elif arg == "--variant" and len(sys.argv) > sys.argv.index(arg) + 1:
             variant = sys.argv[sys.argv.index(arg) + 1]
     force_save = "--force-save" in sys.argv
-    fetch_opt  = "--fetch" in sys.argv
+    fetch_opt = "--fetch" in sys.argv
     result = run(variant_name=variant, force_save=force_save, fetch=fetch_opt)
     print(json.dumps({k: v for k, v in result.items() if k != "oof_probs"}, indent=2))

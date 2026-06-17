@@ -92,12 +92,12 @@ def get_disk_usage():
 
 def monitor_resources(output_path: Path = None):
     """Monitor and display current resource usage."""
-    
+
     metadata = get_instance_metadata()
     cpu = get_cpu_usage()
     memory = get_memory_usage()
     disk = get_disk_usage()
-    
+
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "instance": {
@@ -108,7 +108,7 @@ def monitor_resources(output_path: Path = None):
         "memory_utilization_percent": memory,
         "disk_usage": disk,
     }
-    
+
     # Display
     print("=" * 60)
     print("AWS SageMaker Resource Monitor")
@@ -118,24 +118,26 @@ def monitor_resources(output_path: Path = None):
     print(f"CPU: {cpu}%" if cpu else "CPU: N/A")
     print(f"Memory: {memory}%" if memory else "Memory: N/A")
     if disk:
-        print(f"Disk: {disk.get('used')} / {disk.get('total')} ({disk.get('use_percent')})")
+        print(
+            f"Disk: {disk.get('used')} / {disk.get('total')} ({disk.get('use_percent')})"
+        )
     print("=" * 60)
-    
+
     # Save if path provided
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(report, f, indent=2)
         print(f"✅ Saved to {output_path}")
-    
+
     return report
 
 
 if __name__ == "__main__":
     import sys
-    
+
     output = None
     if len(sys.argv) > 1:
         output = Path(sys.argv[1])
-    
+
     monitor_resources(output)

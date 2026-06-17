@@ -38,16 +38,19 @@ def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
                 else name
             )
             registry[name] = (desc, mod)
-            
+
             # Map prefix like 'skill_01' to registry
             import re
+
             m = re.match(r"^(skill_\d+)", name)
             if m:
                 prefix = m.group(1)
                 if prefix in registry:
                     # Resolve precedence for dual-file skills
                     existing_mod = registry[prefix][1]
-                    existing_name = existing_mod.__name__.split(".")[-1] if existing_mod else ""
+                    existing_name = (
+                        existing_mod.__name__.split(".")[-1] if existing_mod else ""
+                    )
                     if prefix == "skill_13" and name == "skill_13_oracle_fusion":
                         registry[prefix] = (desc, mod)
                     elif prefix == "skill_00" and name == "skill_00_zindi_monitor":
@@ -57,6 +60,7 @@ def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
         except Exception:
             registry[name] = (name, None)
             import re
+
             m = re.match(r"^(skill_\d+)", name)
             if m:
                 prefix = m.group(1)

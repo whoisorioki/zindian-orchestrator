@@ -229,7 +229,12 @@ def compute_oof_predictions(
         feature_cols,
         cv_strategy_id,
         feature_count,
-        [float(score) for score in getattr(result, "fold_scores", getattr(result, "fold_aucs", []))],
+        [
+            float(score)
+            for score in getattr(
+                result, "fold_scores", getattr(result, "fold_aucs", [])
+            )
+        ],
     )
 
 
@@ -488,7 +493,9 @@ def run(
         ).astype(int)
 
     if config.get("submission_log1p", False):
-        print("Applying log1p transformation to submission predictions per platform config")
+        print(
+            "Applying log1p transformation to submission predictions per platform config"
+        )
         predictions_to_save = np.log1p(predictions_to_save)
 
     save_submission(

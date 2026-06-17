@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 import sys
 import os
 
+
 # Dynamically resolve Zindian to bypass the local shadow package 'zindi/' in the repository root,
 # except when running offline/unit tests where the stub is required.
 def _get_zindian_class():
     if os.environ.get("ZINDIAN_DISABLE_NETWORK") == "1" or "pytest" in sys.modules:
         from zindi.user import Zindian
+
         return Zindian
 
     saved_path = list(sys.path)
@@ -22,13 +24,16 @@ def _get_zindian_class():
     sys.path = [p for p in sys.path if os.path.abspath(p) != repo_root and p != ""]
     try:
         from zindi.user import Zindian
+
         return Zindian
     except ImportError:
         sys.path = saved_path
         from zindi.user import Zindian
+
         return Zindian
     finally:
         sys.path = saved_path
+
 
 Zindian = _get_zindian_class()
 
@@ -95,7 +100,9 @@ class ZindiClient:
         # Select directly by challenge_id instead of the fragile fixed_index workaround
         res = self._user.select_a_challenge(challenge_id=challenge_id)
         if isinstance(res, dict) and res.get("challenge") is None:
-            raise ValueError(f"Competition '{challenge_id}' not found: {res.get('message')}")
+            raise ValueError(
+                f"Competition '{challenge_id}' not found: {res.get('message')}"
+            )
         self._challenge_id = self._user.which_challenge
         print(f"✅ Selected: {self._challenge_id}")
 

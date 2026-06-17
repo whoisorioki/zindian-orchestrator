@@ -208,12 +208,14 @@ def check_human_gate_keys(state: dict, cfg: dict) -> None:
 # DAG phase strings written by skill_08 and skill_11 that indicate the anchor
 # run should already have completed. anchor_oof_score being null in any of
 # these phases is anomalous and worth surfacing as a preflight warning.
-_POST_ANCHOR_PHASES = frozenset({
-    "phase_2_anchor_confirmed",   # written by skill_08
-    "phase_3_gate_blocked",       # written by skill_11 on gate fail
-    "phase_3_anchor_promoted",    # written by skill_11 on gate pass
-    "phase_3_features",           # written by skill_07 and skill_05
-})
+_POST_ANCHOR_PHASES = frozenset(
+    {
+        "phase_2_anchor_confirmed",  # written by skill_08
+        "phase_3_gate_blocked",  # written by skill_11 on gate fail
+        "phase_3_anchor_promoted",  # written by skill_11 on gate pass
+        "phase_3_features",  # written by skill_07 and skill_05
+    }
+)
 
 
 def check_anchor_oof_score(state: dict) -> None:
@@ -230,7 +232,6 @@ def check_anchor_oof_score(state: dict) -> None:
         )
     else:
         ok(f"anchor_oof_score present at dag_phase='{dag_phase}'")
-
 
 
 # ---------------------------------------------------------------------------
@@ -365,24 +366,47 @@ def scan_automl_imports(skills_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills_dir: Path, root: Path) -> None:
+def verify_section_1_assumptions(
+    comp_path: Path, cfg: dict, state: dict, skills_dir: Path, root: Path
+) -> None:
     """Programmatically verify SoT Section 1 Assumptions (A1-A10)."""
     print("\n--- Verifying Section 1 Assumptions ---")
-    
+
     # A1 - Single competition at a time
     import os
+
     env_slug = os.environ.get("COMPETITION_SLUG")
     cfg_slug = cfg.get("slug")
     if env_slug and cfg_slug and env_slug != cfg_slug:
-        fail(f"[A1 Scoping Violation] Environment slug '{env_slug}' does not match challenge config slug '{cfg_slug}'")
+        fail(
+            f"[A1 Scoping Violation] Environment slug '{env_slug}' does not match challenge config slug '{cfg_slug}'"
+        )
     ok("A1 check: COMPETITION_SLUG matches challenge_config slug")
 
     # A2 - Tabular data only
     INVALID_A2_EXTENSIONS = {
-        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp',
-        '.mp3', '.wav', '.flac', '.ogg', '.m4a',
-        '.mp4', '.avi', '.mkv', '.mov', '.webm',
-        '.gml', '.graphml', '.h5', '.hdf5', '.xml'
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".webp",
+        ".mp3",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".m4a",
+        ".mp4",
+        ".avi",
+        ".mkv",
+        ".mov",
+        ".webm",
+        ".gml",
+        ".graphml",
+        ".h5",
+        ".hdf5",
+        ".xml",
     }
     raw_dir = comp_path / "data" / "raw"
     if raw_dir.exists():
@@ -391,7 +415,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
             if p.is_file() and p.suffix.lower() in INVALID_A2_EXTENSIONS:
                 invalid_files.append(p.name)
         if invalid_files:
-            fail(f"[A2 Tabular Signature Violation] Non-tabular files found: {invalid_files}")
+            fail(
+                f"[A2 Tabular Signature Violation] Non-tabular files found: {invalid_files}"
+            )
     ok("A2 check: No non-tabular file extensions in raw data folder")
 
     # A3 - Zindi platform conventions
@@ -400,10 +426,18 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
         total_budget = budget.get("total")
     else:
         total_budget = budget
-    if total_budget is None or not isinstance(total_budget, (int, float)) or total_budget > 30:
-        fail(f"[A3 Zindi Limits Violation] submission_budget total must be <= 30, got {total_budget}")
+    if (
+        total_budget is None
+        or not isinstance(total_budget, (int, float))
+        or total_budget > 30
+    ):
+        fail(
+            f"[A3 Zindi Limits Violation] submission_budget total must be <= 30, got {total_budget}"
+        )
     if cfg.get("automl_permitted") is not False:
-        fail(f"[A3 Zindi Limits Violation] automl_permitted must be False, got {cfg.get('automl_permitted')}")
+        fail(
+            f"[A3 Zindi Limits Violation] automl_permitted must be False, got {cfg.get('automl_permitted')}"
+        )
     ok("A3 check: submission_budget <= 30 and automl_permitted is False")
 
     # A4 - Supervised learning only
@@ -412,34 +446,44 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
     if not train_path.exists():
         train_path = comp_path / "data" / "raw" / "Train.csv"
     if not train_path.exists():
-        fail(f"[A4 Target In Schema Violation] Raw training data not found at {train_path}")
+        fail(
+            f"[A4 Target In Schema Violation] Raw training data not found at {train_path}"
+        )
     target_col = cfg.get("target_col") or cfg.get("target_column")
     if not target_col:
-        fail("[A4 Target In Schema Violation] target_col is not defined in challenge_config.json")
-    
+        fail(
+            "[A4 Target In Schema Violation] target_col is not defined in challenge_config.json"
+        )
+
     header = []
     if train_path.suffix.lower() == ".csv":
         try:
             with open(train_path, "r", encoding="utf-8") as f:
                 first_line = f.readline()
-                header = [col.strip().strip('"').strip("'") for col in first_line.split(",")]
+                header = [
+                    col.strip().strip('"').strip("'") for col in first_line.split(",")
+                ]
         except Exception as e:
             fail(f"Failed to read CSV header from {train_path}: {e}")
     elif train_path.suffix.lower() == ".parquet":
         try:
             import pandas as pd
+
             df_sample = pd.read_parquet(train_path, columns=[])
             header = list(df_sample.columns)
         except Exception as e:
             try:
                 import pyarrow.parquet as pq
+
                 meta = pq.read_metadata(train_path)
                 header = meta.schema.names
             except Exception as e2:
                 fail(f"Failed to read Parquet header from {train_path}: {e2}")
     if header:
         if not any(h.lower() == target_col.lower() for h in header):
-            fail(f"[A4 Target In Schema Violation] Target column '{target_col}' not found in raw training columns: {header}")
+            fail(
+                f"[A4 Target In Schema Violation] Target column '{target_col}' not found in raw training columns: {header}"
+            )
     ok(f"A4 check: Target '{target_col}' is present in training data schema")
 
     # A5 - No hardcoded competition-specific values anywhere
@@ -459,7 +503,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
     violations_a5 = []
     for skill_file in sorted(skills_dir.glob("skill_*.py")):
         try:
-            tree = ast.parse(skill_file.read_text(encoding="utf-8"), filename=str(skill_file))
+            tree = ast.parse(
+                skill_file.read_text(encoding="utf-8"), filename=str(skill_file)
+            )
         except Exception as e:
             fail(f"Failed to parse AST of {skill_file.name}: {e}")
         for node in ast.walk(tree):
@@ -486,7 +532,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
         fail("zindian/state.py not found")
     state_content = state_py.read_text(encoding="utf-8")
     if "os.replace" not in state_content:
-        fail("[A6 Isolation Violation] Atomic state write mechanism (os.replace) not found in zindian/state.py")
+        fail(
+            "[A6 Isolation Violation] Atomic state write mechanism (os.replace) not found in zindian/state.py"
+        )
     ok("A6 check: Atomic state write mechanism present in state.py")
 
     # A7 - The OOF contract is universal
@@ -496,7 +544,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
         if isinstance(record, dict):
             cv_id = record.get("cv_strategy_id")
             if not cv_id:
-                fail(f"[A7 OOF contract Violation] '{k}' is missing 'cv_strategy_id' tag in state")
+                fail(
+                    f"[A7 OOF contract Violation] '{k}' is missing 'cv_strategy_id' tag in state"
+                )
     ok("A7 check: All OOF records carry a cv_strategy_id tag")
 
     # A8 - Spatial signals are group signals
@@ -505,15 +555,25 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
     if spatial.get("present", False) or spatial.get("group_col"):
         cv_type = cv_strategy.get("type")
         if cv_type != "GroupKFold":
-            fail(f"[A8 Spatial Route Violation] Spatial signal is present but cv_strategy.type is '{cv_type}', expected 'GroupKFold'")
+            fail(
+                f"[A8 Spatial Route Violation] Spatial signal is present but cv_strategy.type is '{cv_type}', expected 'GroupKFold'"
+            )
     ok("A8 check: Spatial structures route strictly to GroupKFold")
 
     # A9 - The research sidecar is non-blocking at every consumption point
-    unsafe_keys = {"sidecar_recommendations", "cv_strategy_override", "pseudo_label_result", "anchor_challenge", "eda"}
+    unsafe_keys = {
+        "sidecar_recommendations",
+        "cv_strategy_override",
+        "pseudo_label_result",
+        "anchor_challenge",
+        "eda",
+    }
     violations_a9 = []
     for skill_file in sorted(skills_dir.glob("skill_*.py")):
         try:
-            tree = ast.parse(skill_file.read_text(encoding="utf-8"), filename=str(skill_file))
+            tree = ast.parse(
+                skill_file.read_text(encoding="utf-8"), filename=str(skill_file)
+            )
         except Exception as e:
             fail(f"Failed to parse AST of {skill_file.name}: {e}")
         for node in ast.walk(tree):
@@ -523,7 +583,7 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
                     slice_val = node.slice.value
                 elif node.slice.__class__.__name__ == "Str":
                     slice_val = node.slice.s
-                elif isinstance(node.slice, ast.Index): # Python < 3.9
+                elif isinstance(node.slice, ast.Index):  # Python < 3.9
                     if isinstance(node.slice.value, ast.Constant):
                         slice_val = node.slice.value
                     elif node.slice.value.__class__.__name__ == "Str":
@@ -535,7 +595,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
     if violations_a9:
         for v in violations_a9:
             print(f"  VIOLATION: {v}")
-        fail(f"A9 Unsafe state key bracket access violations found: {len(violations_a9)}")
+        fail(
+            f"A9 Unsafe state key bracket access violations found: {len(violations_a9)}"
+        )
     ok("A9 check: All research sidecar / optional state reads use safe .get() patterns")
 
     # A10 - Python environment is stable and reproducible
@@ -543,7 +605,9 @@ def verify_section_1_assumptions(comp_path: Path, cfg: dict, state: dict, skills
     if req_txt.exists():
         content = req_txt.read_text(encoding="utf-8")
         if "autogenerated by pip-compile" not in content:
-            fail("[A10 Pip Signatures Violation] requirements.txt is missing the pip-compile autogenerated signature header")
+            fail(
+                "[A10 Pip Signatures Violation] requirements.txt is missing the pip-compile autogenerated signature header"
+            )
     else:
         fail("requirements.txt missing")
     ok("A10 check: requirements.txt has pip-compile signature header")

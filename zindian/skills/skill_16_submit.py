@@ -44,7 +44,9 @@ from zindian.ledger import Ledger
 
 class HardAbortException(RuntimeError):
     """Raised when the submission budget is exhausted."""
+
     pass
+
 
 # ── Value validation (mirrors skill_14 semantics) ─────────────────────────────
 
@@ -377,7 +379,9 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
         )
 
     cached_remaining_val = skill_state.get("remaining_submissions")
-    cached_remaining = int(cached_remaining_val) if cached_remaining_val is not None else 10
+    cached_remaining = (
+        int(cached_remaining_val) if cached_remaining_val is not None else 10
+    )
     used_today = int(skill_state.get("submissions_used_today") or 0)
     print(
         f"\nBudget (cached state): {cached_remaining} remaining | {used_today} used today"
@@ -396,7 +400,6 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
             "Explicit confirmation required before proceeding. "
             "Warning written to SKILL_STATE['budget_warning']."
         )
-
 
     best_auc = skill_state.get("anchor_oof_score")
     best_f1, metric_source = determine_submission_metrics(sub_path, skill_state)
@@ -511,7 +514,7 @@ Type YES to submit or NO to abort.
                 experiment_id=exp_id,
                 branch_name=git_branch,
                 public_score=result.get("public_score"),
-                my_rank=my_rank if 'my_rank' in locals() else None,
+                my_rank=my_rank if "my_rank" in locals() else None,
                 comment=comment,
             )
         print(f"✅ Recorded to ledger (experiment_id={exp_id})")

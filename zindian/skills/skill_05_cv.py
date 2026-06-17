@@ -111,7 +111,11 @@ def build_spatial_splits(
 
     print("\n  Geographic block distribution:")
     # Check if target is binary/categorical (for classification prevalence logging)
-    is_binary = task_type == "classification" and np.issubdtype(y.dtype, np.integer) and bool(set(np.unique(y)) <= {0, 1})
+    is_binary = (
+        task_type == "classification"
+        and np.issubdtype(y.dtype, np.integer)
+        and bool(set(np.unique(y)) <= {0, 1})
+    )
     for block_id in range(cluster_count):
         block_mask = geo_groups == block_id
         block_total = int(block_mask.sum())
@@ -353,7 +357,11 @@ def run(strategy: str = "compare") -> dict:
         if coords is not None and len(coords) >= N_SPLITS:
             try:
                 _splits, geo_groups = build_spatial_splits(
-                    X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS)), task_type=task_type
+                    X,
+                    y,
+                    coords,
+                    n_splits=int(decision.get("n_splits", N_SPLITS)),
+                    task_type=task_type,
                 )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
                 selected_type = "GroupKFold"

@@ -284,7 +284,9 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
         out = proc_dir / f"calib_{test_path.name}"
         mapping = {test_path.name: str(out)}
         if not dry_run:
-            pd.DataFrame({id_col: df[id_col], pcol: calibrated}).to_csv(out, index=False)
+            pd.DataFrame({id_col: df[id_col], pcol: calibrated}).to_csv(
+                out, index=False
+            )
 
     if not dry_run:
         state_patch = {

@@ -53,6 +53,7 @@ def extract_config(data: dict, slug: str) -> dict:
     if metric is None and rules_text:
         text_lower = rules_text.lower()
         import re
+
         metric_patterns = [
             r"evaluation metric.*?is\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
             r"scored using\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
@@ -75,7 +76,7 @@ def extract_config(data: dict, slug: str) -> dict:
                 elif "accuracy" in raw:
                     metric = "accuracy"
                 break
-        
+
         if not metric:
             if "f1 score" in text_lower or "f-1 score" in text_lower:
                 metric = "f1_score"
@@ -116,11 +117,15 @@ def extract_config(data: dict, slug: str) -> dict:
     if use_probabilities is None:
         if rules_text:
             text_lower = rules_text.lower()
-            if "do not set thresholds" in text_lower or "raw probabilities" in text_lower or "if the error metric requires probabilities" in text_lower:
+            if (
+                "do not set thresholds" in text_lower
+                or "raw probabilities" in text_lower
+                or "if the error metric requires probabilities" in text_lower
+            ):
                 use_probabilities = True
             elif "hard labels" in text_lower or "0/1 labels" in text_lower:
                 use_probabilities = False
-        
+
         if use_probabilities is None and metric is not None:
             m = str(metric).lower()
             if m in ("log_loss", "logloss", "cross_entropy", "auc"):
@@ -129,7 +134,6 @@ def extract_config(data: dict, slug: str) -> dict:
                 use_probabilities = False
             else:
                 use_probabilities = None
-
 
     # Limits and splits: take from API when provided, otherwise leave null.
     daily_limit = data.get("daily_limit")
@@ -292,17 +296,64 @@ def extract_config(data: dict, slug: str) -> dict:
 
     if config.get("use_probabilities") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if any(x in m for x in ("log_loss", "logloss", "cross_entropy", "auc", "area_under_curve")):
+        if any(
+            x in m
+            for x in ("log_loss", "logloss", "cross_entropy", "auc", "area_under_curve")
+        ):
             config["use_probabilities"] = True
-        elif any(x in m for x in ("f1", "accuracy", "rmse", "mae", "root_mean_squared", "mean_absolute", "bleu", "rmsle", "mse", "mape", "r2", "r_squared")):
+        elif any(
+            x in m
+            for x in (
+                "f1",
+                "accuracy",
+                "rmse",
+                "mae",
+                "root_mean_squared",
+                "mean_absolute",
+                "bleu",
+                "rmsle",
+                "mse",
+                "mape",
+                "r2",
+                "r_squared",
+            )
+        ):
             config["use_probabilities"] = False
 
     # Derive metric_direction from metric when not provided
     if config.get("metric_direction") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if any(x in m for x in ("f1", "accuracy", "auc", "area_under_curve", "bleu", "straight_accuracy", "r2", "r_squared", "score")):
+        if any(
+            x in m
+            for x in (
+                "f1",
+                "accuracy",
+                "auc",
+                "area_under_curve",
+                "bleu",
+                "straight_accuracy",
+                "r2",
+                "r_squared",
+                "score",
+            )
+        ):
             config["metric_direction"] = "maximize"
-        elif any(x in m for x in ("rmse", "mae", "log_loss", "logloss", "cross_entropy", "root_mean_squared", "mean_absolute", "rmsle", "mse", "mape", "loss")):
+        elif any(
+            x in m
+            for x in (
+                "rmse",
+                "mae",
+                "log_loss",
+                "logloss",
+                "cross_entropy",
+                "root_mean_squared",
+                "mean_absolute",
+                "rmsle",
+                "mse",
+                "mape",
+                "loss",
+            )
+        ):
             config["metric_direction"] = "minimize"
         else:
             config["metric_direction"] = None
@@ -373,10 +424,12 @@ def run(
 ) -> dict:
     if slug is None:
         import os
+
         slug = os.environ.get("COMPETITION_SLUG")
         if not slug:
             try:
                 from zindian.config import ChallengeConfig
+
                 slug = ChallengeConfig.load().slug
             except Exception:
                 pass
@@ -387,6 +440,7 @@ def run(
 
     if headers is None:
         from zindian.zindi_monitor_core import _get_headers
+
         headers = _get_headers()
 
     paths = resolve_competition_paths(slug=slug)

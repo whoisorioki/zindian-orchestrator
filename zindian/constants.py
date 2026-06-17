@@ -23,5 +23,3 @@ TC_VARIABLES = [
 
 TC_STATS = ["mean", "std", "min", "max"]
 TC_BAND_NAMES = [f"{v}_{s}" for v in TC_VARIABLES for s in TC_STATS]
-
-

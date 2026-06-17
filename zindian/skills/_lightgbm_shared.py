@@ -119,15 +119,17 @@ def train_lightgbm_cv(
     }
 
     # If per_fold_feature_fn is provided, X and X_test will be computed inside the fold loop
-    
+
     # Read variant model_override from sidecar if present
     _variant_objective = None
     _variant_max_delta = None
     if variant_name is not None:
         import pathlib as _pathlib
         import json as _json
+
         try:
             from zindian.config import ChallengeConfig
+
             _cfg = ChallengeConfig.load()._data
             _comp_slug = _cfg.get("slug") or _cfg.get("competition_slug") or ""
             if _comp_slug:
@@ -145,7 +147,7 @@ def train_lightgbm_cv(
                     _variant_max_delta = _model_override.get("max_delta_step")
         except Exception:
             pass
-    
+
     if task_type == "regression":
         y = np.asarray(train[target_col].values, dtype=np.float64)
         # Resolve target transformation based on regression metric (SoT v2.2)
@@ -175,11 +177,13 @@ def train_lightgbm_cv(
         X_test = np.zeros((len(test), len(feature_cols)), dtype=np.float64)
     if task_type == "regression":
         if _variant_objective == "poisson":
-            lgb_params.update({
-                "objective": "poisson",
-                "metric": "rmse",
-                "max_delta_step": _variant_max_delta or 0.7,
-            })
+            lgb_params.update(
+                {
+                    "objective": "poisson",
+                    "metric": "rmse",
+                    "max_delta_step": _variant_max_delta or 0.7,
+                }
+            )
         else:
             lgb_params.update({"objective": "regression", "metric": "rmse"})
     else:
@@ -320,7 +324,11 @@ def train_lightgbm_cv(
         if task_type == "regression":
             if use_log1p:
                 # Compute RMSLE on back-transformed (original-space) predictions
-                fold_rmsle = float(np.sqrt(np.mean((np.log1p(y[val_idx]) - np.log1p(val_pred_final)) ** 2)))
+                fold_rmsle = float(
+                    np.sqrt(
+                        np.mean((np.log1p(y[val_idx]) - np.log1p(val_pred_final)) ** 2)
+                    )
+                )
                 fold_scores.append(fold_rmsle)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmsle={fold_rmsle:.6f}")
             else:

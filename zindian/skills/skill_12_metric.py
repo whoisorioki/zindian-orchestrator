@@ -107,6 +107,7 @@ def run(
     if config is None:
         try:
             from zindian.config import ChallengeConfig
+
             config_obj = ChallengeConfig.load()
             metric_key = str(config_obj.get("metric", "f1")).lower()
         except Exception:

@@ -672,7 +672,7 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
 
     clean = []
     if metric_direction == "minimize":
-        best_compliant = float('inf')
+        best_compliant = float("inf")
     else:
         best_compliant = 0.0
 
@@ -712,7 +712,7 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
             if score > best_compliant:
                 best_compliant = score
 
-    if best_compliant == float('inf'):
+    if best_compliant == float("inf"):
         best_compliant = 0.0
 
     chosen = [s for s in clean if s["chosen"]]
@@ -741,6 +741,7 @@ def write_compliance_log(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     try:
         from zindian.config import ChallengeConfig
+
         config = ChallengeConfig.load()
         metric_name = (config.get("metric") or "f1").upper()
     except Exception:
@@ -900,12 +901,12 @@ def update_state(
     # Calculate overfit_risk using direction-aware drift check
     try:
         from zindian.config import ChallengeConfig
+
         config_obj = ChallengeConfig.load()
         metric_direction = str(config_obj.get("metric_direction", "maximize")).lower()
-        drift_threshold = float(state.get(
-            "drift_threshold",
-            config_obj.get("drift_threshold", 0.05)
-        ))
+        drift_threshold = float(
+            state.get("drift_threshold", config_obj.get("drift_threshold", 0.05))
+        )
 
         # Get anchor OOF score from generic key (fallback to metric-specific keys)
         oof_score = state.get("anchor_oof_score")
@@ -920,34 +921,37 @@ def update_state(
                 overfit_risk = delta > drift_threshold
             else:
                 overfit_risk = -delta > drift_threshold
-            print(f"  [skill_00] Drift check: OOF={oof_score:.5f}, LB={lb_score:.5f}, Delta={delta:.5f}, Threshold={drift_threshold:.5f} -> overfit_risk={overfit_risk}")
+            print(
+                f"  [skill_00] Drift check: OOF={oof_score:.5f}, LB={lb_score:.5f}, Delta={delta:.5f}, Threshold={drift_threshold:.5f} -> overfit_risk={overfit_risk}"
+            )
         else:
             overfit_risk = False
     except Exception as exc:
         print(f"  ⚠️ Failed to calculate overfit_risk: {exc}")
         overfit_risk = False
 
+    # Build community_signals from flagged discussions
+    community_signals = []
+    for f in flagged:
+        community_signals.append(
+            {
+                "title": f["title"],
+                "published": f["published"],
+                "url": f["url"],
+                "classification": f.get("classification"),
+                "external_sources": f.get("external_sources", []),
+                "resolved_by_organizer": f.get("resolved_by_organizer", False),
+            }
+        )
+
     store.update(
         anchor_rank=lb_intel.get("my_rank"),
         remaining_submissions=lb_intel.get("remaining"),
         overfit_risk=overfit_risk,
-        compliance={
-            "last_checked": datetime.now(timezone.utc).isoformat(),
-            "total_discussions": len(all_discussions),
-            "flagged_count": len(flagged),
-            "flagged_titles": [f["title"] for f in flagged],
-            "external_sources": list(
-                set(src for f in flagged for src in f.get("external_sources", []))
-            ),
-            "agent_must_read": any(
-                not f.get("superseded", False)
-                and f.get("classification") in ("ban", "clarify")
-                for f in flagged
-            ),
-        },
+        community_signals=community_signals,
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print("  ✅ SKILL_STATE.json updated")
+    print("  ✅ SKILL_STATE.json updated (community_signals only, config frozen)")
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -1089,6 +1093,7 @@ def run(
         flagged, all_discussions, comp_intel, lb_intel, sub_intel, slug, paths
     )
     write_monitor_json(comp_intel, lb_intel, sub_intel, flagged, paths)
+    # Only write community_signals to SKILL_STATE.json (config frozen post-Phase 1)
     update_state(comp_intel, lb_intel, sub_intel, flagged, all_discussions, paths)
 
     # ── Summary ───────────────────────────────────────────────

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import duckdb
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,21 @@ class Ledger:
 
     def _ensure_schema(self) -> None:
         """Create tables if they don't exist."""
+        # Create sequences first
+        try:
+            self.conn.execute(
+                "CREATE SEQUENCE IF NOT EXISTS experiments_id_seq START 1"
+            )
+        except Exception:
+            pass
+
+        try:
+            self.conn.execute(
+                "CREATE SEQUENCE IF NOT EXISTS submissions_id_seq START 1"
+            )
+        except Exception:
+            pass
+
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS experiments (
                 experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
@@ -54,17 +70,6 @@ class Ledger:
                 FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
             )
         """)
-
-        # Create sequences if they don't exist
-        try:
-            self.conn.execute("CREATE SEQUENCE experiments_id_seq")
-        except Exception:
-            pass
-
-        try:
-            self.conn.execute("CREATE SEQUENCE submissions_id_seq")
-        except Exception:
-            pass
 
         self.conn.commit()
 
@@ -175,9 +180,19 @@ class Ledger:
         return dict(zip(cols, row))
 
     def get_best_experiment(self) -> Optional[Dict[str, Any]]:
-        """Get experiment with lowest OOF RMSE."""
+        """Get experiment with best OOF score per config metric_direction."""
+        # Load config to determine metric direction
+        config_path = (
+            resolve_competition_paths().competition_dir / "challenge_config.json"
+        )
+        with open(config_path) as f:
+            config = json.load(f)
+
+        metric_direction = config.get("metric_direction", "minimize")
+        order = "ASC" if metric_direction == "minimize" else "DESC"
+
         cursor = self.conn.execute(
-            "SELECT * FROM experiments WHERE oof_rmse IS NOT NULL ORDER BY oof_rmse ASC LIMIT 1"
+            f"SELECT * FROM experiments WHERE oof_rmse IS NOT NULL ORDER BY oof_rmse {order} LIMIT 1"
         )
         row = cursor.fetchone()
         if row is None:
@@ -252,7 +267,17 @@ class Ledger:
 
     def close(self) -> None:
         """Close database connection."""
+        try:
+            self.conn.execute("CHECKPOINT")
+        except Exception:
+            pass
         self.conn.close()
+
+    def __enter__(self) -> "Ledger":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
     def __del__(self):
         """Ensure connection is closed on object deletion."""

@@ -34,7 +34,8 @@ def resolve_competition_paths(
     3) Auto-detect when exactly one competitions/*/SKILL_STATE.json exists
     4) Legacy root fallback (unless require_competition=True)
     """
-    root = Path.cwd()
+    # Use this file's location to find repo root, not cwd()
+    root = Path(__file__).resolve().parent.parent
     # Accept both COMPETITION_SLUG (canonical) and ZINDIAN_COMPETITION_SLUG (alias).
     # The alias is widely used in run commands and diagnostic scripts throughout
     # this repository. Both resolve identically — COMPETITION_SLUG takes precedence.
@@ -49,6 +50,11 @@ def resolve_competition_paths(
         candidate = root / "competitions" / selected_slug
         if candidate.exists():
             comp_dir = candidate
+        else:
+            raise FileNotFoundError(
+                f"Competition '{selected_slug}' not found at {candidate}. "
+                f"Available: {[p.name for p in (root / 'competitions').glob('*') if p.is_dir()]}"
+            )
 
     if comp_dir is None:
         matches = list((root / "competitions").glob("*/SKILL_STATE.json"))

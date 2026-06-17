@@ -58,8 +58,6 @@ def _load_train_frame(paths: CompetitionPaths) -> pd.DataFrame:
     raise FileNotFoundError(f"Could not find {full}, {processed} or {fallback}")
 
 
-
-
 def _feature_columns(frame: pd.DataFrame, target: str) -> list[str]:
     """
     Return feature columns from frame, excluding target, id, and coordinate columns.
@@ -68,13 +66,11 @@ def _feature_columns(frame: pd.DataFrame, target: str) -> list[str]:
     try:
         config = ChallengeConfig.load()
         cols_cfg = config.get("columns", {}) or {}
-        id_col   = (
-            config.get("id_col")
-            or config.get("id_column")
-            or cols_cfg.get("id", "ID")
+        id_col = (
+            config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
         )
-        lat_col  = cols_cfg.get("latitude", "Latitude")
-        lon_col  = cols_cfg.get("longitude", "Longitude")
+        lat_col = cols_cfg.get("latitude", "Latitude")
+        lon_col = cols_cfg.get("longitude", "Longitude")
     except Exception:
         id_col, lat_col, lon_col = "ID", "Latitude", "Longitude"
 
@@ -101,6 +97,7 @@ def _train_shap_fold_model(
 ) -> lgb.LGBMClassifier | lgb.LGBMRegressor:
     try:
         from zindian.config import ChallengeConfig
+
         config = ChallengeConfig.load()
         task_type = config.get("task_type", "classification")
     except Exception:
@@ -173,11 +170,14 @@ def _compute_shap_audit(
             val_preds = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
             oof_probs[val_idx] = val_preds
             from sklearn.metrics import root_mean_squared_error
+
             fold_rmse = float(root_mean_squared_error(y[val_idx], val_preds))
             fold_scores.append(fold_rmse)
             print(f"  Fold {fold_idx}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
-            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[:, 1]
+            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[
+                :, 1
+            ]
             oof_probs[val_idx] = val_probs
             fold_auc = float(roc_auc_score(y[val_idx], val_probs))
             fold_scores.append(fold_auc)
@@ -205,6 +205,7 @@ def _compute_shap_audit(
 
     if task_type == "regression":
         from sklearn.metrics import root_mean_squared_error
+
         oof_rmse = float(root_mean_squared_error(y, oof_probs))
         return {
             "oof_probs": oof_probs,
@@ -297,7 +298,9 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
     if not target:
         raise ValueError("target_col not configured in challenge_config.json")
     if target not in frame.columns:
-        raise ValueError(f"Target column '{target}' not found in training features columns")
+        raise ValueError(
+            f"Target column '{target}' not found in training features columns"
+        )
     feature_cols = _feature_columns(frame, target)
 
     print(f"Competition      : {config.slug}")
@@ -321,13 +324,19 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         oof_probs = np.zeros(len(frame), dtype=np.float64)
         for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y), start=1):
             model = _train_shap_fold_model(
-                X[train_idx], y[train_idx], X[val_idx], y[val_idx], seed=(seed or get_seed()) + fold_idx
+                X[train_idx],
+                y[train_idx],
+                X[val_idx],
+                y[val_idx],
+                seed=(seed or get_seed()) + fold_idx,
             )
             if task_type == "regression":
                 val_preds = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
                 oof_probs[val_idx] = val_preds
             else:
-                val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[:, 1]
+                val_probs = np.asarray(
+                    model.predict_proba(X[val_idx]), dtype=np.float64
+                )[:, 1]
                 oof_probs[val_idx] = val_probs
 
         state_store = SkillStateStore(paths.state_path)
@@ -371,10 +380,12 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
                 "oof_f1": 0.0,
                 "threshold": 0.5,
                 "fold_scores": [0.5] * n_splits,
-                "ranking": pd.DataFrame({"feature": feature_cols, "mean_abs_shap": [0.0]}),
+                "ranking": pd.DataFrame(
+                    {"feature": feature_cols, "mean_abs_shap": [0.0]}
+                ),
                 "top15_share": 1.0,
                 "tail_share": 0.0,
-            }
+            },
         }
 
     print("Training governed SHAP audit…")
@@ -441,8 +452,12 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
             "correlated_pairs": pruning["correlated_pairs"],
             "dropped_features": pruning["drop_features"],
             "pruned_feature_count": len(pruning["pruned_features"]),
-            "full_oof_f1": full_cv.oof_rmse if task_type == "regression" else full_cv.oof_f1,
-            "pruned_oof_f1": pruned_cv.oof_rmse if task_type == "regression" else pruned_cv.oof_f1,
+            "full_oof_f1": (
+                full_cv.oof_rmse if task_type == "regression" else full_cv.oof_f1
+            ),
+            "pruned_oof_f1": (
+                pruned_cv.oof_rmse if task_type == "regression" else pruned_cv.oof_f1
+            ),
             "delta_f1": pruning_delta,
             "gate_pass": pruning_pass,
         },

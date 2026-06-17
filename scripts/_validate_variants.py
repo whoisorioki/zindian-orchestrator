@@ -4,8 +4,10 @@ Checks A5 compliance, target-leak absence, and test-frame completeness.
 Run from repo root:
     python scripts/_validate_variants.py
 """
+
 import os
 import sys
+
 sys.path.insert(0, ".")
 os.environ["ZINDIAN_COMPETITION_SLUG"] = (
     "june-study-jam-series-transaction-volume-forecasting-challenge"
@@ -19,14 +21,14 @@ paths = resolve_competition_paths()
 config = ChallengeConfig.load()
 
 train_feat = pd.read_csv(paths.data_processed_dir / "features_train.csv")
-test_feat  = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+test_feat = pd.read_csv(paths.data_processed_dir / "features_test.csv")
 
 target_col = config.get("target_col") or config.get("target_column") or "target"
-id_col     = config.get("id_col") or "ID"
-DROP       = {id_col, target_col, "Latitude", "Longitude", "ID", "target"}
+id_col = config.get("id_col") or "ID"
+DROP = {id_col, target_col, "Latitude", "Longitude", "ID", "target"}
 all_features = [c for c in train_feat.columns if c not in DROP and c != target_col]
 
-_dead  = set(config.get("dead_features",  []) or [])
+_dead = set(config.get("dead_features", []) or [])
 _noise = set(config.get("noise_features", []) or [])
 _excluded = _dead | _noise
 clean_features = [f for f in all_features if f not in _excluded]
@@ -76,11 +78,15 @@ test_copy = test_feat.copy()
 for pair in _interaction_pairs:
     if len(pair) == 2 and pair[0] in test_copy.columns and pair[1] in test_copy.columns:
         out = f"{pair[0]}_x_{pair[1]}"
-        test_copy[out] = test_copy[pair[0]].astype(float) * test_copy[pair[1]].astype(float)
+        test_copy[out] = test_copy[pair[0]].astype(float) * test_copy[pair[1]].astype(
+            float
+        )
 
 missing_in_test = [f for f in v11 if f not in test_copy.columns]
 if missing_in_test:
-    errors.append(f"Columns missing from test after interaction build: {missing_in_test}")
+    errors.append(
+        f"Columns missing from test after interaction build: {missing_in_test}"
+    )
 
 # Verify no dead/noise features leaked back in
 for f in v10 + v11:
