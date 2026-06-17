@@ -91,6 +91,7 @@ def compute_oof_predictions(
     state: dict | None = None,
     n_splits: int = 5,
     random_seed: int | None = None,
+    variant_name: str | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -363,6 +364,7 @@ def run(
             state=state,
             n_splits=n_splits,
             random_seed=random_seed,
+            variant_name=variant_name,
         )
         if len(result) >= 11:
             (
