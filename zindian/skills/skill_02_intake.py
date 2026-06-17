@@ -5,6 +5,7 @@ with all rules, limits, and constraints extracted from the response.
 Must run after Skill 00 (compliance check).
 """
 
+import tabula.skill_state_autopatch  # noqa
 import os
 import json
 import requests
@@ -52,6 +53,7 @@ def extract_config(data: dict, slug: str) -> dict:
     if metric is None and rules_text:
         text_lower = rules_text.lower()
         import re
+
         metric_patterns = [
             r"evaluation metric.*?is\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
             r"scored using\s+([a-z0-9_ ]+score|rmse|mae|auc|accuracy|log.?loss)",
@@ -74,7 +76,7 @@ def extract_config(data: dict, slug: str) -> dict:
                 elif "accuracy" in raw:
                     metric = "accuracy"
                 break
-        
+
         if not metric:
             if "f1 score" in text_lower or "f-1 score" in text_lower:
                 metric = "f1_score"
@@ -115,11 +117,15 @@ def extract_config(data: dict, slug: str) -> dict:
     if use_probabilities is None:
         if rules_text:
             text_lower = rules_text.lower()
-            if "do not set thresholds" in text_lower or "raw probabilities" in text_lower or "if the error metric requires probabilities" in text_lower:
+            if (
+                "do not set thresholds" in text_lower
+                or "raw probabilities" in text_lower
+                or "if the error metric requires probabilities" in text_lower
+            ):
                 use_probabilities = True
             elif "hard labels" in text_lower or "0/1 labels" in text_lower:
                 use_probabilities = False
-        
+
         if use_probabilities is None and metric is not None:
             m = str(metric).lower()
             if m in ("log_loss", "logloss", "cross_entropy", "auc"):
@@ -128,7 +134,6 @@ def extract_config(data: dict, slug: str) -> dict:
                 use_probabilities = False
             else:
                 use_probabilities = None
-
 
     # Limits and splits: take from API when provided, otherwise leave null.
     daily_limit = data.get("daily_limit")
@@ -149,9 +154,7 @@ def extract_config(data: dict, slug: str) -> dict:
     domain = data.get("domain")
 
     skills_required = data.get("skills", [])
-    banned_features = data.get(
-        "banned_features", ["derived_spatial_features", "external_spatial_data"]
-    )
+    banned_features = data.get("banned_features", [])
 
     target_col = data.get("target_col") or data.get("target_column")
     target_domain_bounds = data.get("target_domain_bounds") or {
@@ -293,17 +296,64 @@ def extract_config(data: dict, slug: str) -> dict:
 
     if config.get("use_probabilities") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if any(x in m for x in ("log_loss", "logloss", "cross_entropy", "auc", "area_under_curve")):
+        if any(
+            x in m
+            for x in ("log_loss", "logloss", "cross_entropy", "auc", "area_under_curve")
+        ):
             config["use_probabilities"] = True
-        elif any(x in m for x in ("f1", "accuracy", "rmse", "mae", "root_mean_squared", "mean_absolute", "bleu")):
+        elif any(
+            x in m
+            for x in (
+                "f1",
+                "accuracy",
+                "rmse",
+                "mae",
+                "root_mean_squared",
+                "mean_absolute",
+                "bleu",
+                "rmsle",
+                "mse",
+                "mape",
+                "r2",
+                "r_squared",
+            )
+        ):
             config["use_probabilities"] = False
 
     # Derive metric_direction from metric when not provided
     if config.get("metric_direction") is None and config.get("metric") is not None:
         m = str(config.get("metric")).lower()
-        if any(x in m for x in ("f1", "accuracy", "auc", "area_under_curve", "bleu", "straight_accuracy")):
+        if any(
+            x in m
+            for x in (
+                "f1",
+                "accuracy",
+                "auc",
+                "area_under_curve",
+                "bleu",
+                "straight_accuracy",
+                "r2",
+                "r_squared",
+                "score",
+            )
+        ):
             config["metric_direction"] = "maximize"
-        elif any(x in m for x in ("rmse", "mae", "log_loss", "logloss", "cross_entropy", "root_mean_squared", "mean_absolute")):
+        elif any(
+            x in m
+            for x in (
+                "rmse",
+                "mae",
+                "log_loss",
+                "logloss",
+                "cross_entropy",
+                "root_mean_squared",
+                "mean_absolute",
+                "rmsle",
+                "mse",
+                "mape",
+                "loss",
+            )
+        ):
             config["metric_direction"] = "minimize"
         else:
             config["metric_direction"] = None
@@ -316,7 +366,8 @@ def extract_config(data: dict, slug: str) -> dict:
             "use_probabilities=True: submit raw float probabilities, do NOT threshold"
         )
     elif up is False:
-        cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
+        if config.get("task_type") != "regression":
+            cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
     else:
         cn.append("use_probabilities: unknown — confirm from competition page")
     if config.get("allowed_external_data") is False:
@@ -365,7 +416,33 @@ def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
         print(f"ℹ️  SKIP dag_phase update (current phase: {current_phase})")
 
 
-def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) -> dict:
+def run(
+    slug: str | None = None,
+    headers: dict | None = None,
+    dry_run: bool = False,
+    merge: bool = False,
+) -> dict:
+    if slug is None:
+        import os
+
+        slug = os.environ.get("COMPETITION_SLUG")
+        if not slug:
+            try:
+                from zindian.config import ChallengeConfig
+
+                slug = ChallengeConfig.load().slug
+            except Exception:
+                pass
+        if not slug:
+            raise ValueError(
+                "slug must be provided or set via COMPETITION_SLUG environment variable"
+            )
+
+    if headers is None:
+        from zindian.zindi_monitor_core import _get_headers
+
+        headers = _get_headers()
+
     paths = resolve_competition_paths(slug=slug)
 
     print(f"\n{'=' * 60}")
@@ -379,20 +456,30 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
     print("Extracting config fields...")
     config = extract_config(data, slug)
 
-    final_to_write = config
+    existing = {}
+    if paths.config_path.exists():
+        try:
+            existing = json.loads(paths.config_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
 
     # If merge requested, combine with existing challenge_config.json without overwriting non-null fields
     if merge:
-        existing = {}
-        if paths.config_path.exists():
-            try:
-                existing = json.loads(paths.config_path.read_text(encoding="utf-8"))
-            except Exception:
-                existing = {}
         merged = dict(existing)  # start from existing; preserve extra fields
         for k, v in config.items():
             # Only set if existing value is None or missing
             if merged.get(k) is None:
+                merged[k] = v
+        final_to_write = merged
+    else:
+        # Prefer new scraped config, but fall back to existing config for any fields that are None or missing
+        merged = dict(config)
+        for k in list(merged.keys()):
+            if merged[k] is None and existing.get(k) is not None:
+                merged[k] = existing[k]
+        # Also preserve any fields that are in existing but not in config
+        for k, v in existing.items():
+            if k not in merged:
                 merged[k] = v
         final_to_write = merged
 
@@ -474,7 +561,7 @@ def run(slug: str, headers: dict, dry_run: bool = False, merge: bool = False) ->
     for note in final_to_write.get("compliance_notes", []):
         print(f"  ⚠️  {note}")
 
-    return {"status": "OK", "config": config}
+    return {"status": "OK", "config": final_to_write}
 
 
 if __name__ == "__main__":

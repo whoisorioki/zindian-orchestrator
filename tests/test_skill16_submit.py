@@ -8,6 +8,7 @@ import pandas as pd
 from zindian.skills import skill_16_submit as submitter
 from zindian.skills.skill_16_submit import HardAbortException
 
+
 def _setup_comp(tmp_path: Path) -> Path:
     comp = tmp_path / "competitions" / "subcomp"
     (comp / "data" / "processed").mkdir(parents=True)
@@ -38,14 +39,14 @@ def _setup_comp(tmp_path: Path) -> Path:
         "gate_margin": 0.05,
         "variance_gate_threshold": 0.5,
     }
-    (comp / "challenge_config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (comp / "challenge_config.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
 
     state = {
         "competition": "subcomp",
         "md5_target_hash": None,
         "anchor_oof_score": 0.80,
-        "anchor_oof_f1": 0.80,
-        "anchor_oof_rmse": None,
         "anchor_lb_score": None,
         "submissions_used_today": 0,
         "submissions_used_total": 0,
@@ -57,7 +58,9 @@ def _setup_comp(tmp_path: Path) -> Path:
         "human_gate_2_main_approved": True,
         "anchor_git_branch": "main",
     }
-    (comp / "SKILL_STATE.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+    (comp / "SKILL_STATE.json").write_text(
+        json.dumps(state, indent=2), encoding="utf-8"
+    )
 
     # Create dummy sample and submission files
     sample = raw / "SampleSubmission.csv"
@@ -72,7 +75,7 @@ def _setup_comp(tmp_path: Path) -> Path:
 def test_budget_remaining_zero_raises_hard_abort(tmp_path, monkeypatch):
     comp = _setup_comp(tmp_path)
     state_path = comp / "SKILL_STATE.json"
-    
+
     # 1. State-side budget is 0
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["remaining_submissions"] = 0
@@ -85,6 +88,7 @@ def test_budget_remaining_zero_raises_hard_abort(tmp_path, monkeypatch):
     class FakeZindiClient:
         def select_competition(self, slug):
             pass
+
         @property
         def remaining_submissions(self):
             return 10  # platform says 10 but state says 0
@@ -102,6 +106,7 @@ def test_budget_remaining_zero_raises_hard_abort(tmp_path, monkeypatch):
     class FakeZindiClientExhausted:
         def select_competition(self, slug):
             pass
+
         @property
         def remaining_submissions(self):
             return 0  # platform says 0
@@ -115,7 +120,7 @@ def test_budget_remaining_zero_raises_hard_abort(tmp_path, monkeypatch):
 def test_budget_remaining_one_warns_and_prompts(tmp_path, monkeypatch, capsys):
     comp = _setup_comp(tmp_path)
     state_path = comp / "SKILL_STATE.json"
-    
+
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["remaining_submissions"] = 10
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -126,9 +131,11 @@ def test_budget_remaining_one_warns_and_prompts(tmp_path, monkeypatch, capsys):
     class FakeZindiClientOne:
         def select_competition(self, slug):
             pass
+
         @property
         def remaining_submissions(self):
             return 1  # only 1 remaining
+
         def submit(self, filepath, comment):
             return {"status": "success"}
 
@@ -144,7 +151,6 @@ def test_budget_remaining_one_warns_and_prompts(tmp_path, monkeypatch, capsys):
     assert "Only 1 live submission remaining today" in captured.out
 
 
-
 def test_budget_remaining_two_proceeds_normally(tmp_path, monkeypatch):
     comp = _setup_comp(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -153,9 +159,11 @@ def test_budget_remaining_two_proceeds_normally(tmp_path, monkeypatch):
     class FakeZindiClientTwo:
         def select_competition(self, slug):
             pass
+
         @property
         def remaining_submissions(self):
             return 2  # exactly 2 remaining
+
         def submit(self, filepath, comment):
             return {"status": "success"}
 

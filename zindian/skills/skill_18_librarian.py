@@ -4,6 +4,7 @@ Canonical librarian implementation for literature mining and prior-art tracking.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import time
@@ -12,6 +13,7 @@ import requests
 from pathlib import Path
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
+from zindian.state import SkillStateStore
 
 from zindian.constants import TC_VARIABLES as _CANONICAL_TC
 
@@ -83,10 +85,32 @@ def build_queries(tc_variables: list[str]) -> list[str]:
 
         found = []
         stopwords = {
-            "the", "and", "for", "with", "from", "challenge", "competition",
-            "modelling", "modeling", "prediction", "predict", "predictive", "status",
-            "occurrence", "distribution", "value", "target", "label",
-            "column", "series", "study", "jam", "june", "volume", "forecasting", "transaction"
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "challenge",
+            "competition",
+            "modelling",
+            "modeling",
+            "prediction",
+            "predict",
+            "predictive",
+            "status",
+            "occurrence",
+            "distribution",
+            "value",
+            "target",
+            "label",
+            "column",
+            "series",
+            "study",
+            "jam",
+            "june",
+            "volume",
+            "forecasting",
+            "transaction",
         }
         for source_str in sources:
             if source_str:
@@ -107,28 +131,31 @@ def build_queries(tc_variables: list[str]) -> list[str]:
 
     # 3. Generate query set dynamically using the keywords
     queries = []
-    
+
     # Base generic ML queries
     if comp_name:
-        queries.extend([
-            f"{comp_name} machine learning pipeline",
-            f"{comp_name} feature engineering techniques",
-            f"{comp_name} winning solution writeup",
-            f"{comp_name} cross validation strategy",
-        ])
+        queries.extend(
+            [
+                f"{comp_name} machine learning pipeline",
+                f"{comp_name} feature engineering techniques",
+                f"{comp_name} winning solution writeup",
+                f"{comp_name} cross validation strategy",
+            ]
+        )
 
     # Dynamic queries based on extracted/configured domain keywords
     for kw in keywords:
-        queries.extend([
-            f"TerraClimate {kw} occurrence prediction",
-            f"precipitation temperature {kw} suitability",
-            f"TerraClimate temporal features {kw} modelling",
-        ])
+        queries.extend(
+            [
+                f"TerraClimate {kw} occurrence prediction",
+                f"precipitation temperature {kw} suitability",
+                f"TerraClimate temporal features {kw} modelling",
+            ]
+        )
         for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
             queries.append(f"{var} climate variable {kw} distribution")
 
     return sorted(list(set(queries)))
-
 
 
 def fetch_papers(query: str, limit: int = 5) -> list[dict]:
@@ -330,6 +357,17 @@ def run_librarian(
     )
 
     return cache
+
+
+def run(config: dict, state_store: SkillStateStore) -> None:
+    """Standard entry point wrapper that logs a warning or executes librarian."""
+    print(
+        "WARNING: Standard skill_18 entry point run() called. This skill utilizes run_librarian() instead."
+    )
+    # Log a "Not Implemented" warning through the state store as requested
+    state_store.update(
+        librarian_warning="skill_18 run() called but is not implemented in the standard loop; execute via run_librarian() instead."
+    )
 
 
 if __name__ == "__main__":

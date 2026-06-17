@@ -17,6 +17,7 @@ Contract (SoT §4 / §8):
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import ast
 import json

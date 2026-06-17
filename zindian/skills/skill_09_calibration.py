@@ -9,6 +9,7 @@ Usage: python -m zindian.skills.skill_09_calibration --method isotonic
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
@@ -264,7 +265,12 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
             proc_dir, reports_dir, candidate_branch, retraining_active
         )
         df = pd.read_csv(test_path)
-        pcol = [c for c in df.columns if c != "ID"][0]
+        try:
+            cfg = ChallengeConfig.load()
+            id_col = cfg.get("id_col") or cfg.get("id_column") or "ID"
+        except Exception:
+            id_col = "ID"
+        pcol = [c for c in df.columns if c != id_col][0]
         probs = np.asarray(df[pcol].values, dtype=np.float64)
 
         if global_calibrator is not None:
@@ -278,7 +284,9 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
         out = proc_dir / f"calib_{test_path.name}"
         mapping = {test_path.name: str(out)}
         if not dry_run:
-            pd.DataFrame({"ID": df["ID"], pcol: calibrated}).to_csv(out, index=False)
+            pd.DataFrame({id_col: df[id_col], pcol: calibrated}).to_csv(
+                out, index=False
+            )
 
     if not dry_run:
         state_patch = {

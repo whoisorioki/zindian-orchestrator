@@ -8,6 +8,7 @@ Must run after Skill 07 feature engineering completes.
 
 from __future__ import annotations
 
+import tabula.skill_state_autopatch  # noqa
 import json
 import re
 from datetime import datetime, timezone
@@ -53,7 +54,9 @@ def load_data(
         # excluding common coordinate/id columns. This keeps the module config-driven
         # while remaining robust for old fixtures.
         cols_cfg = config.get("columns", {}) or {}
-        id_col = cols_cfg.get("id", "ID")
+        id_col = (
+            config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+        )
         lat_col = cols_cfg.get("latitude", "Latitude")
         lon_col = cols_cfg.get("longitude", "Longitude")
         candidate_cols = [
@@ -70,7 +73,7 @@ def load_data(
     input_files = config.get("input_files", {}) or {}
     sample_file = input_files.get("sample", "SampleSubmission.csv")
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
     sample = pd.read_csv(paths.data_raw_dir / sample_file)
     submission_col = [c for c in sample.columns if c != id_col][0]
 
@@ -88,6 +91,7 @@ def compute_oof_predictions(
     state: dict | None = None,
     n_splits: int = 5,
     random_seed: int | None = None,
+    variant_name: str | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -110,7 +114,7 @@ def compute_oof_predictions(
         random_seed = get_seed()
 
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
 
     # Resolve active CV strategy from state override first, then config.
     state = state or {}
@@ -129,9 +133,7 @@ def compute_oof_predictions(
         if col is not None:
             excluded_cols.add(str(col))
 
-    feature_cols = [
-        c for c in train.columns if c not in excluded_cols
-    ]
+    feature_cols = [c for c in train.columns if c not in excluded_cols]
     feature_count = len(feature_cols)
 
     # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
@@ -157,6 +159,7 @@ def compute_oof_predictions(
         )
 
     import random
+
     random.seed(random_seed)
     np.random.seed(random_seed)
 
@@ -180,6 +183,9 @@ def compute_oof_predictions(
     else:
         split_iter = list(splitter.split(X_dummy, y))
 
+    # Resolve regression metric for target transformation lifecycle (SoT v2.2)
+    regression_metric = config.get("metric") if task_type == "regression" else None
+
     result = train_lightgbm_cv(
         train=train,
         test=test,
@@ -192,6 +198,8 @@ def compute_oof_predictions(
         num_boost_round=500,
         early_stopping_rounds=50,
         scale=True,
+        regression_metric=regression_metric,
+        variant_name=variant_name,
     )
 
     if task_type == "regression":
@@ -200,6 +208,7 @@ def compute_oof_predictions(
         oof_logloss = oof_rmse
     else:
         from sklearn.metrics import log_loss
+
         try:
             oof_logloss = float(log_loss(y, result.oof_probs))
         except Exception:
@@ -220,9 +229,13 @@ def compute_oof_predictions(
         feature_cols,
         cv_strategy_id,
         feature_count,
-        [float(score) for score in result.fold_aucs],
+        [
+            float(score)
+            for score in getattr(
+                result, "fold_scores", getattr(result, "fold_aucs", [])
+            )
+        ],
     )
-
 
 
 # ── Git ────────────────────────────────────────────────────────────────────────
@@ -275,6 +288,7 @@ def next_submission_path(paths, suffix: str = "anchor") -> Path:
 
 
 def save_submission(
+    id_col: str,
     test_ids: np.ndarray,
     predictions: np.ndarray,
     submission_col: str,
@@ -285,7 +299,7 @@ def save_submission(
 
     sub_df = pd.DataFrame(
         {
-            "ID": np.asarray(test_ids),
+            id_col: np.asarray(test_ids),
             submission_col: np.asarray(predictions),
         }
     )
@@ -301,6 +315,7 @@ def run(
     n_splits: int = 5,
     random_seed: int | None = None,
     submit: bool = False,
+    variant_name: str | None = None,
 ) -> dict:
     """
     Skill 08 — Anchor Baseline.
@@ -327,6 +342,7 @@ def run(
     if random_seed is None:
         random_seed = get_seed()
     import random
+
     random.seed(random_seed)
     np.random.seed(random_seed)
 
@@ -353,6 +369,7 @@ def run(
             state=state,
             n_splits=n_splits,
             random_seed=random_seed,
+            variant_name=variant_name,
         )
         if len(result) >= 11:
             (
@@ -418,7 +435,11 @@ def run(
             ]
             # Reconstruct required metadata in compatibility path.
             cols_cfg = config.get("columns", {}) or {}
-            id_col = cols_cfg.get("id", "ID")
+            id_col = (
+                config.get("id_col")
+                or config.get("id_column")
+                or cols_cfg.get("id", "ID")
+            )
             lat_col = cols_cfg.get("latitude", "Latitude")
             lon_col = cols_cfg.get("longitude", "Longitude")
             feature_cols = [
@@ -446,7 +467,7 @@ def run(
     for _, val_idx in split_iter:
         oof_index[np.asarray(val_idx, dtype=int)] = np.asarray(val_idx, dtype=int)
     cols_cfg = config.get("columns", {}) or {}
-    id_col = cols_cfg.get("id", "ID")
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
     pd.DataFrame(
         {
             id_col: np.asarray(train[id_col].values),
@@ -462,7 +483,8 @@ def run(
     input_files = config.get("input_files", {}) or {}
     input_files.get("sample", "SampleSubmission.csv")
     # Probability-aware output format from config
-    if config.get("use_probabilities", True):
+    task_type = str(config.get("task_type", "classification")).lower()
+    if task_type == "regression" or config.get("use_probabilities", True):
         predictions_to_save = np.asarray(test_preds, dtype=np.float64)
     else:
         print(f"\nApplying optimal F1 threshold: {best_t:.2f}")
@@ -470,26 +492,35 @@ def run(
             np.asarray(test_preds, dtype=np.float64) >= best_t
         ).astype(int)
 
+    if config.get("submission_log1p", False):
+        print(
+            "Applying log1p transformation to submission predictions per platform config"
+        )
+        predictions_to_save = np.log1p(predictions_to_save)
+
     save_submission(
-        np.asarray(test[id_col].values), predictions_to_save, submission_col, sub_path
+        id_col,
+        np.asarray(test[id_col].values),
+        predictions_to_save,
+        submission_col,
+        sub_path,
     )
 
     # ── Log to DuckDB ledger ───────────────────────────────────
-    ledger = Ledger()
-    exp_id = ledger.log_experiment(
-        branch_name="anchor-baseline",
-        # Classification metrics are tracked in SKILL_STATE and notes; avoid writing F1 into RMSE field.
-        oof_rmse=None,
-        feature_count=feature_count,
-        calibration_method="none",
-        gate_result="PASS",
-        gate_reason="Initial anchor baseline — Base features only. Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
-            best_t, oof_auc
-        ),
-        dag_phase="phase_2_anchor_confirmed",
-        notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
-    )
-    ledger.close()
+    with Ledger() as ledger:
+        exp_id = ledger.log_experiment(
+            branch_name="anchor-baseline",
+            # Classification metrics are tracked in SKILL_STATE and notes; avoid writing F1 into RMSE field.
+            oof_rmse=None,
+            feature_count=feature_count,
+            calibration_method="none",
+            gate_result="PASS",
+            gate_reason="Initial anchor baseline — Base features only. Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
+                best_t, oof_auc
+            ),
+            dag_phase="phase_2_anchor_confirmed",
+            notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
+        )
     print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
 
     # ── Update SKILL_STATE.json ────────────────────────────────
@@ -497,22 +528,23 @@ def run(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
     )
     if retraining_active:
-        f1_key = "anchor_oof_f1_augmented"
-        auc_key = "anchor_oof_auc_augmented"
         score_key = "anchor_oof_score_augmented"
     else:
-        f1_key = "anchor_oof_f1"
-        auc_key = "anchor_oof_auc"
         score_key = "anchor_oof_score"
 
     task_type = str(config.get("task_type", "classification")).lower()
     metric_name = str(config.get("metric", "f1")).lower()
+    # SoT v2.2 metric_map: covers all canonical metric name variants
+    # including the explicit root_mean_squared_error and mean_absolute_error
+    # strings defined in the Regression Target Transformation Lifecycle.
     metric_map = {
         "auc": oof_auc,
         "f1": oof_f1,
         "f1_score": oof_f1,
         "rmse": oof_logloss if task_type == "regression" else oof_f1,
+        "root_mean_squared_error": oof_logloss if task_type == "regression" else oof_f1,
         "mae": oof_logloss if task_type == "regression" else oof_f1,
+        "mean_absolute_error": oof_logloss if task_type == "regression" else oof_f1,
         "logloss": oof_logloss,
         "log_loss": oof_logloss,
         "rmsle": oof_logloss if task_type == "regression" else oof_f1,
@@ -522,6 +554,7 @@ def run(
     secondary_metrics = None
     if task_type == "regression":
         from zindian.state import compute_secondary_metrics
+
         y_true = np.asarray(train[training_target_col].values, dtype=np.float64)
         secondary_metrics = compute_secondary_metrics(y_true, oof_preds)
 
@@ -532,9 +565,6 @@ def run(
         "dag_phase": "phase_2_anchor_confirmed",
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    # Deprecated: anchor_oof_f1 and anchor_oof_auc are preserved for backward compatibility
-    updates[f1_key] = oof_f1
-    updates[auc_key] = oof_auc
 
     state_store.update(**updates)
 
@@ -603,6 +633,11 @@ if __name__ == "__main__":
     import sys
 
     submit_flag = "--submit" in sys.argv
-    result = run(submit=submit_flag)
+    variant_arg = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--variant" and i + 1 < len(sys.argv):
+            variant_arg = sys.argv[i + 1]
+            break
+    result = run(submit=submit_flag, variant_name=variant_arg)
     printable = {k: v for k, v in result.items() if k != "submission_result"}
     print(json.dumps(printable, indent=2))

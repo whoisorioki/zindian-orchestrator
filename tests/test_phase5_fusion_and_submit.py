@@ -98,13 +98,17 @@ def test_submission_validate_and_determine(tmp_path):
     errs_dup = submitter.validate(dup, sample)
     assert any("Duplicate IDs" in e for e in errs_dup)
 
+
 def test_submission_8_checks(tmp_path, monkeypatch):
     import pandas as pd
+
     orig_read_csv = pd.read_csv
+
     def mock_read_csv(filepath_or_buffer, *args, **kwargs):
         if "bad_sample" in str(filepath_or_buffer):
             return pd.DataFrame()
         return orig_read_csv(filepath_or_buffer, *args, **kwargs)
+
     monkeypatch.setattr(pd, "read_csv", mock_read_csv)
 
     raw = tmp_path / "data" / "raw"
@@ -161,4 +165,3 @@ def test_submission_8_checks(tmp_path, monkeypatch):
     sub8.write_text("ID,Prediction\n3,0\n3,1\n", encoding="utf-8")
     errs = submitter.validate(sub8, sample)
     assert any("Duplicate IDs" in e for e in errs)
-

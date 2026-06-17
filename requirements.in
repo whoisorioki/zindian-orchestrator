@@ -13,9 +13,11 @@ scikit-learn
 lightgbm
 shap
 duckdb
+pyarrow
 
 # Optional / research
 google-genai
+playwright
 
 # Dev tools
 pip-tools

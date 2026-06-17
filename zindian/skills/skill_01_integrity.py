@@ -5,6 +5,7 @@ Must run after data download and before any data transformation.
 Halts if hash shifts on re-run — indicates data tampering or corruption.
 """
 
+import tabula.skill_state_autopatch  # noqa
 import hashlib
 import pandas as pd
 from pathlib import Path
@@ -96,27 +97,47 @@ def run(re_verify: bool = False) -> dict:
 
     # Resolve competition-aware paths
     paths = resolve_competition_paths()
-    train_path = paths.data_raw_dir / "Training_Data.csv"
-    test_path = paths.data_raw_dir / "Test.csv"
-    sample_path = paths.data_raw_dir / "SampleSubmission.csv"
-    state_path = paths.state_path
-    print(f"Loading Training_Data.csv from: {train_path}")
-    train = pd.read_csv(train_path)
-    test = pd.read_csv(test_path)
-    sub = pd.read_csv(sample_path)
 
-    # Load ChallengeConfig to override default column names if present
+    # Load ChallengeConfig to check for input_files override and target cols
     task_type = "classification"
+    target_col = TARGET_COL
+    submission_target_col = SUBMISSION_TARGET_COL
+    id_col = "ID"
+    domain = ""
+    input_files = {}
+
     try:
         cfg = ChallengeConfig.load()
         tc = cfg.get("target_column") or cfg.get("target_col")
         sc = cfg.get("submission_target_column") or cfg.get("submission_target_col")
-        target_col = tc if tc else TARGET_COL
-        submission_target_col = sc if sc else SUBMISSION_TARGET_COL
+        ic = cfg.get("id_column") or cfg.get("id_col")
+        if tc:
+            target_col = tc
+        if sc:
+            submission_target_col = sc
+        else:
+            submission_target_col = target_col
+        if ic:
+            id_col = ic
         task_type = cfg.get("task_type") or "classification"
+        domain = cfg.get("domain", "")
+        input_files = cfg.get("input_files", {}) or {}
     except Exception:
-        target_col = TARGET_COL
-        submission_target_col = SUBMISSION_TARGET_COL
+        pass
+
+    train_file = input_files.get("train", "Training_Data.csv")
+    test_file = input_files.get("test", "Test.csv")
+    sample_file = input_files.get("sample", "SampleSubmission.csv")
+
+    train_path = paths.data_raw_dir / train_file
+    test_path = paths.data_raw_dir / test_file
+    sample_path = paths.data_raw_dir / sample_file
+    state_path = paths.state_path
+
+    print(f"Loading {train_file} from: {train_path}")
+    train = pd.read_csv(train_path)
+    test = pd.read_csv(test_path)
+    sub = pd.read_csv(sample_path)
 
     print(f"  Train shape : {train.shape}")
     print(f"  Test shape  : {test.shape}")
@@ -125,13 +146,14 @@ def run(re_verify: bool = False) -> dict:
     # Validate expected columns exist — be permissive for generality
     if target_col not in train.columns:
         raise AssertionError(
-            f"❌ Target column '{target_col}' not found in Training_Data.csv"
+            f"❌ Target column '{target_col}' not found in {train_file}"
         )
-    if "ID" not in train.columns:
-        raise AssertionError("❌ ID column missing from train")
-    # Latitude/Longitude are helpful but not mandatory across competitions
-    if "Latitude" not in train.columns or "Longitude" not in train.columns:
-        print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
+    if id_col not in train.columns:
+        raise AssertionError(f"❌ ID column '{id_col}' missing from train")
+    # Latitude/Longitude check only makes sense for geospatial challenges
+    if domain.lower() == "geospatial":
+        if "Latitude" not in train.columns or "Longitude" not in train.columns:
+            print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
     if submission_target_col not in sub.columns:
         raise AssertionError(
             f"❌ '{submission_target_col}' not found in SampleSubmission.csv"
@@ -237,7 +259,7 @@ def run(re_verify: bool = False) -> dict:
         print("\n✅ Hashes locked in SKILL_STATE.json")
 
     # Derive feature columns (exclude ID and target)
-    raw_feature_cols = [c for c in train.columns if c not in {"ID", target_col}]
+    raw_feature_cols = [c for c in train.columns if c not in {id_col, target_col}]
     summary = {
         "status": "OK",
         "train_rows": len(train),

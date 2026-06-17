@@ -24,6 +24,7 @@ Contract (SoT §4 / §8):
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import io
 import json
@@ -38,11 +39,14 @@ import pandas as pd
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
+from zindian.ledger import Ledger
 
 
 class HardAbortException(RuntimeError):
     """Raised when the submission budget is exhausted."""
+
     pass
+
 
 # ── Value validation (mirrors skill_14 semantics) ─────────────────────────────
 
@@ -234,14 +238,6 @@ def determine_submission_metrics(
             "anchor_oof_score_augmented",
             "anchor_oof_score_challenged",
             "anchor_oof_score",
-            # Metric-specific keys
-            "last_ensemble_oof_f1",
-            "best_ensemble_oof_f1",
-            "last_variant_oof_f1",
-            "best_variant_oof_f1",
-            "anchor_oof_f1",
-            "anchor_oof_rmse",
-            "anchor_oof_mae",
         ]
     )
     for key in candidate_keys:
@@ -383,7 +379,9 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
         )
 
     cached_remaining_val = skill_state.get("remaining_submissions")
-    cached_remaining = int(cached_remaining_val) if cached_remaining_val is not None else 10
+    cached_remaining = (
+        int(cached_remaining_val) if cached_remaining_val is not None else 10
+    )
     used_today = int(skill_state.get("submissions_used_today") or 0)
     print(
         f"\nBudget (cached state): {cached_remaining} remaining | {used_today} used today"
@@ -403,12 +401,7 @@ def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
             "Warning written to SKILL_STATE['budget_warning']."
         )
 
-
-    best_auc = (
-        skill_state.get("best_variant_oof_auc")
-        or skill_state.get("last_ensemble_oof_auc")
-        or skill_state.get("anchor_oof_auc")
-    )
+    best_auc = skill_state.get("anchor_oof_score")
     best_f1, metric_source = determine_submission_metrics(sub_path, skill_state)
     feature_count = _feature_count_from_state(skill_state, branch)
     calibration_method = _calibration_method_from_state(skill_state, branch)
@@ -447,6 +440,11 @@ Type YES to submit or NO to abort.
     )
     print(f"\nSubmitting with comment: {comment}")
     result = client.submit(filepath=str(sub_path), comment=comment)
+
+    # Only update state if submission succeeded
+    if not result or result.get("error"):
+        print(f"❌ Submission failed: {result}")
+        return {"status": "FAILED", "error": result.get("error", "Unknown error")}
 
     now_iso = datetime.now(timezone.utc).isoformat()
     try:
@@ -500,11 +498,34 @@ Type YES to submit or NO to abort.
     except Exception as exc:
         print(f"⚠️  Could not fetch leaderboard: {exc}")
 
+    # Record to ledger
+    try:
+        with Ledger() as ledger:
+            exp_id = ledger.log_experiment(
+                branch_name=git_branch,
+                oof_rmse=best_f1 if metric_name_lower == "rmse" else None,
+                feature_count=feature_count if isinstance(feature_count, int) else None,
+                calibration_method=calibration_method,
+                gate_result="PASS",
+                dag_phase=skill_state.get("dag_phase"),
+                notes=comment,
+            )
+            ledger.log_submission(
+                experiment_id=exp_id,
+                branch_name=git_branch,
+                public_score=result.get("public_score"),
+                my_rank=my_rank if "my_rank" in locals() else None,
+                comment=comment,
+            )
+        print(f"✅ Recorded to ledger (experiment_id={exp_id})")
+    except Exception as exc:
+        print(f"⚠️  Failed to record to ledger: {exc}")
+
     return {"status": "SUBMITTED", "result": result, "comment": comment}
 
 
-def show_submission_board() -> None:
-    """Render the submission board from the platform."""
+def pull_submission_board() -> list[dict[str, Any]]:
+    """Pull submission board from platform and return as list."""
     from zindian.zindi_client import ZindiClient
 
     config = ChallengeConfig.load()
@@ -517,6 +538,12 @@ def show_submission_board() -> None:
         subs = cast(list[dict[str, Any]], list(client._user.submission_board()))
     finally:
         sys.stdout = old
+    return subs
+
+
+def show_submission_board() -> None:
+    """Render the submission board from the platform."""
+    subs = pull_submission_board()
     clean: list[dict[str, Any]] = []
     for s in subs:
         clean.append(
@@ -546,13 +573,34 @@ def show_submission_board() -> None:
     print(sep)
 
 
+def pull_leaderboard(per_page: int = 20) -> None:
+    """Pull and display current leaderboard."""
+    from zindian.zindi_client import ZindiClient
+
+    config = ChallengeConfig.load()
+    client = ZindiClient()
+    client.select_competition(config.slug)
+    print(f"\n{'=' * 60}")
+    print(f"LEADERBOARD — {config.slug}")
+    print(f"{'=' * 60}")
+    try:
+        my_rank = client._user.my_rank
+        print(f"Your current rank: {my_rank}\n")
+    except Exception:
+        pass
+    client.leaderboard(per_page=per_page)
+
+
 if __name__ == "__main__":
     if "--submission-board" in sys.argv:
         show_submission_board()
+    elif "--leaderboard" in sys.argv:
+        pull_leaderboard()
     elif len(sys.argv) < 2:
         print("Usage:")
         print("  python -m zindian.skills.skill_16_submit <file>")
         print("  python -m zindian.skills.skill_16_submit --submission-board")
+        print("  python -m zindian.skills.skill_16_submit --leaderboard")
         sys.exit(1)
     else:
         arg = next((a for a in sys.argv[1:] if not a.startswith("--")), None)

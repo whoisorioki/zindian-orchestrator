@@ -8,6 +8,7 @@ Usage: python3 -m zindian.skills.skill_04_eda
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import traceback
@@ -32,13 +33,13 @@ def _load_json_object(path: Path) -> dict[str, Any]:
 def detect_target(paths: CompetitionPaths) -> str:
     # Try challenge_config.json -> SKILL_STATE.json only; never guess.
     cfg = _load_json_object(paths.config_path)
-    for key in ("target", "label", "target_column", "output_column"):
+    for key in ("target_col", "target", "label", "target_column", "output_column"):
         value = cfg.get(key)
         if value:
             return str(value)
 
     state = _load_json_object(paths.state_path)
-    for key in ("target", "target_column", "primary_key", "label"):
+    for key in ("target_col", "target", "target_column", "primary_key", "label"):
         value = state.get(key)
         if value:
             return str(value)
@@ -202,7 +203,9 @@ def run():
 
     # Prefer processed features file, fall back to raw training file
     proc_train = competition_dir / "data" / "processed" / "features_train.csv"
-    raw_train = paths.data_raw_dir / "Training_Data.csv"
+    cfg = _load_json_object(paths.config_path)
+    train_file = (cfg.get("input_files") or {}).get("train", "Training_Data.csv")
+    raw_train = paths.data_raw_dir / train_file
 
     if proc_train.exists():
         df = pd.read_csv(proc_train)

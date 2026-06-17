@@ -5,6 +5,7 @@
     "metric": null,
     "metric_direction": null,
     "target_col": null,
+    "id_col": null,
     "target_domain_bounds": {
         "min": null,
         "max": null
@@ -53,6 +54,11 @@
         "group_col": null,
         "stratify_col": null,
         "selection_reason": ""
+    },
+    "input_files": {
+        "train": "Training_Data.csv",
+        "test": "Test.csv",
+        "sample": "SampleSubmission.csv"
     },
     "variants": [],
     "community_signals": [],

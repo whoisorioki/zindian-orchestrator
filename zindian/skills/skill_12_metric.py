@@ -11,6 +11,7 @@ helpful diagnostic into `metric_analysis` rather than raising.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
@@ -106,6 +107,7 @@ def run(
     if config is None:
         try:
             from zindian.config import ChallengeConfig
+
             config_obj = ChallengeConfig.load()
             metric_key = str(config_obj.get("metric", "f1")).lower()
         except Exception:
@@ -120,7 +122,7 @@ def run(
         oof_score = state.get(f"best_variant_oof_{metric_key}")
 
     if oof_score is None:
-        oof_score = state.get("anchor_oof_f1") or state.get("best_variant_oof_f1")
+        oof_score = state.get("anchor_oof_score") or state.get("best_variant_oof_score")
 
     lb_score = state.get("last_lb_score") or state.get("best_lb_score")
     oof_vs_lb_delta = None

@@ -15,6 +15,7 @@ Usage:
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import sys
@@ -110,7 +111,11 @@ def build_spatial_splits(
 
     print("\n  Geographic block distribution:")
     # Check if target is binary/categorical (for classification prevalence logging)
-    is_binary = task_type == "classification" and np.issubdtype(y.dtype, np.integer) and bool(set(np.unique(y)) <= {0, 1})
+    is_binary = (
+        task_type == "classification"
+        and np.issubdtype(y.dtype, np.integer)
+        and bool(set(np.unique(y)) <= {0, 1})
+    )
     for block_id in range(cluster_count):
         block_mask = geo_groups == block_id
         block_total = int(block_mask.sum())
@@ -306,7 +311,8 @@ def run(strategy: str = "compare") -> dict:
         str(config.get("longitude_column", "Longitude")),
     }
     group_col = decision.get("group_col")
-    excluded_cols = {"ID", target_col, *coord_names, *policy_blocked}
+    id_col = config.get("id_col") or config.get("id_column") or "ID"
+    excluded_cols = {id_col, target_col, *coord_names, *policy_blocked}
     if group_col is not None:
         excluded_cols.add(str(group_col))
 
@@ -351,7 +357,11 @@ def run(strategy: str = "compare") -> dict:
         if coords is not None and len(coords) >= N_SPLITS:
             try:
                 _splits, geo_groups = build_spatial_splits(
-                    X, y, coords, n_splits=int(decision.get("n_splits", N_SPLITS)), task_type=task_type
+                    X,
+                    y,
+                    coords,
+                    n_splits=int(decision.get("n_splits", N_SPLITS)),
+                    task_type=task_type,
                 )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
                 selected_type = "GroupKFold"

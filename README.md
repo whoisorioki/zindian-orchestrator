@@ -191,6 +191,9 @@ python scripts/test_phase_1.py
 | [specs/design.md](specs/design.md) | How it works | Developers, code reviewers |
 | [specs/tasks.md](specs/tasks.md) | Task checklist | Project managers |
 | [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) | Framework cleanup | DevOps/repo maintainers |
+| [docs/sagemaker_workspace_strategy.md](docs/sagemaker_workspace_strategy.md) | SageMaker-first architecture | DevOps, SageMaker users |
+| [docs/competition_data_lifecycle.md](docs/competition_data_lifecycle.md) | Data governance & integrity | Data engineers, auditors |
+| [docs/storage_cost_governance.md](docs/storage_cost_governance.md) | Cost optimization & storage | Finance, DevOps |
 
 ---
 

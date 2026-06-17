@@ -26,6 +26,7 @@ NOTE: Uses Gemini Flash free tier (google.genai).
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import os
@@ -107,8 +108,7 @@ SEARCH_TEMPLATES = {
             "Habitat suitability modeling signals",
         ),
         (
-            "citizen science species distribution model "
-            "environmental predictors",
+            "citizen science species distribution model " "environmental predictors",
             "Species distribution modeling approaches",
         ),
     ],
@@ -369,7 +369,11 @@ def synthesize_results(
             if config.metric_direction:
                 metric_dir = config.metric_direction
 
-            if "frog" in comp_name.lower() or "frog" in config.slug.lower() or "biodiversity" in comp_name.lower():
+            if (
+                "frog" in comp_name.lower()
+                or "frog" in config.slug.lower()
+                or "biodiversity" in comp_name.lower()
+            ):
                 extra_ctx = (
                     "- Features: 52 TerraClimate climate variables (no lat/lon allowed)\n"
                     "- Dataset: 6312 training rows, SE Australia, Nov 2017 - Nov 2019\n"

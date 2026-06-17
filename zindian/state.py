@@ -17,6 +17,33 @@ def _iso_now() -> str:
 
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Externalize large score arrays if this is SKILL_STATE.json
+    if "SKILL_STATE.json" in str(path):
+        scores_dir = path.parent / "scores"
+        scores_dir.mkdir(exist_ok=True)
+
+        data_copy = {}
+        for key, value in data.items():
+            if isinstance(value, dict) and "scores" in value:
+                scores = value["scores"]
+                if isinstance(scores, list) and len(scores) > 100:
+                    # Externalize
+                    score_file = scores_dir / f"{key}.json"
+                    with open(score_file, "w") as sf:
+                        json.dump(scores, sf)
+
+                    # Create new dict without scores, add reference
+                    new_value = {k: v for k, v in value.items() if k != "scores"}
+                    new_value["scores_file"] = f"scores/{key}.json"
+                    new_value["count"] = len(scores)
+                    data_copy[key] = new_value
+                else:
+                    data_copy[key] = value
+            else:
+                data_copy[key] = value
+        data = data_copy
+
     serialized = json.dumps(data, indent=2, sort_keys=False) + "\n"
 
     with tempfile.NamedTemporaryFile(
@@ -37,6 +64,15 @@ class SkillStateStore:
             _atomic_write_json(self.path, state)
             return state
         obj = json.loads(self.path.read_text(encoding="utf-8"))
+
+        # Hydrate externalized scores
+        for key, value in obj.items():
+            if isinstance(value, dict) and "scores_file" in value:
+                score_path = self.path.parent / value["scores_file"]
+                if score_path.exists():
+                    with open(score_path, "r") as sf:
+                        value["scores"] = json.load(sf)
+
         return validate_skill_state(obj)
 
     def write(
@@ -124,7 +160,13 @@ def compute_secondary_metrics(y_true: Any, y_pred: Any) -> dict[str, Any]:
     # Guard against division-by-zero for MAPE
     non_zero = y_true_arr != 0
     if np.sum(non_zero) > 0:
-        mape: float | None = float(np.mean(np.abs((y_true_arr[non_zero] - y_pred_arr[non_zero]) / y_true_arr[non_zero])))
+        mape: float | None = float(
+            np.mean(
+                np.abs(
+                    (y_true_arr[non_zero] - y_pred_arr[non_zero]) / y_true_arr[non_zero]
+                )
+            )
+        )
     else:
         mape = None  # SOT/user correction: mape is None when all targets are zero
 
@@ -157,7 +199,6 @@ def write_oof_record(
     }
     if secondary_metrics is not None:
         record["secondary_metrics"] = secondary_metrics
-
 
     state = store.read()
     key = f"branch_{branch_name}_oof"

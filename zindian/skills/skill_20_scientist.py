@@ -4,6 +4,7 @@ Synthesizes domain hypotheses + prior art, then runs two-stage validation.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
@@ -518,6 +519,17 @@ Generate feature engineering hypotheses as a raw JSON array now.
     )
     print(f"[Scientist] Failed hypotheses ledger → {failed_path}")
     return validated
+
+
+def run(config: dict, state_store: SkillStateStore) -> None:
+    """Standard entry point wrapper that logs a warning or executes scientist."""
+    print(
+        "WARNING: Standard skill_20 entry point run() called. This skill utilizes run_scientist() instead."
+    )
+    # Log a "Not Implemented" warning through the state store as requested
+    state_store.update(
+        scientist_warning="skill_20 run() called but is not implemented in the standard loop; execute via run_scientist() instead."
+    )
 
 
 if __name__ == "__main__":

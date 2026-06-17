@@ -390,11 +390,13 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
         if config.get("use_probabilities") is not None:
             scraped["use_probabilities"] = config.get("use_probabilities")
         if config.get("allowed_external_data") is not None:
-            competition_intel["external_banned"] = not config.get(
-                "allowed_external_data"
-            )
+            val = not config.get("allowed_external_data")
+            scraped["external_banned"] = val
+            competition_intel["external_banned"] = val
         if config.get("automl_permitted") is not None:
-            competition_intel["automl_banned"] = not config.get("automl_permitted")
+            val = not config.get("automl_permitted")
+            scraped["automl_banned"] = val
+            competition_intel["automl_banned"] = val
         if config.get("code_review_tier"):
             scraped["code_review_tier"] = config.get("code_review_tier")
         if config.get("daily_limit"):
@@ -654,6 +656,7 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
     """Pull all submissions with scores."""
     import io
     import sys
+    from zindian.config import ChallengeConfig
 
     _buf = io.StringIO()
     _old = sys.stdout
@@ -661,8 +664,18 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
     subs: list[Any] = list(client._user.submission_board())
     sys.stdout = _old
 
+    try:
+        config = ChallengeConfig.load()
+        metric_direction = config.get("metric_direction", "maximize")
+    except Exception:
+        metric_direction = "maximize"
+
     clean = []
-    best_compliant = 0.0
+    if metric_direction == "minimize":
+        best_compliant = float("inf")
+    else:
+        best_compliant = 0.0
+
     for raw in subs:
         if isinstance(raw, dict):
             s: dict[str, Any] = raw
@@ -674,19 +687,33 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
         else:
             s = {}
 
-        score = s.get("public_score", 0.0) or 0.0
+        raw_score = s.get("public_score")
+        if raw_score is None:
+            continue
+        try:
+            score = float(raw_score)
+        except (ValueError, TypeError):
+            continue
+
         clean.append(
             {
-                "id": s["id"],
-                "date": s["created_at"][:10],
-                "file": s["filename"],
+                "id": s.get("id"),
+                "date": s.get("created_at", "")[:10],
+                "file": s.get("filename"),
                 "lb_f1": score,
-                "chosen": s["chosen"],
-                "comment": s["comment"],
+                "chosen": s.get("chosen", False),
+                "comment": s.get("comment", ""),
             }
         )
-        if score > best_compliant:
-            best_compliant = score
+        if metric_direction == "minimize":
+            if score > 0.0 and score < best_compliant:
+                best_compliant = score
+        else:
+            if score > best_compliant:
+                best_compliant = score
+
+    if best_compliant == float("inf"):
+        best_compliant = 0.0
 
     chosen = [s for s in clean if s["chosen"]]
     return {
@@ -712,6 +739,15 @@ def write_compliance_log(
 ) -> None:
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        from zindian.config import ChallengeConfig
+
+        config = ChallengeConfig.load()
+        metric_name = (config.get("metric") or "f1").upper()
+    except Exception:
+        metric_name = "F1"
+    metric_label = f"LB {metric_name}"
+
     lines = [
         "# Zindi Monitor Report",
         f"**Competition**: {slug}",
@@ -743,7 +779,7 @@ def write_compliance_log(
         "",
         "## Submission Board",
         "",
-        f"{'ID':<12} {'Date':<12} {'LB F1':>12} {'Chosen':>8}  File",
+        f"{'ID':<12} {'Date':<12} {metric_label:>12} {'Chosen':>8}  File",
         "-" * 100,
     ]
     for s in sub_intel.get("all", []):
@@ -865,12 +901,12 @@ def update_state(
     # Calculate overfit_risk using direction-aware drift check
     try:
         from zindian.config import ChallengeConfig
+
         config_obj = ChallengeConfig.load()
         metric_direction = str(config_obj.get("metric_direction", "maximize")).lower()
-        drift_threshold = float(state.get(
-            "drift_threshold",
-            config_obj.get("drift_threshold", 0.05)
-        ))
+        drift_threshold = float(
+            state.get("drift_threshold", config_obj.get("drift_threshold", 0.05))
+        )
 
         # Get anchor OOF score from generic key (fallback to metric-specific keys)
         oof_score = state.get("anchor_oof_score")
@@ -885,34 +921,37 @@ def update_state(
                 overfit_risk = delta > drift_threshold
             else:
                 overfit_risk = -delta > drift_threshold
-            print(f"  [skill_00] Drift check: OOF={oof_score:.5f}, LB={lb_score:.5f}, Delta={delta:.5f}, Threshold={drift_threshold:.5f} -> overfit_risk={overfit_risk}")
+            print(
+                f"  [skill_00] Drift check: OOF={oof_score:.5f}, LB={lb_score:.5f}, Delta={delta:.5f}, Threshold={drift_threshold:.5f} -> overfit_risk={overfit_risk}"
+            )
         else:
             overfit_risk = False
     except Exception as exc:
         print(f"  ⚠️ Failed to calculate overfit_risk: {exc}")
         overfit_risk = False
 
+    # Build community_signals from flagged discussions
+    community_signals = []
+    for f in flagged:
+        community_signals.append(
+            {
+                "title": f["title"],
+                "published": f["published"],
+                "url": f["url"],
+                "classification": f.get("classification"),
+                "external_sources": f.get("external_sources", []),
+                "resolved_by_organizer": f.get("resolved_by_organizer", False),
+            }
+        )
+
     store.update(
         anchor_rank=lb_intel.get("my_rank"),
         remaining_submissions=lb_intel.get("remaining"),
         overfit_risk=overfit_risk,
-        compliance={
-            "last_checked": datetime.now(timezone.utc).isoformat(),
-            "total_discussions": len(all_discussions),
-            "flagged_count": len(flagged),
-            "flagged_titles": [f["title"] for f in flagged],
-            "external_sources": list(
-                set(src for f in flagged for src in f.get("external_sources", []))
-            ),
-            "agent_must_read": any(
-                not f.get("superseded", False)
-                and f.get("classification") in ("ban", "clarify")
-                for f in flagged
-            ),
-        },
+        community_signals=community_signals,
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print("  ✅ SKILL_STATE.json updated")
+    print("  ✅ SKILL_STATE.json updated (community_signals only, config frozen)")
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -1027,7 +1066,12 @@ def run(
         print(f"  Total submissions   : {sub_intel['total']}")
         print(f"  Best LB score       : {sub_intel['best_score']:.9f}")
         print(f"  Chosen submissions  : {sub_intel['chosen_count']}/2")
-        print(f"\n  {'ID':<12} {'Date':<12} {'LB F1':>12} {'Chosen':>8}  File")
+        try:
+            metric_name = (config.get("metric") or "f1").upper()
+        except Exception:
+            metric_name = "F1"
+        metric_label = f"LB {metric_name}"
+        print(f"\n  {'ID':<12} {'Date':<12} {metric_label:>12} {'Chosen':>8}  File")
         print(f"  {'-' * 80}")
         for s in sub_intel["all"]:
             chosen = "YES" if s["chosen"] else "   "
@@ -1049,6 +1093,7 @@ def run(
         flagged, all_discussions, comp_intel, lb_intel, sub_intel, slug, paths
     )
     write_monitor_json(comp_intel, lb_intel, sub_intel, flagged, paths)
+    # Only write community_signals to SKILL_STATE.json (config frozen post-Phase 1)
     update_state(comp_intel, lb_intel, sub_intel, flagged, all_discussions, paths)
 
     # ── Summary ───────────────────────────────────────────────

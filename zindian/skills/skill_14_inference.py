@@ -22,6 +22,7 @@ Contract (SoT §4 / §8):
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import os
@@ -112,7 +113,7 @@ def _enforce_binary(values: np.ndarray) -> np.ndarray:
 
 
 def _enforce_regression_bounds(
-    values: np.ndarray, bounds: dict[str, Any]
+    values: np.ndarray, bounds: dict[str, Any], submission_log1p: bool = False
 ) -> np.ndarray:
     """Clip regression predictions to `target_domain_bounds` and assert in-range."""
     lo_raw = bounds.get("min", None)
@@ -123,6 +124,9 @@ def _enforce_regression_bounds(
         )
     lo = float(lo_raw)
     hi = float(hi_raw)
+    if submission_log1p:
+        lo = float(np.log1p(lo))
+        hi = float(np.log1p(hi))
     if not np.isfinite(values).all():
         raise ValueError("Regression submission contains non-finite values (NaN/Inf).")
     clipped = np.clip(values.astype(np.float64), lo, hi)
@@ -135,6 +139,7 @@ def _enforce_submission_values(
     task_type: str,
     use_probabilities: bool,
     target_domain_bounds: dict[str, Any],
+    submission_log1p: bool = False,
 ) -> pd.DataFrame:
     """Apply task-aware validation and clipping to the prediction column."""
     if target_column not in df.columns:
@@ -158,7 +163,7 @@ def _enforce_submission_values(
             values = _enforce_binary(values.astype(np.float64))
     elif task_type == "regression":
         values = _enforce_regression_bounds(
-            values.astype(np.float64), target_domain_bounds
+            values.astype(np.float64), target_domain_bounds, submission_log1p
         )
     else:
         raise ValueError(
@@ -255,14 +260,25 @@ def run(
     use_probabilities = bool(config.get("use_probabilities", False))
     bounds_cfg = config.get("target_domain_bounds") or {}
     target_domain_bounds = bounds_cfg if isinstance(bounds_cfg, dict) else {}
+    submission_log1p = bool(config.get("submission_log1p", False))
 
     if task_type == "regression":
         corrected = _enforce_submission_values(
-            corrected, target_column, task_type, use_probabilities, target_domain_bounds
+            corrected,
+            target_column,
+            task_type,
+            use_probabilities,
+            target_domain_bounds,
+            submission_log1p,
         )
     else:
         corrected = _enforce_submission_values(
-            corrected, target_column, task_type, use_probabilities, target_domain_bounds
+            corrected,
+            target_column,
+            task_type,
+            use_probabilities,
+            target_domain_bounds,
+            submission_log1p,
         )
 
     # Placeholder: future group-level smoothing or prevalence-correction hooks

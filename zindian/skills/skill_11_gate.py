@@ -5,6 +5,7 @@ Blocks if no variant passed the gate this round.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import subprocess
 from datetime import datetime, timezone
@@ -83,29 +84,47 @@ def _effective_thresholds(
         # Classification: bounded metrics — no scale correction needed.
         return variance_gate_threshold, gate_margin, None
 
-    if metric == "rmsle":
+    # SoT v2.2 Generalised Regression: explicit routing for each metric family
+    SCALE_INVARIANT_METRICS = frozenset({"rmsle"})
+    SCALE_SENSITIVE_METRICS = frozenset(
+        {
+            "rmse",
+            "root_mean_squared_error",
+            "mae",
+            "mean_absolute_error",
+        }
+    )
+
+    if metric in SCALE_INVARIANT_METRICS:
         # RMSLE is computed in log-space and is already scale-invariant.
         # Raw thresholds apply with no normalisation.
         return variance_gate_threshold, gate_margin, None
 
-    target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
+    if metric in SCALE_SENSITIVE_METRICS or (metric not in SCALE_INVARIANT_METRICS):
+        # Catch-all: treat unknown regression metrics as scale-sensitive.
+        # This prevents silent raw-threshold fallback for future metrics
+        # that should be scaled but haven't been added to the set yet.
+        target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
 
-    if target_std == 0.0:
-        # Degenerate target: skill_04 may not have written target_std yet,
-        # or the target has zero variance. Fall back to raw thresholds and
-        # return a warning for the caller to log to state.
-        warning = (
-            "Degenerate target_std (0.0) in skill_11_gate: "
-            "effective thresholds falling back to raw config values. "
-            "Verify skill_04 EDA output has written target_std correctly."
-        )
-        return variance_gate_threshold, gate_margin, warning
+        if target_std == 0.0:
+            # Degenerate target: skill_04 may not have written target_std yet,
+            # or the target has zero variance. Fall back to raw thresholds and
+            # return a warning for the caller to log to state.
+            warning = (
+                "Degenerate target_std (0.0) in skill_11_gate: "
+                "effective thresholds falling back to raw config values. "
+                "Verify skill_04 EDA output has written target_std correctly."
+            )
+            return variance_gate_threshold, gate_margin, warning
 
-    # Original-scale regression metrics (RMSE, MAE): scale thresholds by
-    # target_std to make them magnitude-invariant across competitions.
-    effective_variance = variance_gate_threshold * (target_std**2)
-    effective_margin = gate_margin * target_std
-    return effective_variance, effective_margin, None
+        # Original-scale regression metrics (RMSE, MAE): scale thresholds by
+        # target_std to make them magnitude-invariant across competitions.
+        effective_variance = variance_gate_threshold * (target_std**2)
+        effective_margin = gate_margin * target_std
+        return effective_variance, effective_margin, None
+
+    # Safety fallback (should not be reached if metric sets are comprehensive)
+    return variance_gate_threshold, gate_margin, None
 
 
 def _baseline_score(state: dict, metric_key: str) -> tuple[float | None, str]:
@@ -319,20 +338,21 @@ def run() -> dict:
 
     updates = {
         "anchor_oof_score": best_score,
-        "anchor_oof_auc": state.get("best_variant_oof_auc"),
-        "anchor_oof_f1": state.get("best_variant_oof_f1"),
+        f"anchor_oof_{metric_key}": best_score,
         "anchor_git_branch": new_branch,
         "feature_round": round_num + 1,
         "variants_tested": 0,
         "variants_passed": 0,
         "best_variant_this_round": None,
-        "best_variant_oof_auc": None,
-        "best_variant_oof_f1": None,
         "best_variant_oof_score": None,
         f"best_variant_oof_{metric_key}": None,
         "dag_phase": "phase_3_anchor_promoted",
         "last_updated": datetime.now(timezone.utc).isoformat(),
-        "phase_3_gate_diagnosis": {**diagnosis, "passed": True, "new_branch": new_branch},
+        "phase_3_gate_diagnosis": {
+            **diagnosis,
+            "passed": True,
+            "new_branch": new_branch,
+        },
     }
     store.update(**updates)
     print(f"✅ SKILL_STATE.json — new anchor {metric_key.upper()}: {best_score:.5f}")

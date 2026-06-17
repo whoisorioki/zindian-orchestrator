@@ -21,6 +21,7 @@ Does NOT write:
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
@@ -121,22 +122,19 @@ def run(
         task_label = _task_type_display(task_type)
 
         # Initialize ledger (creates DB if doesn't exist)
-        ledger = Ledger(ledger_path)
+        with Ledger(ledger_path) as ledger:
+            # Verify schema by querying
+            try:
+                experiments = ledger.query("SELECT COUNT(*) as count FROM experiments")
+                exp_count = experiments[0]["count"] if experiments else 0
+            except Exception:
+                exp_count = 0
 
-        # Verify schema by querying
-        try:
-            experiments = ledger.query("SELECT COUNT(*) as count FROM experiments")
-            exp_count = experiments[0]["count"] if experiments else 0
-        except Exception:
-            exp_count = 0
-
-        try:
-            submissions = ledger.query("SELECT COUNT(*) as count FROM submissions")
-            sub_count = submissions[0]["count"] if submissions else 0
-        except Exception:
-            sub_count = 0
-
-        ledger.close()
+            try:
+                submissions = ledger.query("SELECT COUNT(*) as count FROM submissions")
+                sub_count = submissions[0]["count"] if submissions else 0
+            except Exception:
+                sub_count = 0
 
         # ── Session-scoped startup logging ─────────────────────────
         # Route startup events to session-scoped files, NOT history_log.jsonl
@@ -213,6 +211,14 @@ def run(
             except Exception:
                 pass
 
+        def _rel(p) -> str:
+            if not p:
+                return ""
+            try:
+                return str(Path(p).resolve().relative_to(paths.root.resolve()))
+            except Exception:
+                return str(p)
+
         # ── Phase transition event (session-scoped) ────────────────
         phase_event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -220,17 +226,17 @@ def run(
             "competition_id": config.slug,
             "task_type": task_type,
             "metric_label": metric_label,
-            "report_path": str(report_path),
+            "report_path": _rel(report_path),
         }
         _log_startup_event(session_log_path, phase_event)
 
         return {
             "status": "GO",
-            "ledger_path": str(ledger_path),
+            "ledger_path": _rel(ledger_path),
             "experiments_count": exp_count,
             "submissions_count": sub_count,
-            "phase_1_summary_path": str(report_path),
-            "session_log": str(session_log_path),
+            "phase_1_summary_path": _rel(report_path),
+            "session_log": _rel(session_log_path),
             "message": "Session log initialised, phase summary generated.",
         }
 
