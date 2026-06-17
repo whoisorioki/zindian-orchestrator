@@ -9,6 +9,7 @@ Usage: python -m zindian.skills.skill_09_calibration --method isotonic
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone

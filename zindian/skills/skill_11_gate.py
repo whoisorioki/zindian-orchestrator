@@ -5,6 +5,7 @@ Blocks if no variant passed the gate this round.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import subprocess
 from datetime import datetime, timezone
@@ -337,15 +338,12 @@ def run() -> dict:
 
     updates = {
         "anchor_oof_score": best_score,
-        "anchor_oof_auc": state.get("best_variant_oof_auc"),
-        "anchor_oof_f1": state.get("best_variant_oof_f1"),
+        f"anchor_oof_{metric_key}": best_score,
         "anchor_git_branch": new_branch,
         "feature_round": round_num + 1,
         "variants_tested": 0,
         "variants_passed": 0,
         "best_variant_this_round": None,
-        "best_variant_oof_auc": None,
-        "best_variant_oof_f1": None,
         "best_variant_oof_score": None,
         f"best_variant_oof_{metric_key}": None,
         "dag_phase": "phase_3_anchor_promoted",

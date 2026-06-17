@@ -5,6 +5,7 @@ Must run after data download and before any data transformation.
 Halts if hash shifts on re-run — indicates data tampering or corruption.
 """
 
+import tabula.skill_state_autopatch  # noqa
 import hashlib
 import pandas as pd
 from pathlib import Path

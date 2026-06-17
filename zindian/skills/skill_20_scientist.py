@@ -4,6 +4,7 @@ Synthesizes domain hypotheses + prior art, then runs two-stage validation.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone

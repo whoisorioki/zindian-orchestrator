@@ -8,6 +8,7 @@ Usage: python3 -m zindian.skills.skill_04_eda
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import traceback

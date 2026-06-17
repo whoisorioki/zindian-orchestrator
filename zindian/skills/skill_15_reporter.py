@@ -21,6 +21,7 @@ Does NOT write:
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
@@ -121,22 +122,19 @@ def run(
         task_label = _task_type_display(task_type)
 
         # Initialize ledger (creates DB if doesn't exist)
-        ledger = Ledger(ledger_path)
+        with Ledger(ledger_path) as ledger:
+            # Verify schema by querying
+            try:
+                experiments = ledger.query("SELECT COUNT(*) as count FROM experiments")
+                exp_count = experiments[0]["count"] if experiments else 0
+            except Exception:
+                exp_count = 0
 
-        # Verify schema by querying
-        try:
-            experiments = ledger.query("SELECT COUNT(*) as count FROM experiments")
-            exp_count = experiments[0]["count"] if experiments else 0
-        except Exception:
-            exp_count = 0
-
-        try:
-            submissions = ledger.query("SELECT COUNT(*) as count FROM submissions")
-            sub_count = submissions[0]["count"] if submissions else 0
-        except Exception:
-            sub_count = 0
-
-        ledger.close()
+            try:
+                submissions = ledger.query("SELECT COUNT(*) as count FROM submissions")
+                sub_count = submissions[0]["count"] if submissions else 0
+            except Exception:
+                sub_count = 0
 
         # ── Session-scoped startup logging ─────────────────────────
         # Route startup events to session-scoped files, NOT history_log.jsonl

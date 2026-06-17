@@ -5,6 +5,7 @@ with all rules, limits, and constraints extracted from the response.
 Must run after Skill 00 (compliance check).
 """
 
+import tabula.skill_state_autopatch  # noqa
 import os
 import json
 import requests

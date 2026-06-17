@@ -4,6 +4,7 @@ Canonical librarian implementation for literature mining and prior-art tracking.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import time

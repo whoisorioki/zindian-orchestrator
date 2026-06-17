@@ -8,6 +8,7 @@ Must run after Skill 07 feature engineering completes.
 
 from __future__ import annotations
 
+import tabula.skill_state_autopatch  # noqa
 import json
 import re
 from datetime import datetime, timezone
@@ -495,21 +496,20 @@ def run(
     )
 
     # ── Log to DuckDB ledger ───────────────────────────────────
-    ledger = Ledger()
-    exp_id = ledger.log_experiment(
-        branch_name="anchor-baseline",
-        # Classification metrics are tracked in SKILL_STATE and notes; avoid writing F1 into RMSE field.
-        oof_rmse=None,
-        feature_count=feature_count,
-        calibration_method="none",
-        gate_result="PASS",
-        gate_reason="Initial anchor baseline — Base features only. Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
-            best_t, oof_auc
-        ),
-        dag_phase="phase_2_anchor_confirmed",
-        notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
-    )
-    ledger.close()
+    with Ledger() as ledger:
+        exp_id = ledger.log_experiment(
+            branch_name="anchor-baseline",
+            # Classification metrics are tracked in SKILL_STATE and notes; avoid writing F1 into RMSE field.
+            oof_rmse=None,
+            feature_count=feature_count,
+            calibration_method="none",
+            gate_result="PASS",
+            gate_reason="Initial anchor baseline — Base features only. Metric: F1 Score (threshold={:.2f}), AUC={:.4f}".format(
+                best_t, oof_auc
+            ),
+            dag_phase="phase_2_anchor_confirmed",
+            notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; cv_strategy_id={cv_strategy_id}",
+        )
     print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
 
     # ── Update SKILL_STATE.json ────────────────────────────────
@@ -517,12 +517,8 @@ def run(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
     )
     if retraining_active:
-        f1_key = "anchor_oof_f1_augmented"
-        auc_key = "anchor_oof_auc_augmented"
         score_key = "anchor_oof_score_augmented"
     else:
-        f1_key = "anchor_oof_f1"
-        auc_key = "anchor_oof_auc"
         score_key = "anchor_oof_score"
 
     task_type = str(config.get("task_type", "classification")).lower()
@@ -558,9 +554,6 @@ def run(
         "dag_phase": "phase_2_anchor_confirmed",
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    # Deprecated: anchor_oof_f1 and anchor_oof_auc are preserved for backward compatibility
-    updates[f1_key] = oof_f1
-    updates[auc_key] = oof_auc
 
     state_store.update(**updates)
 

@@ -15,6 +15,7 @@ Usage:
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import sys

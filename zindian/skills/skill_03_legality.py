@@ -14,6 +14,7 @@ Generalisable: reads from `zindi_monitor.json`, `challenge_config.json`, and
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone

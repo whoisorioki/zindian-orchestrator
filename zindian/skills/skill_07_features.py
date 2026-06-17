@@ -20,6 +20,7 @@ All such values are read from challenge_config.json at runtime.
 """
 
 from __future__ import annotations
+import tabula.skill_state_autopatch  # noqa
 
 import json
 import os
@@ -777,9 +778,7 @@ def run(
     baseline_val = state.get(baseline_key) or state.get(fallback_key)
     baseline_score = float(baseline_val or 0.0)
 
-    anchor_auc = float(
-        state.get("anchor_oof_score" if task_type == "regression" else "anchor_oof_auc") or 0.0
-    )
+    anchor_auc = float(state.get("anchor_oof_score") or 0.0)
 
     if variant_name is not None and baseline_score == 0.0:
         raise RuntimeError(
