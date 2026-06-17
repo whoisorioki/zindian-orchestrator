@@ -198,6 +198,7 @@ def compute_oof_predictions(
         early_stopping_rounds=50,
         scale=True,
         regression_metric=regression_metric,
+        variant_name=variant_name,
     )
 
     if task_type == "regression":
@@ -308,6 +309,7 @@ def run(
     n_splits: int = 5,
     random_seed: int | None = None,
     submit: bool = False,
+    variant_name: str | None = None,
 ) -> dict:
     """
     Skill 08 — Anchor Baseline.
@@ -622,6 +624,11 @@ if __name__ == "__main__":
     import sys
 
     submit_flag = "--submit" in sys.argv
-    result = run(submit=submit_flag)
+    variant_arg = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--variant" and i + 1 < len(sys.argv):
+            variant_arg = sys.argv[i + 1]
+            break
+    result = run(submit=submit_flag, variant_name=variant_arg)
     printable = {k: v for k, v in result.items() if k != "submission_result"}
     print(json.dumps(printable, indent=2))

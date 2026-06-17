@@ -75,6 +75,7 @@ def train_lightgbm_cv(
         | None
     ) = None,
     regression_metric: str | None = None,
+    variant_name: str | None = None,
 ) -> LightGBMRunResult:
     """Train a LightGBM CV model and return metrics.
     Supports both classification and regression based on challenge_config.task_type.
@@ -118,6 +119,33 @@ def train_lightgbm_cv(
     }
 
     # If per_fold_feature_fn is provided, X and X_test will be computed inside the fold loop
+    
+    # Read variant model_override from sidecar if present
+    _variant_objective = None
+    _variant_max_delta = None
+    if variant_name is not None:
+        import pathlib as _pathlib
+        import json as _json
+        try:
+            from zindian.config import ChallengeConfig
+            _cfg = ChallengeConfig.load()._data
+            _comp_slug = _cfg.get("slug") or _cfg.get("competition_slug") or ""
+            if _comp_slug:
+                _variant_sidecar = (
+                    _pathlib.Path(__file__).parent.parent.parent
+                    / "competitions"
+                    / _comp_slug
+                    / "variants"
+                    / f"{variant_name}.json"
+                )
+                if _variant_sidecar.exists():
+                    _sidecar_data = _json.loads(_variant_sidecar.read_text())
+                    _model_override = _sidecar_data.get("model_override", {})
+                    _variant_objective = _model_override.get("objective")
+                    _variant_max_delta = _model_override.get("max_delta_step")
+        except Exception:
+            pass
+    
     if task_type == "regression":
         y = np.asarray(train[target_col].values, dtype=np.float64)
         # Resolve target transformation based on regression metric (SoT v2.2)
@@ -146,7 +174,14 @@ def train_lightgbm_cv(
         X = np.zeros((len(train), len(feature_cols)), dtype=np.float64)
         X_test = np.zeros((len(test), len(feature_cols)), dtype=np.float64)
     if task_type == "regression":
-        lgb_params.update({"objective": "regression", "metric": "rmse"})
+        if _variant_objective == "poisson":
+            lgb_params.update({
+                "objective": "poisson",
+                "metric": "rmse",
+                "max_delta_step": _variant_max_delta or 0.7,
+            })
+        else:
+            lgb_params.update({"objective": "regression", "metric": "rmse"})
     else:
         # For non-binary/multiclass target spaces in special metrics, use multiclass objective
         n_classes = len(np.unique(y))
@@ -209,8 +244,12 @@ def train_lightgbm_cv(
             X = X_full
 
         # Target transformation per SoT v2.2 Regression Target Transformation Lifecycle:
+        #   poisson -> raw counts (log-link applied internally by LightGBM)
         #   rmsle  -> log1p(y)  ;  RMSE/MAE -> identity
-        if task_type == "regression" and use_log1p:
+        if _variant_objective == "poisson":
+            y_train_fold = y[tr_idx].astype(np.float64)
+            y_val_fold = y[val_idx].astype(np.float64)
+        elif task_type == "regression" and use_log1p:
             y_train_fold = np.log1p(y[tr_idx])
             y_val_fold = np.log1p(y[val_idx])
         else:
@@ -251,10 +290,14 @@ def train_lightgbm_cv(
             test_pred_flat = test_pred_raw
 
         # Prediction inverse-mapping per SoT v2.2:
+        #   poisson -> clip(raw, 0) only (already in count space)
         #   rmsle  -> clip(raw, 0) then expm1
         #   RMSE/MAE -> clip(raw, domain_bounds)
         if task_type == "regression":
-            if use_log1p:
+            if _variant_objective == "poisson":
+                val_pred_final = np.clip(val_pred_flat, 0, None)
+                test_pred_final = np.clip(test_pred_flat, 0, None)
+            elif use_log1p:
                 val_pred_final = np.expm1(np.clip(val_pred_flat, 0, None))
                 test_pred_final = np.expm1(np.clip(test_pred_flat, 0, None))
             else:
