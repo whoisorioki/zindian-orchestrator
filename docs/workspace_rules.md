@@ -76,11 +76,12 @@ zindian_orchestrator/
 │   ├── verify_phase_b.py
 │   ├── write_oof_meta.py
 │   └── zindian_audit.sh
-├── docs/                     # Documentation
+├── docs/                           # Documentation
 │   ├── source_of_truth.md        # THE authoritative spec (2521 lines)
 │   ├── architecture_matrix.md
 │   ├── orchestrator_current_state.md
-│   └── refactor_reports/
+│   ├── refactor_reports/
+|   └── session_logs/
 ├── templates/                # JSON templates
 │   ├── challenge_config_template.json
 │   └── SKILL_STATE_template.json
