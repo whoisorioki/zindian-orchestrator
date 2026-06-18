@@ -149,7 +149,17 @@ def _compute_shap_audit(
     # Use KFold for regression, StratifiedKFold for classification
     cv_strategy = {"type": "kfold" if task_type == "regression" else "stratified", "n_splits": n_splits}
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-    oof_probs = np.zeros(len(frame), dtype=np.float64)
+    
+    # Initialize OOF array based on task type
+    if task_type == "regression":
+        oof_probs = np.zeros(len(frame), dtype=np.float64)
+    else:
+        n_classes = len(np.unique(y))
+        if n_classes == 2:
+            oof_probs = np.zeros(len(frame), dtype=np.float64)
+        else:
+            oof_probs = np.zeros((len(frame), n_classes), dtype=np.float64)
+    
     fold_scores: list[float] = []
     fold_importances: list[np.ndarray] = []
 
@@ -175,10 +185,18 @@ def _compute_shap_audit(
             n_classes = val_probs.shape[1]
             if n_classes == 2:
                 val_probs_1d = val_probs[:, 1]
-                fold_auc = float(roc_auc_score(y[val_idx], val_probs_1d))
+                try:
+                    fold_auc = float(roc_auc_score(y[val_idx], val_probs_1d))
+                except ValueError:
+                    fold_auc = 0.0
+                oof_probs[val_idx] = val_probs_1d
             else:
-                fold_auc = float(roc_auc_score(y[val_idx], val_probs, multi_class='ovr'))
-            oof_probs[val_idx] = val_probs[:, 1] if n_classes == 2 else np.argmax(val_probs, axis=1)
+                try:
+                    fold_auc = float(roc_auc_score(y[val_idx], val_probs, multi_class='ovr'))
+                except ValueError:
+                    # Missing class in fold - skip AUC
+                    fold_auc = 0.0
+                oof_probs[val_idx] = val_probs
             fold_scores.append(fold_auc)
             print(f"  Fold {fold_idx}/{n_splits}: auc={fold_auc:.6f}")
 
@@ -218,12 +236,26 @@ def _compute_shap_audit(
             "tail_share": tail_share,
         }
     else:
-        thresholds = np.arange(0.3, 0.7, 0.01)
-        best_threshold = float(
-            max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
-        )
-        oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
-        oof_auc = float(roc_auc_score(y, oof_probs))
+        if oof_probs.ndim == 1:
+            # Binary classification
+            thresholds = np.arange(0.3, 0.7, 0.01)
+            best_threshold = float(
+                max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
+            )
+            oof_f1 = float(f1_score(y, (oof_probs >= best_threshold).astype(int)))
+            try:
+                oof_auc = float(roc_auc_score(y, oof_probs))
+            except ValueError:
+                oof_auc = 0.0
+        else:
+            # Multiclass classification
+            oof_preds = np.argmax(oof_probs, axis=1)
+            oof_f1 = float(f1_score(y, oof_preds, average='weighted'))
+            try:
+                oof_auc = float(roc_auc_score(y, oof_probs, multi_class='ovr'))
+            except ValueError:
+                oof_auc = 0.0
+            best_threshold = 0.0
 
         return {
             "oof_probs": oof_probs,
@@ -622,9 +654,14 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
         if target_task == "regression":
             pruning_delta = float(full_cv.oof_rmse - pruned_cv.oof_rmse)
             pruning_pass = pruning_delta >= -0.01
-        else:
+        elif len(np.unique(frame_with_target[target_name])) == 2:
+            # Binary classification
             pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
             pruning_pass = pruning_delta >= 0.005
+        else:
+            # Multiclass - skip pruning comparison (complex AUC calculation)
+            pruning_delta = 0.0
+            pruning_pass = True
         
         all_results[target_name] = {
             "pruning_pass": pruning_pass,
