@@ -884,6 +884,125 @@ def write_round_report(
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 
+# ── Multi-Target Variant Training ────────────────────────────────────────────
+
+def _run_multi_target_variant(
+    variant_name, config, state, paths, baseline_score, 
+    effective_gate_margin, cv_strategy, train_feat, test_feat
+):
+    """Train variant across multiple targets per SoT v2.2.1 A11."""
+    from zindian.state import write_oof_record, SkillStateStore
+    
+    target_config = config.get("target_config", {})
+    targets = target_config.get("targets", [])
+    
+    print(f"\n🎯 MULTI-TARGET VARIANT: {variant_name}")
+    print(f"Training {len(targets)} targets: {[t['name'] for t in targets]}\n")
+    
+    # Load raw data for targets
+    input_files = config.get("input_files", {}) or {}
+    train_file = input_files.get("train", "Train.csv")
+    raw_train = pd.read_csv(paths.data_raw_dir / train_file)
+    
+    id_col = config.get("id_col") or "ID"
+    cols_cfg = config.get("columns", {}) or {}
+    lat_col = cols_cfg.get("latitude", "Latitude")
+    lon_col = cols_cfg.get("longitude", "Longitude")
+    DROP = {id_col, lat_col, lon_col, "ID", "target"}
+    all_features = [c for c in train_feat.columns if c not in DROP]
+    
+    all_metrics = {}
+    all_oof = {}
+    
+    for target_spec in targets:
+        target_name = target_spec["name"]
+        target_task = target_spec["task_type"]
+        
+        print(f"\n{'─' * 60}")
+        print(f"Target: {target_name} ({target_task})")
+        print(f"{'─' * 60}")
+        
+        # Prepare train data with this target
+        train_with_target = train_feat.copy()
+        target_series = raw_train[target_name]
+        if target_series.dtype == 'object':
+            target_series = pd.factorize(target_series)[0]
+        
+        # Remove other targets from features
+        other_targets = [t["name"] for t in targets if t["name"] != target_name]
+        for ot in other_targets:
+            if ot in train_with_target.columns:
+                train_with_target = train_with_target.drop(columns=[ot])
+                if ot in all_features:
+                    all_features.remove(ot)
+        
+        train_with_target[target_name] = target_series
+        
+        # Override config for this target
+        target_config_override = ChallengeConfig(
+            path=config.path,
+            _data={
+                **config._data,
+                "target_col": target_name,
+                "task_type": target_task,
+                "metric": target_spec.get("metric", "rmse" if target_task == "regression" else "f1_score"),
+            }
+        )
+        
+        # Train variant for this target
+        SEEDS = [42, 43, 44]
+        seed_results = []
+        
+        for s in SEEDS:
+            print(f"\n  -- Seed {s} --")
+            r = train_variant(
+                train_with_target, test_feat, all_features, variant_name,
+                baseline_score, None, seed=s,
+                config=target_config_override, state=state,
+                cv_strategy=cv_strategy, target_col=target_name,
+                task_type=target_task, gate_margin=effective_gate_margin
+            )
+            seed_results.append(r)
+        
+        # Aggregate results
+        mean_oof = np.mean([r["oof_probs"] for r in seed_results], axis=0)
+        all_oof[target_name] = mean_oof
+        
+        if target_task == "regression":
+            metric_val = float(np.mean([r.get("oof_rmse", 0) for r in seed_results]))
+            all_metrics[target_name] = {"oof_rmse": metric_val}
+        else:
+            all_metrics[target_name] = {
+                "oof_f1": float(np.mean([r.get("oof_f1", 0) for r in seed_results])),
+                "oof_auc": float(np.mean([r.get("oof_auc", 0) for r in seed_results]))
+            }
+        
+        # Write OOF record
+        store = SkillStateStore(paths.state_path)
+        oof_1d = mean_oof if mean_oof.ndim == 1 else np.argmax(mean_oof, axis=1)
+        write_oof_record(
+            store,
+            branch_name=f"{variant_name}_{target_name}",
+            scores=oof_1d.tolist(),
+            cv_strategy_id=state.get("anchor_cv_strategy_id", "stratified_5fold"),
+            seed=42,
+            model_config={"target_name": target_name, "variant": variant_name}
+        )
+    
+    # Compute composite score
+    rmse = all_metrics.get("total_goals", {}).get("oof_rmse", 0)
+    f1 = all_metrics.get("Target", {}).get("oof_f1", 0)
+    composite = (1 - rmse/10) * 0.5 + f1 * 0.5
+    
+    print(f"\n{'=' * 60}")
+    print(f"VARIANT {variant_name} COMPOSITE: {composite:.6f}")
+    print(f"  RMSE: {rmse:.4f} | F1: {f1:.4f}")
+    print(f"  Baseline: {baseline_score:.6f} | Delta: {composite - baseline_score:+.6f}")
+    print(f"{'=' * 60}")
+    
+    return {"status": "OK", "composite_score": composite, "metrics": all_metrics}
+
+
 def run(
     variant_name: str | None = None, force_save: bool = False, fetch: bool = False
 ) -> dict:
@@ -1049,6 +1168,14 @@ def run(
     if variant_name is None:
         print("\n✅ Extraction complete. Pass --variant <name> to run a variant.")
         return {"status": "extracted"}
+
+    # ── Multi-target detection ────────────────────────────────
+    target_config = config.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target_variant(
+            variant_name, config, state, paths, baseline_score, 
+            effective_gate_margin, cv_strategy, train_feat, test_feat
+        )
 
     # ── Phase C: Build VARIANTS dict from config ──────────────
     # All column names come from config — no competition-specific strings here.
