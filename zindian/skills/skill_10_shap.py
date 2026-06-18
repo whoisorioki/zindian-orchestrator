@@ -94,15 +94,8 @@ def _train_shap_fold_model(
     val_y: np.ndarray,
     *,
     seed: int,
+    task_type: str = "classification",
 ) -> lgb.LGBMClassifier | lgb.LGBMRegressor:
-    try:
-        from zindian.config import ChallengeConfig
-
-        config = ChallengeConfig.load()
-        task_type = config.get("task_type", "classification")
-    except Exception:
-        task_type = "classification"
-
     if task_type == "regression":
         model = lgb.LGBMRegressor(
             n_estimators=500,
@@ -153,7 +146,9 @@ def _compute_shap_audit(
         seed = get_seed()
     seed = int(seed)
 
-    splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed)
+    # Use KFold for regression, StratifiedKFold for classification
+    cv_strategy = {"type": "kfold" if task_type == "regression" else "stratified", "n_splits": n_splits}
+    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     oof_probs = np.zeros(len(frame), dtype=np.float64)
     fold_scores: list[float] = []
     fold_importances: list[np.ndarray] = []
@@ -165,6 +160,7 @@ def _compute_shap_audit(
             X[val_idx],
             y[val_idx],
             seed=seed + fold_idx,
+            task_type=task_type,
         )
         if task_type == "regression":
             val_preds = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
@@ -175,11 +171,14 @@ def _compute_shap_audit(
             fold_scores.append(fold_rmse)
             print(f"  Fold {fold_idx}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
-            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)[
-                :, 1
-            ]
-            oof_probs[val_idx] = val_probs
-            fold_auc = float(roc_auc_score(y[val_idx], val_probs))
+            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)
+            n_classes = val_probs.shape[1]
+            if n_classes == 2:
+                val_probs_1d = val_probs[:, 1]
+                fold_auc = float(roc_auc_score(y[val_idx], val_probs_1d))
+            else:
+                fold_auc = float(roc_auc_score(y[val_idx], val_probs, multi_class='ovr'))
+            oof_probs[val_idx] = val_probs[:, 1] if n_classes == 2 else np.argmax(val_probs, axis=1)
             fold_scores.append(fold_auc)
             print(f"  Fold {fold_idx}/{n_splits}: auc={fold_auc:.6f}")
 
@@ -600,13 +599,24 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
         ranking = full_audit["ranking"]
         pruning = _build_pruned_feature_set(feature_cols, ranking, frame_with_target)
         
+        # Use appropriate CV strategy for task type
+        cv_strategy_dict = {"type": "kfold" if target_task == "regression" else "stratified", "n_splits": n_splits}
+        splitter = make_cv_splitter(cv_strategy=cv_strategy_dict, random_seed=seed)
+        
+        # Pre-generate splits to avoid stratification issues
+        X_dummy = np.zeros((len(frame_with_target), 1))
+        y_dummy = frame_with_target[target_name].values
+        cv_splits = list(splitter.split(X_dummy, y_dummy))
+        
         full_cv = train_lightgbm_cv(
             train=frame_with_target, test=frame_with_target, feature_cols=feature_cols, target_col=target_name,
-            n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
+            n_splits=n_splits, random_seed=seed, cv=cv_splits, scale=True, num_boost_round=500, early_stopping_rounds=50,
+            regression_metric="rmse" if target_task == "regression" else None
         )
         pruned_cv = train_lightgbm_cv(
             train=frame_with_target, test=frame_with_target, feature_cols=pruning["pruned_features"], target_col=target_name,
-            n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
+            n_splits=n_splits, random_seed=seed, cv=cv_splits, scale=True, num_boost_round=500, early_stopping_rounds=50,
+            regression_metric="rmse" if target_task == "regression" else None
         )
         
         if target_task == "regression":
