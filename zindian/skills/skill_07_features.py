@@ -396,6 +396,7 @@ def train_variant(
         "variant-33",
         "variant-35",
         "variant-37",
+        "strength",
     }
     tuned_lgb_variants = {
         "variant-13": {
@@ -977,12 +978,16 @@ def _run_multi_target_variant(
                 "oof_auc": float(np.mean([r.get("oof_auc", 0) for r in seed_results]))
             }
         
-        # Write OOF record
+        # Write OOF record (A12 policy: use _augmented suffix during retraining)
         store = SkillStateStore(paths.state_path)
+        retraining_active = bool(
+            state.get("pseudo_label_result", {}).get("retraining_required", False)
+        )
+        branch_suffix = "_augmented" if retraining_active else ""
         oof_1d = mean_oof if mean_oof.ndim == 1 else np.argmax(mean_oof, axis=1)
         write_oof_record(
             store,
-            branch_name=f"{variant_name}_{target_name}",
+            branch_name=f"{variant_name}_{target_name}{branch_suffix}",
             scores=oof_1d.tolist(),
             cv_strategy_id=state.get("anchor_cv_strategy_id", "stratified_5fold"),
             seed=42,
