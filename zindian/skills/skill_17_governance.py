@@ -199,7 +199,7 @@ def _fetch_mock_scored_subs() -> List[Dict[str, Any]]:
 # ── Main entry point ───────────────────────────────────────────────
 
 
-def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str, Any]:
     """Run the submission governance skill.
 
     Phase contract: Verifies all prerequisite human gates, surfaces
@@ -208,6 +208,17 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         config: challenge_config.json as dict.
         state: SKILL_STATE.json as dict.
+    """
+    from zindian.paths import resolve_competition_paths
+    from zindian.config import ChallengeConfig
+    from zindian.state import SkillStateStore
+    
+    if config is None or state is None:
+        paths = resolve_competition_paths()
+        if config is None:
+            config = ChallengeConfig.load()._data
+        if state is None:
+            state = SkillStateStore(paths.state_path).read()
 
     Returns:
         Updated state dict with final selections and structural lock.

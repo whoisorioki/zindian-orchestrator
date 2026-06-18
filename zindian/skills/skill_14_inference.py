@@ -187,12 +187,13 @@ def _atomic_to_csv(df: pd.DataFrame, out_path: Path) -> None:
 
 
 def run(
-    submission_path: str,
+    submission_path: str = None,
     *,
     dry_run: bool = False,
     state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
+    Skill 14 — Inference Formatting.
     Run inference / post-processing on a submission file.
 
     Args:
@@ -204,6 +205,19 @@ def run(
     Returns:
         Dict with `status` and the resolved output path.
     """
+    from zindian.paths import resolve_competition_paths
+    
+    if submission_path is None:
+        paths = resolve_competition_paths()
+        import re
+        pattern = re.compile(r"^sub_(\d{3})_.*\.csv$")
+        highest = 0
+        if paths.submissions_dir.exists():
+            for p in paths.submissions_dir.glob("sub_*.csv"):
+                m = pattern.match(p.name)
+                if m:
+                    highest = max(highest, int(m.group(1)))
+        submission_path = str(paths.submissions_dir / f"sub_{highest + 1:03d}_final.csv")
     print("\n" + "=" * 60)
     print("SKILL 14 — Inference / Post-processing")
     print("=" * 60 + "\n")

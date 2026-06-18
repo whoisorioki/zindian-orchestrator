@@ -302,12 +302,22 @@ def _calibration_method_from_state(state: dict[str, Any], branch: str) -> str:
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 
-def run(submission_file: str, state: dict[str, Any] | None = None) -> dict:
+def run(submission_file: str = None, state: dict[str, Any] | None = None) -> dict:
     print("\n" + "=" * 60)
     print("SKILL 16 — Zindi Submission")
     print("=" * 60 + "\n")
 
     paths = resolve_competition_paths()
+    
+    if submission_file is None:
+        if paths.submissions_dir.exists():
+            files = sorted(paths.submissions_dir.glob("sub_*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if files:
+                submission_file = str(files[0])
+            else:
+                raise FileNotFoundError("No submission files found")
+        else:
+            raise FileNotFoundError("Submissions directory not found")
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     skill_state = store.read() if state is None else state
