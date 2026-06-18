@@ -792,16 +792,21 @@ def _run_multi_target(
         )
     print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
     
-    # Write OOF records for each target
+    # Write OOF records for each target (A12 policy: use _augmented suffix during retraining)
     from zindian.config import get_seed
     seed = int(random_seed if random_seed is not None else get_seed())
     cv_strategy_id = state.get("anchor_cv_strategy_id", "stratified_5fold")
+    
+    retraining_active = bool(
+        state.get("pseudo_label_result", {}).get("retraining_required", False)
+    )
+    branch_suffix = "_augmented" if retraining_active else ""
     
     for target_name, preds in all_oof.items():
         oof_1d = preds if preds.ndim == 1 else np.argmax(preds, axis=1)
         write_oof_record(
             state_store,
-            branch_name=f"anchor-baseline_{target_name}",
+            branch_name=f"anchor-baseline_{target_name}{branch_suffix}",
             scores=np.asarray(oof_1d, dtype=np.float64).tolist(),
             cv_strategy_id=cv_strategy_id,
             seed=seed,
