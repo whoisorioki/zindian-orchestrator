@@ -566,7 +566,12 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
     targets = target_config.get("targets", [])
     print(f"Analyzing {len(targets)} targets: {[t['name'] for t in targets]}\n")
     
+    # Load features and raw data with targets
     frame = _load_train_frame(paths)
+    input_files = config.get("input_files", {}) or {}
+    train_file = input_files.get("train", "Train.csv")
+    raw_train = pd.read_csv(paths.data_raw_dir / train_file)
+    
     all_results = {}
     all_pass = True
     
@@ -577,23 +582,30 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
         print(f"SHAP: {target_name} ({target_task})")
         print(f"{'─' * 60}")
         
-        if target_name not in frame.columns:
-            print(f"⚠️ Target {target_name} not in frame, skipping")
+        # Merge target from raw data
+        frame_with_target = frame.copy()
+        if target_name in raw_train.columns:
+            target_series = raw_train[target_name]
+            if target_series.dtype == 'object':
+                target_series = pd.factorize(target_series)[0]
+            frame_with_target[target_name] = target_series
+        else:
+            print(f"⚠️ Target {target_name} not in raw data, skipping")
             continue
         
-        feature_cols = _feature_columns(frame, target_name)
+        feature_cols = _feature_columns(frame_with_target, target_name)
         full_audit = _compute_shap_audit(
-            frame, feature_cols, target_name, n_splits=n_splits, seed=seed, task_type=target_task
+            frame_with_target, feature_cols, target_name, n_splits=n_splits, seed=seed, task_type=target_task
         )
         ranking = full_audit["ranking"]
-        pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
+        pruning = _build_pruned_feature_set(feature_cols, ranking, frame_with_target)
         
         full_cv = train_lightgbm_cv(
-            train=frame, test=frame, feature_cols=feature_cols, target_col=target_name,
+            train=frame_with_target, test=frame_with_target, feature_cols=feature_cols, target_col=target_name,
             n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
         )
         pruned_cv = train_lightgbm_cv(
-            train=frame, test=frame, feature_cols=pruning["pruned_features"], target_col=target_name,
+            train=frame_with_target, test=frame_with_target, feature_cols=pruning["pruned_features"], target_col=target_name,
             n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
         )
         
