@@ -759,11 +759,24 @@ def _run_multi_target(
     test_file = input_files.get("test", "Test.csv")
     raw_test = pd.read_csv(paths.data_raw_dir / test_file)
     sub_df = pd.DataFrame({id_col: raw_test[id_col]})
+    
+    # Stage name mapping for Target column
+    stage_map = {0: 'group', 1: 'group', 2: 'roundof16', 3: 'qf', 4: 'sf', 5: 'runnerup', 6: 'champion', 7: 'roundof32'}
+    
     for target_name, preds in all_test_preds.items():
         if preds.ndim > 1:
-            sub_df[target_name] = np.argmax(preds, axis=1)
+            numeric_pred = np.argmax(preds, axis=1)
         else:
-            sub_df[target_name] = preds
+            numeric_pred = preds
+        
+        # Map Target to stage names, round total_goals
+        if target_name == 'Target':
+            sub_df[target_name] = pd.Series(numeric_pred).map(stage_map).fillna('group')
+        elif target_name == 'total_goals':
+            sub_df[target_name] = np.round(numeric_pred).astype(int).clip(0, 20)
+        else:
+            sub_df[target_name] = numeric_pred
+    
     sub_path = next_submission_path(paths, suffix="anchor_multi")
     sub_df.to_csv(sub_path, index=False)
     print(f"✅ Multi-target submission saved → {sub_path}")

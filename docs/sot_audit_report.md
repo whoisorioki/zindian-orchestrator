@@ -155,6 +155,11 @@ if config.get("task_type") == "regression":
 # ... writes to OOF record
 ```
 
+**skill_08 Configuration Hierarchy (SOT):**
+1. State override (`anchor_challenge.active`) → model_family, params, n_splits
+2. Config (`challenge_config.json`) → target_col, cv_strategy, task_type, metric
+3. Fallback inference → target detection from train-only columns
+
 ---
 
 ### ✅ IMPLEMENTED: Effective Threshold Normalization (A2 Resolution)

@@ -62,18 +62,42 @@ Why it matters:
 Role:
 - Establishes the first confirmed anchor.
 - Produces the baseline submission that later rounds must beat.
+- Implements hierarchical configuration resolution (state → config → fallback).
 
 Current behavior:
-- Loads processed feature matrices.
-- Trains a baseline model on compliant TerraClimate features only.
-- Validates the submission format before the human gate.
-- Updates state with anchor metrics and branch metadata.
-- For regression tasks, computes secondary metrics (MAE, MAPE, R²) and writes them to a nested `secondary_metrics` block in the OOF record.
-- Handles target log-transformations, inverse-transforms, and non-negativity clipping when primary metric is RMSLE.
+- Loads processed feature matrices from `features_{train|test}.csv`.
+- Resolves target column via config hierarchy: `target_col` → `target_column` → inference.
+- Resolves CV strategy via state override: `cv_strategy_override.active` → `config.cv_strategy.type` → "stratified".
+- Applies policy filters from `challenge_config.json` to exclude features.
+- Supports `anchor_challenge` state override for model_family, params, n_splits.
+- Trains baseline LightGBM model with 3-layer seeding (random, numpy, model).
+- Handles target transformations for regression (log1p for RMSLE, SoT v2.2).
+- Computes secondary metrics (MAE, MAPE, R²) for regression tasks.
+- Validates submission format before human gate.
+- Updates state with anchor metrics, cv_strategy_id, and branch metadata.
+- Creates git branch `anchor-baseline` for artifact locking.
+
+Configuration hierarchy:
+1. **State override** (`anchor_challenge.active=True`):
+   - `model_family` / `framework` → Override model type (currently LightGBM only)
+   - `params` / `hyperparams` → Override model parameters
+   - `n_splits` → Override CV fold count
+2. **Config** (`challenge_config.json`):
+   - `target_col` / `target_column` → Training target
+   - `cv_strategy.type` → Cross-validation strategy
+   - `task_type` → classification / regression
+   - `metric` → Primary metric (used for target transformation)
+   - `policy_filters` → Excluded feature columns
+3. **Fallback inference**:
+   - Target: Train-only columns excluding ID/lat/lon
+   - CV strategy: "stratified" default
 
 Why it matters:
 - This is the calibration point for the rest of the search process.
 - The gate logic is only meaningful once an anchor exists.
+- Hierarchical config resolution enables state-driven experimentation while maintaining backward compatibility.
+- Policy filter enforcement ensures compliance with competition rules.
+- Target transformation lifecycle (SoT v2.2) handles RMSLE/RMSE correctly.
 
 ### 0d. Skill 12: Metric Trade-off Analysis
 

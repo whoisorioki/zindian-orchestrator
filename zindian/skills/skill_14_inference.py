@@ -212,12 +212,18 @@ def run(
         import re
         pattern = re.compile(r"^sub_(\d{3})_.*\.csv$")
         highest = 0
+        highest_file = None
         if paths.submissions_dir.exists():
             for p in paths.submissions_dir.glob("sub_*.csv"):
                 m = pattern.match(p.name)
                 if m:
-                    highest = max(highest, int(m.group(1)))
-        submission_path = str(paths.submissions_dir / f"sub_{highest + 1:03d}_final.csv")
+                    num = int(m.group(1))
+                    if num > highest:
+                        highest = num
+                        highest_file = p
+        if highest_file is None:
+            raise FileNotFoundError("No submission files found in submissions/")
+        submission_path = str(highest_file)
     print("\n" + "=" * 60)
     print("SKILL 14 — Inference / Post-processing")
     print("=" * 60 + "\n")
@@ -285,7 +291,7 @@ def run(
             target_domain_bounds,
             submission_log1p,
         )
-    else:
+    elif task_type == "classification":
         corrected = _enforce_submission_values(
             corrected,
             target_column,
@@ -294,6 +300,8 @@ def run(
             target_domain_bounds,
             submission_log1p,
         )
+    elif task_type == "multi_target":
+        pass
 
     # Placeholder: future group-level smoothing or prevalence-correction hooks
     # must be implemented as a separate, competition-agnostic plugin and gated

@@ -191,7 +191,25 @@ f"anchor_oof_{metric_key}": score
 "anchor_oof_f1": score
 ```
 
-#### S9: Gate 5 Complete
+#### S9: skill_08 Anchor Robustness
+```
+Config resolution: state → config → fallback
+CV strategy: Hierarchical (state override → config → "stratified")
+Target transformation: SoT v2.2 lifecycle (log1p for RMSLE)
+Policy filters: Excluded from feature_cols
+Reproducibility: 3-layer seeding (random, numpy, model)
+```
+- **Evidence:** Flexible override system with safe fallbacks
+- **Impact:** Handles legacy configs + modern state-driven workflows
+- **Sustainability:** Maintains backward compatibility
+
+**Key contracts:**
+- `anchor_challenge.active=True` → Override model_family, params, n_splits
+- `cv_strategy_override.active=True` → Override CV strategy
+- `policy_filters` → Exclude features from training
+- `regression_metric` → Target transformation lifecycle (v2.2)
+
+#### S10: Gate 5 Complete
 ```
 selected_submissions: ["sub_010_anchor.csv", "sub_009_anchor.csv"]
 human_gate_5_selection: ["sub_010_anchor.csv", "sub_009_anchor.csv"]
@@ -244,7 +262,27 @@ skill_21: classification-only
 - No regression pseudo-labeling in SoT v2.2
 - Would require SoT patch before implementation
 
-#### W4: No Pseudo-Labeling Attempted
+#### W4: skill_08 Config Alias Complexity
+```
+target_col aliases: target_col, target_column
+id_col aliases: id_col, id_column, columns.id
+cv_strategy resolution: 3-layer hierarchy
+```
+- **Risk:** Multiple config key paths increase maintenance burden
+- **Mitigation:** Fallback logic handles legacy configs
+- **Timeline:** Consider config schema validation in v3.0
+
+**Complexity sources:**
+- Dual key names for backward compatibility
+- Nested config paths (`columns.id` vs `id_col`)
+- State override system adds third resolution layer
+
+**Rationale for current design:**
+- Supports legacy competition configs
+- Enables state-driven experimentation
+- Maintains SoT v2.2 compliance
+
+#### W5: No Pseudo-Labeling Attempted
 
 ---
 
