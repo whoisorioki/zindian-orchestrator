@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 import pandas as pd
 
-# Bypass the local duckdb mock folder to import the real duckdb package
 try:
     orig_path = sys.path.copy()
     sys.path = [p for p in sys.path if p not in ("", ".", os.getcwd(), os.path.abspath(os.getcwd()))]
@@ -22,6 +21,20 @@ finally:
     sys.path = orig_path
 
 from zindian.config import ChallengeConfig
+from plugins.base_extractor import FeatureExtractor
+
+
+class NedbankExtractor(FeatureExtractor):
+    """Nedbank-specific feature extractor implementing FeatureExtractor ABC."""
+
+    def extract_features(
+        self, raw_data_dir: Path, config: dict
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Extract features from Nedbank raw data."""
+        return extract(type('Paths', (), {
+            'data_raw_dir': raw_data_dir,
+            'data_processed_dir': raw_data_dir.parent / 'processed'
+        })(), raw_data_dir / "plugin_data.tiff", ChallengeConfig(config))
 
 
 def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:

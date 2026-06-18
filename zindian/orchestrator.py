@@ -12,11 +12,14 @@ import types
 import zindian.skills as skills_pkg
 
 # Phase definitions (names correspond to module prefixes `skill_XX`)
-PHASE_1_SKILLS = ["skill_01", "skill_02", "skill_15"]
-PHASE_2_SKILLS = ["skill_03", "skill_08"]
-PHASE_3_SKILLS = ["skill_04", "skill_05", "skill_09", "skill_10"]
-PHASE_4_SKILLS = ["skill_11", "skill_16"]
-PHASE_5_SKILLS = ["skill_13", "skill_14", "skill_17"]
+# SoT v2.2.1 specifies 6 sub-phases: 1, 2A, 2B, 3A, 3B, 4
+# skill_03 is split: policy_writer() runs in Phase 1, policy_gate() runs first in Phase 2A
+PHASE_1_SKILLS = ["skill_01", "skill_02", "skill_03.policy_writer", "skill_04", "skill_05", "skill_15"]
+PHASE_2A_SKILLS = ["skill_03.policy_gate", "skill_06"]  # Policy gate runs FIRST, then data cleaning
+PHASE_2B_SKILLS = ["skill_08", "skill_07"]  # Anchor then feature engineering
+PHASE_3A_SKILLS = ["skill_10", "skill_09", "skill_12"]  # Generalization audit
+PHASE_3B_SKILLS = ["skill_11", "skill_21", "skill_13"]  # Promotion and fusion
+PHASE_4_SKILLS = ["skill_14", "skill_16", "skill_17", "skill_22"]  # Governance
 
 
 def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
@@ -175,12 +178,48 @@ def run_skill(
     Run a single skill by name.
 
     Args:
-        skill_name: e.g., "skill_01", "skill_02", "skill_15"
+        skill_name: e.g., "skill_01", "skill_02", "skill_03.policy_writer"
         **kwargs: Arguments to pass to the skill's run() function
 
     Returns:
         Result dict from skill
     """
+    # Handle split function notation (e.g., "skill_03.policy_writer")
+    if "." in skill_name:
+        base_skill, func_name = skill_name.split(".", 1)
+        if base_skill not in SKILL_REGISTRY:
+            return {
+                "status": "ERROR",
+                "message": f"Unknown skill: {base_skill}. Available: {list(SKILL_REGISTRY.keys())}",
+            }
+        
+        description, skill_module = SKILL_REGISTRY[base_skill]
+        
+        if skill_module is None:
+            return {
+                "status": "ERROR",
+                "message": f"Skill {base_skill} ({description}) not loaded",
+            }
+        
+        # Call the specific function
+        if not hasattr(skill_module, func_name):
+            return {
+                "status": "ERROR",
+                "message": f"Skill {base_skill} has no function {func_name}",
+            }
+        
+        try:
+            func = getattr(skill_module, func_name)
+            return func(**kwargs)
+        except Exception as e:
+            import traceback
+            return {
+                "status": "ERROR",
+                "message": f"Skill {skill_name} failed: {str(e)}",
+                "traceback": traceback.format_exc(),
+            }
+    
+    # Standard skill execution
     if skill_name not in SKILL_REGISTRY:
         return {
             "status": "ERROR",
@@ -208,19 +247,68 @@ def run_skill(
 
 
 def run_phase(
-    phase: int,
+    phase: str,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Run all skills for a given phase.
 
     Args:
-        phase: 1, 2, 3, 4, or 5
+        phase: "1", "2A", "2B", "3A", "3B", or "4"
         **kwargs: Arguments to pass to each skill's run() function
 
     Returns:
         Dict with results for each skill
     """
+    # Enforce phase dependencies (Principle 4)
+    try:
+        from .state import SkillStateStore
+        from .paths import resolve_competition_paths
+        
+        paths = resolve_competition_paths(require_competition=False)
+        if paths.state_path.exists():
+            store = SkillStateStore(paths.state_path)
+            state = store.read()
+            
+            # Phase dependency checks - block execution if prerequisites not met
+            if phase == "2A":
+                if not state.get("phase_1_complete") and state.get("dag_phase") != "phase_1_complete":
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 2A blocked: Phase 1 must complete first",
+                        "required": "phase_1_complete",
+                    }
+            elif phase == "2B":
+                if not state.get("phase_2a_complete"):
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 2B blocked: Phase 2A must complete first",
+                        "required": "phase_2a_complete",
+                    }
+            elif phase == "3A":
+                if not state.get("phase_2b_complete"):
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 3A blocked: Phase 2B must complete first",
+                        "required": "phase_2b_complete",
+                    }
+            elif phase == "3B":
+                if not state.get("phase_3a_complete"):
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 3B blocked: Phase 3A must complete first",
+                        "required": "phase_3a_complete",
+                    }
+            elif phase == "4":
+                if not state.get("phase_3b_complete"):
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 4 blocked: Phase 3B must complete first",
+                        "required": "phase_3b_complete",
+                    }
+    except Exception:
+        pass  # Allow execution if state check fails (INIT mode)
+    
     # Prefer configured phase map if present; otherwise fall back to hardcoded lists
     try:
         from .config import ChallengeConfig
@@ -230,28 +318,30 @@ def run_phase(
     except Exception:
         phase_map = None
 
-    if phase_map and str(phase) in phase_map:
-        skills = phase_map[str(phase)]
+    if phase_map and phase in phase_map:
+        skills = phase_map[phase]
     else:
-        if phase == 1:
+        if phase == "1":
             skills = PHASE_1_SKILLS
-        elif phase == 2:
-            skills = PHASE_2_SKILLS
-        elif phase == 3:
-            skills = PHASE_3_SKILLS
-        elif phase == 4:
+        elif phase == "2A":
+            skills = PHASE_2A_SKILLS
+        elif phase == "2B":
+            skills = PHASE_2B_SKILLS
+        elif phase == "3A":
+            skills = PHASE_3A_SKILLS
+        elif phase == "3B":
+            skills = PHASE_3B_SKILLS
+        elif phase == "4":
             skills = PHASE_4_SKILLS
-        elif phase == 5:
-            skills = PHASE_5_SKILLS
         else:
             return {
                 "status": "ERROR",
-                "message": f"Invalid phase: {phase}. Must be 1-5.",
+                "message": f"Invalid phase: {phase}. Must be 1, 2A, 2B, 3A, 3B, or 4.",
             }
 
     results = {}
     for skill_name in skills:
-        if skill_name in SKILL_REGISTRY:
+        if skill_name in SKILL_REGISTRY or "." in skill_name:
             print(f"\nRunning {skill_name}...")
             results[skill_name] = run_skill(skill_name, **kwargs)
         else:
@@ -259,5 +349,18 @@ def run_phase(
                 "status": "SKIPPED",
                 "message": f"Skill {skill_name} not yet implemented",
             }
+    
+    # Mark phase complete in state
+    try:
+        from .state import SkillStateStore
+        from .paths import resolve_competition_paths
+        
+        paths = resolve_competition_paths(require_competition=False)
+        if paths.state_path.exists():
+            store = SkillStateStore(paths.state_path)
+            phase_key = f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
+            store.update(**{phase_key: True})
+    except Exception:
+        pass
 
     return results

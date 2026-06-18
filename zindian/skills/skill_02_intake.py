@@ -416,6 +416,53 @@ def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
         print(f"ℹ️  SKIP dag_phase update (current phase: {current_phase})")
 
 
+def _detect_multi_target_from_submission(sample_submission_path, config):
+    """Detect if competition has multiple targets from submission format.
+    
+    Returns target_config dict if multi-target, None otherwise.
+    """
+    import pandas as pd
+    
+    df = pd.read_csv(sample_submission_path)
+    cols = [c for c in df.columns if c.lower() not in ('id', 'team_id', 'uniqueid')]
+    
+    if len(cols) <= 1:
+        return None  # Single-target
+    
+    # Multi-target detected
+    targets = []
+    for col in cols:
+        # Infer task_type from column values
+        sample_vals = df[col].dropna().head(100)
+        is_binary = set(sample_vals.unique()).issubset({0, 1, 0.0, 1.0})
+        is_prob = (sample_vals >= 0).all() and (sample_vals <= 1).all()
+        
+        task_type = "classification" if (is_binary or is_prob) else "regression"
+        
+        targets.append({
+            "name": col,
+            "task_type": task_type,
+            "metric": "rmse" if task_type == "regression" else "f1",
+            "metric_direction": "minimize" if task_type == "regression" else "maximize",
+            "weight": 1.0 / len(cols),
+            "target_domain_bounds": None if task_type == "classification" else {"min": None, "max": None}
+        })
+    
+    # A12: mixed-task requires recombination policy
+    has_classification = any(t["task_type"] == "classification" for t in targets)
+    has_regression = any(t["task_type"] == "regression" for t in targets)
+    
+    target_config = {
+        "targets": targets,
+        "composite_direction": "minimize_composite_distance"
+    }
+    
+    if has_classification and has_regression:
+        target_config["pseudo_label_recombination_policy"] = "freeze_unaugmented_targets_at_original"
+    
+    return target_config
+
+
 def run(
     slug: str | None = None,
     headers: dict | None = None,
@@ -498,6 +545,18 @@ def run(
         final_to_write["allowed_external_data"] = False
     if final_to_write.get("automl_permitted") is None:
         final_to_write["automl_permitted"] = False
+    
+    # Multi-target detection (A11)
+    if not dry_run:
+        try:
+            sample_sub_path = paths.data_raw_dir / "SampleSubmission.csv"
+            if sample_sub_path.exists():
+                target_config = _detect_multi_target_from_submission(sample_sub_path, final_to_write)
+                if target_config:
+                    final_to_write["target_config"] = target_config
+                    print(f"✅ Multi-target detected: {len(target_config['targets'])} targets")
+        except Exception as e:
+            print(f"Multi-target detection skipped: {e}")
 
     if dry_run:
         print("\n--- DRY RUN: challenge_config.json that WOULD be written ---\n")

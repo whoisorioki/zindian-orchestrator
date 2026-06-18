@@ -427,6 +427,29 @@ data_patch_detected: false
 - Human chooses: [R] RESTART or [A] ABORT
 - No automatic re-intake
 
+#### T7: Paper Architecture — Documentation-Implementation Mismatch
+```
+SoT v2.2.1 status: PROPOSED — IMPLEMENTATION PENDING
+Multi-target code: 0 lines implemented
+Orchestrator phase mismatch: 5 skills missing from phase maps
+Plugin contract: FeatureExtractor ABC not implemented
+```
+- **Risk:** SoT document describes features that don't exist in codebase
+- **Impact:** CRITICAL — developers implementing from SoT will write code that doesn't integrate with actual orchestrator
+- **Evidence:** Full audit in `/docs/sot_audit_report.md`
+- **Mitigation:** SoT downgraded to PROPOSED with implementation warnings added
+- **Timeline:** Requires systematic implementation roadmap execution
+
+**Specific mismatches identified:**
+1. **Phase Architecture:** Orchestrator defines 5 flat phases, SoT specifies 6 sub-phases (1, 2A, 2B, 3A, 3B, 4)
+2. **Missing Skills:** Skills 06, 07, 12, 21, 22 not in orchestrator phase maps
+3. **skill_03 Split:** SoT documents policy_writer()/policy_gate() split, actual code has single run() function
+4. **Multi-Target Extensions:** All 15 patches are documentation-only, zero implementation
+5. **Plugin Contract:** Documented FeatureExtractor ABC doesn't exist, actual plugins use fetch()/extract() pattern
+6. **A12 Policy:** Pseudo-label recombination marked "RESOLVED" in SoT but not implemented in skill_21
+
+**Root cause:** Documentation evolved ahead of implementation without synchronization checkpoints
+
 ---
 
 ## Strategic Recommendations

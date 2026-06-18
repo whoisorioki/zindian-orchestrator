@@ -25,6 +25,40 @@ from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
 
+def policy_writer(
+    monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]
+) -> Dict[str, Any]:
+    """Phase 1 function: Synthesize feature policy from monitor and config.
+    
+    Reads: challenge_config.json, community_signals from skill_00
+    Writes: reports/feature_policy.json
+    Fields: allowed_features, blocked_features, block_reasons
+    Side effects: none — pure writer, no gating
+    """
+    return synthesise_feature_policy(monitor_data, config, flagged_titles)
+
+
+def policy_gate(
+    policy: Dict[str, Any], planned_features: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Phase 2A function: Enforce feature exclusions.
+    
+    Reads: reports/feature_policy.json, current feature matrix column list
+    Asserts: no blocked column present in feature matrix
+    On violation: Write to SKILL_STATE.json, Halt pipeline
+    Side effects: state write and halt only
+    """
+    checks = check_planned_features(policy, planned_features)
+    blocked_reasons = [c for c in checks if c.get("blocks")]
+    status = "GO" if not blocked_reasons else "BLOCKED"
+    
+    return {
+        "status": status,
+        "blocked_reasons": blocked_reasons,
+        "checks": checks,
+    }
+
+
 def _normalize_policy_token(value: Any) -> str:
     token = str(value).strip().lower()
     return "_".join(token.replace("-", "_").split())

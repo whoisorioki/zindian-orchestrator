@@ -185,6 +185,11 @@ def run() -> dict:
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
+    
+    # Multi-target detection
+    target_config = config.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target_gate(config, store, state)
 
     best_variant = state.get("best_variant_this_round") or state.get(
         "best_variant_branch"
@@ -365,6 +370,37 @@ def run() -> dict:
         "promoted": branch_name,
         "diagnosis": diagnosis,
     }
+
+
+def _run_multi_target_gate(config, store, state) -> dict:
+    """Multi-target gate logic per SoT v2.2.1 A11."""
+    print("\n🎯 MULTI-TARGET GATE MODE\n")
+    target_config = config.get("target_config", {})
+    targets = target_config.get("targets", [])
+    
+    multi_metrics = state.get("anchor_multi_target_metrics", {})
+    if not multi_metrics:
+        return {"status": "BLOCKED", "reason": "no multi-target metrics found"}
+    
+    shap_results = state.get("shap_multi_target_results", {})
+    all_pass = all(shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets)
+    
+    if not all_pass:
+        return {"status": "BLOCKED", "reason": "multi-target SHAP gate failed"}
+    
+    avg_score = np.mean([m["oof_f1"] for m in multi_metrics.values()])
+    round_num = int(state.get("feature_round") or 1)
+    new_branch = f"anchor-multi-v{round_num + 1}"
+    
+    store.update(
+        anchor_oof_score=avg_score,
+        anchor_git_branch=new_branch,
+        feature_round=round_num + 1,
+        dag_phase="phase_3_anchor_promoted",
+        last_updated=datetime.now(timezone.utc).isoformat()
+    )
+    print(f"\n✅ Multi-target gate PASSED. New branch: {new_branch}")
+    return {"status": "PASS", "new_branch": new_branch, "avg_score": avg_score}
 
 
 if __name__ == "__main__":

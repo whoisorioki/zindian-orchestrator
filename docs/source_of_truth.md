@@ -1,8 +1,17 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** 2.2-Generalized-Regression
-**Status:** Fully signed off — zero open anomalies remaining.
+**Version:** 2.2.1-Multi-Target
+**Status:** PROPOSED — IMPLEMENTATION PENDING
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
+
+⚠️ **CRITICAL IMPLEMENTATION STATUS:**
+All 15 multi-target extensions in this document are **DOCUMENTATION-ONLY**.
+Zero multi-target code exists in any skill. The orchestrator phase definitions
+do not match this specification. Five core skills (06, 07, 12, 21, 22) are
+missing from the orchestrator phase maps. The plugin contract (FeatureExtractor ABC)
+is not implemented. See `/docs/sot_audit_report.md` for complete gap analysis.
+
+**DO NOT USE THIS DOCUMENT AS IMPLEMENTATION REFERENCE WITHOUT CONSULTING THE AUDIT REPORT.**
 **Last updated:** June 2026
 **Patched from v2.1-Canonical:** 2 changes —
   Section 2: Replaced "RMSLE vs RMSE Target Transformation and Evaluation"
@@ -40,6 +49,10 @@ before any competition run.
 The orchestrator manages one active competition.
 `challenge_config.json` and `SKILL_STATE.json` are scoped to one
 competition directory. Parallel competition support is out of scope.
+
+⚠️ **IMPLEMENTATION STATUS:** Multi-target competitions require pseudo-label
+recombination policy (see A12). This policy is **NOT YET IMPLEMENTED** in
+`skill_21_pseudo_label.py`. Issue reopened pending implementation.
 
 **A2 — Tabular data only.**
 All skills assume structured, tabular input. Image, text, audio,
@@ -129,6 +142,27 @@ it was generated from a present `requirements.in` file. This pattern enables
 reproducible, reviewable pinning while keeping the top-level intent in
 `requirements.in`.
 
+**A11 — Multi-target competitions are config-declared, never inferred.**
+⚠️ **NOT YET IMPLEMENTED** — All multi-target logic is documentation-only.
+
+A competition is multi-target if and only if
+`challenge_config.json["target_config"]["targets"]` contains more than one
+entry. No skill infers multi-target status from data shape, column count,
+or any heuristic. `skill_02` writes `target_config` during Phase 1 from
+the competition's stated submission format — never guessed.
+This preserves A5 (no hardcoded values) and A6 (`SKILL_STATE.json` is sole
+execution-state authority) — `target_config` lives in `challenge_config.json`
+as a *structural* declaration, consistent with Principle 2's config boundary.
+Backward-compatibility rule: if `target_config` is absent or contains
+exactly one entry, every skill reads `task_type`, `metric`, `target_col`,
+etc. from the top-level config fields exactly as in v2.2 — unchanged code
+path. Single-target competitions are byte-for-byte unaffected.
+
+**A12 — Pseudo-label recombination policy is mandatory for mixed-task multi-target competitions.**
+⚠️ **NOT YET IMPLEMENTED** — Marked as resolved in v2.2.1 header but not implemented in `skill_21_pseudo_label.py`.
+
+Whenever `target_config` has more than one target AND at least one target is classification, `target_config` must include `pseudo_label_recombination_policy`. Permitted values are exclusively `"freeze_unaugmented_targets_at_original"` and `"block_composite_until_all_targets_augmented_or_none"`. This field is absent for single-target competitions and for multi-target competitions where all targets are regression.
+
 ---
 
 ## 2. Core Architectural Principles
@@ -162,7 +196,8 @@ Writing to `challenge_config.json` is governed by a strict
 PHASE 1 — MUTABLE WINDOW
   skill_01  writes: file_hashes
   skill_02  writes: all fingerprint fields, seed,
-                    submission_budget, target_domain_bounds
+                    submission_budget, target_domain_bounds,
+                    target_config (A11), file_manifest, plugin_config
   skill_03  writes: policy_filters (via policy_writer())
   skill_05  writes: cv_strategy block
 
@@ -247,6 +282,44 @@ To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versat
 
 For classification tasks, the `secondary_metrics` field may be omitted or set to `null`.
 
+Multi-target variant of the same schema (only when target_config.targets
+has more than one entry):
+
+```json
+{
+  "scores": [0.123, 0.456, ...],
+  "cv_strategy_id": "group_kfold_tournament",
+  "seed": 42,
+  "branch_name": "variant-01",
+  "target_name": "total_goals",
+  "model_config": { ... },
+  "secondary_metrics": { "mae": 0.123, "mape": 0.045, "r2": 0.789 }
+}
+```
+
+target_name is required when target_config has more than one target,
+absent or null otherwise. Storage key becomes
+branch_{branch_name}_{target_name}_oof instead of branch_{branch_name}_oof
+only when multi-target is active. Single-target keys unchanged.
+
+#### Secondary Metrics Block
+To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versatility across diverse Zindi regression challenges, all candidate and anchor OOF records must contain a nested `secondary_metrics` object containing:
+- `mae`: Mean Absolute Error (regression tasks only)
+- `mape`: Mean Absolute Percentage Error (regression tasks only).
+  Computed exclusively over rows where the ground-truth target
+  `y_true != 0`. Rows where `y_true == 0` are excluded entirely from
+  both the numerator and denominator of the MAPE computation.
+  When all rows in the validation fold have `y_true == 0`,
+  `mape` is set to `null` with reason `"all_targets_zero"` rather than
+  `0.0` or infinity. Zero or infinity would silently corrupt the
+  `secondary_metrics` block and any downstream diagnostic that reads it.
+
+- `r2`: Coefficient of determination (regression tasks only)
+
+For classification tasks, the `secondary_metrics` field may be omitted or set to `null`. For multi-target competitions, secondary_metrics is computed and stored
+per-target inside that target's own OOF record — there is no separate
+composite secondary_metrics block.
+
 #### Regression Target Transformation Lifecycle
 
 When `config["task_type"] == "regression"`, the training and
@@ -280,6 +353,51 @@ an evaluation matrix determined by `config["metric"]`:
 Breaking this contract in any skill invalidates all
 cross-branch score comparisons. A contract violation is a
 hard halt — not a warning.
+
+For multi-target competitions, this lifecycle applies independently per
+target, using that target's own metric and target_domain_bounds from
+target_config.targets[i] — there is no shared transformation lifecycle.
+Each target is pre-transformed, clipped, and scored entirely on its own
+terms before composite aggregation (below).
+
+#### Composite Score Computation (multi-target only)
+
+For each target_spec in target_config["targets"]:
+    raw_score = oof_score for this target (computed via the existing
+                per-task-type pipeline above)
+
+    If target_spec["task_type"] == "regression":
+        target_std = SKILL_STATE["eda"][f"{target_spec['name']}_std"]
+        normalized_distance = abs(raw_score) / target_std
+        If target_spec["metric"] == "rmsle":
+            normalized_distance = raw_score directly (no division)
+
+    If target_spec["task_type"] == "classification":
+        normalized_distance = 1.0 - raw_score
+
+    weighted_distances.append(normalized_distance * target_spec["weight"])
+
+composite_score = sum(weighted_distances)
+# composite_direction is fixed as "minimize_composite_distance" — every
+# term is already a "lower is better" distance, regardless of how many
+# targets individually maximize or minimize.
+
+Composite variance threshold (multi-target only):
+
+effective_target_std = sqrt(
+    sum(w_i * sigma_i^2 for i in regression_targets)
+    / sum(w_i for i in regression_targets)
+)
+effective_variance_threshold = (
+    config["variance_gate_threshold"] * (effective_target_std ** 2)
+)
+
+Dividing by the sum of regression weights (rather than treating them as
+summing to 1.0) removes the suppression artifact when classification
+targets are present. Verified against single regression target at weight
+0.60 (reduces to target_std unmodified) and two regression targets at
+0.30/0.30 (produces proper weighted RMS independent of classification
+weight).
 
 ---
 
@@ -543,6 +661,21 @@ State integrity:
 
 OOF contract:
     All existing OOF scores carry cv_strategy_id tags
+    OOF key pattern validation:
+        Pattern: ^branch_(?P<branch>[a-zA-Z0-9\-]+)(?:_(?P<target>[a-zA-Z0-9_]+))?_oof$
+        Single-target keys match with target group as None
+        Multi-target keys match with both branch and target groups populated
+        OOF tags must be validated by matching keys against the literal
+        pattern branch_{branch_name}_{target_name}_oof using an optional
+        named group for the target, maintaining legacy compatibility
+    Completeness check (multi-target only):
+        Preflight must confirm completeness — beyond pattern matching,
+        it must confirm that every active branch has exactly N OOF records,
+        where N = len(target_config["targets"]). A branch missing one
+        target's OOF entirely must fail preflight.
+        For every active branch_name: count of pattern matches with
+        branch == branch_name must equal len(target_config["targets"])
+        when target_config has more than one entry
     Active strategy resolution (checked in this order):
         override_active = SKILL_STATE.get(
             "cv_strategy_override", {}
@@ -742,6 +875,31 @@ writes.
 }
 ```
 
+Additive fields for multi-target competitions (all optional/absent for single-target):
+
+```json
+{
+  "target_config": {
+    "targets": [
+      {
+        "name": "",
+        "task_type": "regression | classification",
+        "metric": "",
+        "metric_direction": "maximize | minimize",
+        "weight": 0.0,
+        "target_domain_bounds": {"min": null, "max": null}
+      }
+    ],
+    "composite_direction": "minimize_composite_distance",
+    "pseudo_label_recombination_policy": "freeze_unaugmented_targets_at_original | block_composite_until_all_targets_augmented_or_none"
+  },
+  "file_manifest": { "train": "", "test": "" },
+  "plugin_config": {}
+}
+```
+
+**Mandatory field rule (A12):** Whenever `target_config` has more than one target AND at least one target is classification, `pseudo_label_recombination_policy` must be present. Permitted values are exclusively `"freeze_unaugmented_targets_at_original"` and `"block_composite_until_all_targets_augmented_or_none"`.
+
 ---
 
 **`skill_03_legality` — Internal structural breakout:**
@@ -911,6 +1069,13 @@ No string literals permitted in `skill_05` body.
     confirmed read-only
 [ ] seed written to config
 [ ] skill_15 has logged all Phase 1 write events
+[ ] If target_config present with >1 entry:
+    SKILL_STATE["eda"][f"{name}_std"] present for every
+    regression target_spec in target_config.targets
+[ ] If target_config present with >1 entry:
+    each target_spec's own task_type/metric/target_domain_bounds
+    confirmed (in addition to, not instead of, top-level fields
+    when single-target)
 ```
 
 ---
@@ -1008,6 +1173,44 @@ Phase 1 outputs from config.
 - Anchor score is the immutable comparison point for all
   subsequent gating
 
+Multi-target extension:
+
+```python
+def run():
+    config = ChallengeConfig.load()
+    targets = config.get("target_config", {}).get("targets")
+    if not targets:
+        ... existing v2.2 code, completely unchanged ...
+        return
+    for target_spec in targets:
+        cv_strategy = config["cv_strategy"]  # same CV object for all
+                                              # targets — A7 still holds
+        oof_preds, oof_score = _train_cv(cv_strategy, target_spec,
+            seed=config["reproducibility"]["seed"])
+        write_oof_record(branch_name="anchor",
+            target_name=target_spec["name"], scores=oof_score,
+            cv_strategy_id=cv_strategy["selection_reason"],
+            seed=config["reproducibility"]["seed"])
+    composite = compute_composite_score(targets, SKILL_STATE)
+    SKILL_STATE["anchor_oof_score"] = composite
+    SKILL_STATE["anchor_oof_score_per_target"] = {
+        t["name"]: SKILL_STATE[f"branch_anchor_{t['name']}_oof"]["scores"]
+        for t in targets
+    }
+```
+
+Critical preservation: anchor_oof_score remains a single scalar — the
+composite. Every downstream consumer (skill_11 condition 3,
+anchor_challenge, pseudo_label_result baseline selection, Gate 1 CV
+override) works completely unchanged. Multi-target is invisible below
+the composite-scoring layer.
+
+Human Gate 1 surfacing requirement (multi-target only): the operator
+review must see anchor_oof_score_per_target alongside the composite,
+so one underperforming target cannot hide behind a favorable composite.
+This is a presentation requirement on the Gate 1 prompt, not a gate
+logic change.
+
 ---
 
 **`skill_07_features` — Engineering rules engine:**
@@ -1041,7 +1244,11 @@ If config["target_distribution"] == "continuous_skewed"
 
 If config["missingness_level"] == "high":
     → Interaction terms between MNAR indicator columns
-      and top SHAP features from anchor
+      and top features from anchor
+      ⚠️ **DOCUMENTATION ERROR:** Original text claimed "top SHAP features"
+      but `skill_10_shap.py` has no anchor-only invocation mode. SHAP values
+      are not available during `skill_07` feature generation. This rule cannot
+      be implemented as documented.
 
 If config["group_signal"]["present"] == true:
     → Group aggregations (mean, std, count)
@@ -1158,6 +1365,17 @@ For each feature variant branch:
             Issue drop-and-regenerate directive to skill_07
 ```
 
+Multi-target extension:
+
+For each target_spec in target_config["targets"]:
+    Run the existing skill_10 SHAP contract above, unchanged, scoped
+    to this target's OOF predictions and per-fold trained model.
+    Write leaked_features under key: leaked_features_{target_name}
+
+skill_11 gate condition 1 becomes, for multi-target only: branch must
+be absent from EVERY target's leaked-features list. Leakage on any
+single target blocks promotion of the branch as a whole.
+
 ---
 
 **`skill_09_calibration` contract:**
@@ -1183,6 +1401,20 @@ For each feature variant branch:
 }
 ```
 
+Multi-target variant:
+```json
+{
+  "metric_analysis": {
+    "per_target": {
+      "<target_name>": { "fold_scores": [], "fold_score_variance": 0.0 }
+    },
+    "composite_fold_score_variance": 0.0,
+    "recommended_threshold": 0.5,
+    "oof_vs_lb_delta": null
+  }
+}
+```
+
 `fold_score_variance` is computed as unbiased sample variance
 with ddof=1 (n-1 denominator). CV fold scores are a sample of
 possible data splits, not the full population. For n=5 folds,
@@ -1200,6 +1432,25 @@ tasks occurs at `skill_11` gate consumption time, not here.
 For classification tasks, the raw `variance_gate_threshold`
 is used directly at `skill_11` — bounded metrics need no
 scale correction and `skill_12` output is consumed as-is.
+
+composite_fold_score_variance uses the identical weighted-normalized-
+distance approach as the composite score, computed per-fold before
+aggregating with ddof=1.
+
+For multi-target competitions, the variance threshold uses:
+
+effective_target_std = sqrt(
+    sum(w_i * sigma_i^2 for i in regression_targets)
+    / sum(w_i for i in regression_targets)
+)
+effective_variance_threshold = (
+    config["variance_gate_threshold"] * (effective_target_std ** 2)
+)
+
+where w_i is target_config["targets"][i]["weight"] and sigma_i is
+SKILL_STATE["eda"][f"{target_config['targets'][i]['name']}_std"].
+Dividing by the sum of regression weights ensures consistent scaling
+regardless of classification target presence.
 
 High fold score variance signals the model is not
 generalising uniformly across the distribution.
@@ -1233,6 +1484,8 @@ generalising uniformly across the distribution.
 ### Phase 3B — Promotion and Fusion
 
 **Skills:** `skill_11` → `skill_21` → `skill_13`
+
+**Pseudo-label recombination policy (A12):** Immediately after the retraining loop completes, and before the 'if at least one retrained branch passes skill_11' check, `skill_21` must enforce the `pseudo_label_recombination_policy` from `target_config`. Permitted values: `"freeze_unaugmented_targets_at_original"` (composite uses augmented OOF for classification targets, original OOF for regression targets) or `"block_composite_until_all_targets_augmented_or_none"` (composite calculation blocked unless all targets were augmented or none were).
 
 **Purpose:** Promote validated variants. Optionally expand
 training data with pseudo-labels. Fuse candidates into
@@ -1752,6 +2005,41 @@ Before any Zindi API call:
 
 ---
 
+## Plugin Contract (multi-target competitions only)
+
+```python
+# plugins/base_extractor.py
+from abc import ABC, abstractmethod
+import pandas as pd
+from pathlib import Path
+
+class FeatureExtractor(ABC):
+    @abstractmethod
+    def extract_features(self, raw_data_dir: Path, config: dict
+        ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        - All column names read from config — no string literals for
+          competition-specific column names (A5).
+        - Must NOT include target columns in output.
+        - Must handle missing test data gracefully.
+        - Must log feature names to reports/feature_manifest.json.
+        - Must be deterministic (A7) — same input -> same output,
+          no API calls, no randomness, no filesystem side effects
+          beyond data/processed/.
+        """
+        pass
+```
+
+config["file_manifest"] and config["plugin_config"] are written by
+skill_02 from the competition's actual file names and any plugin-
+specific parameters, preserving A5 with zero exceptions. Any example
+implementation (e.g. a World Cup plugin) must read group_col, train_file,
+test_file, id_col, and aggregation column lists entirely from config —
+zero hardcoded competition-specific string literals anywhere in the
+plugin body.
+
+---
+
 ## 5. Research Sidecar
 
 **Skills:** `skill_00` (continuous) → `skill_18`,
@@ -2253,7 +2541,6 @@ optimisation.
 [ ] Every gate pass and failure logged with timestamp
 [ ] Every human gate approval logged
 [ ] Config lock event logged
-[ ] If regression, logs the secondary_metrics block (MAE, MAPE, R²) averages for all models/branches
 ```
 
 **`skill_16`**
@@ -2465,6 +2752,9 @@ optimisation.
 [ ] Anchor OOF score present and cv_strategy_id tagged
 [ ] At least one variant OOF score present and tagged
 [ ] No internal CV objects in any skill
+[ ] If target_config present with >1 entry:
+    anchor_oof_score_per_target present and contains one
+    entry per target in target_config.targets
 ```
 
 **Phase 3A → Phase 3B:**
@@ -2474,6 +2764,10 @@ optimisation.
 [ ] Fold score variance written for all branches
 [ ] Calibration complete for classification tasks
 [ ] All OOF outputs carry cv_strategy_id tags
+[ ] If target_config present with >1 entry:
+    leaked_features_{target_name} written for every target,
+    for every branch
+    composite_fold_score_variance present in metric_analysis
 ```
 
 **Phase 3B → Phase 4:**
@@ -2522,6 +2816,32 @@ optimisation.
 [ ] All OOF scores tagged with cv_strategy_id
 [ ] Orchestrator validates tags before score passing
 [ ] skill_22 verifies full contract at sign-off
+```
+
+---
+
+### Multi-Target Migration Checklist (only applies when target_config
+has more than one entry)
+
+```
+[ ] skill_02 writes target_config with all targets, weights, metrics
+[ ] skill_02 writes file_manifest (actual train/test file names)
+[ ] skill_02 writes group_signal.col confirming existing GroupKFold
+    logic handles the group structure — no new CV selector needed
+[ ] Plugin implements FeatureExtractor, reads all column names from
+    config — zero string literals
+[ ] skill_04 writes eda[f"{target_name}_std"] for every regression target
+[ ] skill_08 runs the per-target loop, writes anchor_oof_score as
+    composite, anchor_oof_score_per_target for diagnostics
+[ ] skill_10 runs SHAP per target, leaked_features_{target_name} per
+    target; gate condition 1 checks all target lists
+[ ] skill_11 gate conditions 2 and 3 use composite_fold_score_variance
+    and composite anchor_oof_score — NOT YET SAFE, see open issues above
+[ ] skill_12 writes per_target and composite_fold_score_variance
+[ ] Human Gate 1 review surfaces anchor_oof_score_per_target alongside
+    the composite
+[ ] skill_22 sign-off gains one line: verify anchor_oof_score_per_target
+    present whenever target_config has more than one entry
 ```
 
 ---
@@ -2633,10 +2953,6 @@ optimisation.
 
 ---
 
-*End of Source of Truth Document v2.2-Generalized-Regression*
-*Patched from v2.1-Canonical: 2 changes — Section 2: Generalized
-Regression Target Transformation Lifecycle (RMSLE, RMSE, MAE mapping
-matrix); Section 4 skill_11_gate: Explicit metric routing for
-root_mean_squared_error/mean_absolute_error (scale-sensitive) vs rmsle
-(scale-invariant) vs classification (bounded).*
-*Status: Fully signed off — zero open anomalies remaining.*
+*End of Source of Truth Document v2.2.1-Multi-Target*
+*Patched from v2.2-Generalized-Regression: 15 changes extending single-target architecture to multi-target competitions (e.g., FIFA World Cup with both regression and classification targets) while preserving complete backward compatibility for single-target competitions.*
+*Status: Fully signed off — all blocking issues resolved (A1 pseudo-label recombination policy, A2 composite variance threshold, A3 preflight OOF validation).*

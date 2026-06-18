@@ -293,6 +293,12 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
 
     config = ChallengeConfig.load()
     state = SkillStateStore(paths.state_path).read()
+    
+    # Multi-target detection
+    target_config = config.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target_shap(paths, config, state, n_splits, seed)
+    
     frame = _load_train_frame(paths)
     target = config.get("target_col") or config.get("target_column")
     if not target:
@@ -553,6 +559,69 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
     return report
 
 
+def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
+    """Multi-target SHAP analysis per SoT v2.2.1 A11."""
+    print("\n🎯 MULTI-TARGET SHAP MODE\n")
+    target_config = config.get("target_config", {})
+    targets = target_config.get("targets", [])
+    print(f"Analyzing {len(targets)} targets: {[t['name'] for t in targets]}\n")
+    
+    frame = _load_train_frame(paths)
+    all_results = {}
+    all_pass = True
+    
+    for target_spec in targets:
+        target_name = target_spec["name"]
+        target_task = target_spec["task_type"]
+        print(f"\n{'─' * 60}")
+        print(f"SHAP: {target_name} ({target_task})")
+        print(f"{'─' * 60}")
+        
+        if target_name not in frame.columns:
+            print(f"⚠️ Target {target_name} not in frame, skipping")
+            continue
+        
+        feature_cols = _feature_columns(frame, target_name)
+        full_audit = _compute_shap_audit(
+            frame, feature_cols, target_name, n_splits=n_splits, seed=seed, task_type=target_task
+        )
+        ranking = full_audit["ranking"]
+        pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
+        
+        full_cv = train_lightgbm_cv(
+            train=frame, test=frame, feature_cols=feature_cols, target_col=target_name,
+            n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
+        )
+        pruned_cv = train_lightgbm_cv(
+            train=frame, test=frame, feature_cols=pruning["pruned_features"], target_col=target_name,
+            n_splits=n_splits, random_seed=seed, scale=True, num_boost_round=500, early_stopping_rounds=50
+        )
+        
+        if target_task == "regression":
+            pruning_delta = float(full_cv.oof_rmse - pruned_cv.oof_rmse)
+            pruning_pass = pruning_delta >= -0.01
+        else:
+            pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
+            pruning_pass = pruning_delta >= 0.005
+        
+        all_results[target_name] = {
+            "pruning_pass": pruning_pass,
+            "pruning_delta": pruning_delta,
+            "top_feature": ranking.iloc[0]["feature"] if not ranking.empty else None
+        }
+        all_pass = all_pass and pruning_pass
+    
+    state_store = SkillStateStore(paths.state_path)
+    state_store.update(
+        shap_completed_at=datetime.now(timezone.utc).isoformat(),
+        shap_multi_target_results=all_results,
+        pruning_pass=all_pass,
+        last_updated=datetime.now(timezone.utc).isoformat()
+    )
+    print(f"\n✅ Multi-target SHAP complete. Overall pass: {all_pass}")
+    return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}
+
+
 if __name__ == "__main__":
     import sys
 
@@ -570,17 +639,20 @@ if __name__ == "__main__":
             seed = int(arg.split("=", 1)[1])
 
     result = run(n_splits=n_splits, seed=seed)
-    print(
-        json.dumps(
-            {
-                "competition": result["competition"],
-                "target": result["target"],
-                "feature_count": result["feature_count"],
-                "full_oof_f1": result["shap"]["oof_f1"],
-                "pruned_oof_f1": result["correlation_pruning"]["pruned_oof_f1"],
-                "delta_f1": result["correlation_pruning"]["delta_f1"],
-                "pruning_gate": result["correlation_pruning"]["gate_pass"],
-            },
-            indent=2,
+    if result.get("multi_target"):
+        print(json.dumps(result, indent=2))
+    else:
+        print(
+            json.dumps(
+                {
+                    "competition": result["competition"],
+                    "target": result["target"],
+                    "feature_count": result["feature_count"],
+                    "full_oof_f1": result["shap"]["oof_f1"],
+                    "pruned_oof_f1": result["correlation_pruning"]["pruned_oof_f1"],
+                    "delta_f1": result["correlation_pruning"]["delta_f1"],
+                    "pruning_gate": result["correlation_pruning"]["gate_pass"],
+                },
+                indent=2,
+            )
         )
-    )

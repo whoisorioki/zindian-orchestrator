@@ -349,6 +349,13 @@ def run(
     print(f"Competition      : {config.slug}")
     print(f"Metric           : {config.metric}")
     print(f"Use probabilities: {config.use_probabilities}")
+    
+    # Multi-target detection
+    target_config = config.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target(
+            paths, config, state_store, state, n_splits, random_seed, submit, variant_name
+        )
 
     # ── Load data ──────────────────────────────────────────────
     train, test, training_target_col, submission_col = load_data(paths, config)
@@ -626,6 +633,89 @@ To submit when ready (via orchestrator flow):
         "submitted": submission_result is not None,
         "submission_result": submission_result,
         "message": "Anchor baseline trained and locked (submission delegated to skill_16_submit)",
+    }
+
+
+def _run_multi_target(
+    paths, config, state_store, state, n_splits, random_seed, submit, variant_name
+) -> dict:
+    """Multi-target training loop per SoT v2.2.1 A11."""
+    print("\n🎯 MULTI-TARGET MODE DETECTED\n")
+    target_config = config.get("target_config", {})
+    targets = target_config.get("targets", [])
+    print(f"Training {len(targets)} targets: {[t['name'] for t in targets]}\n")
+    
+    train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
+    test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+    cols_cfg = config.get("columns", {}) or {}
+    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+    
+    all_oof = {}
+    all_test_preds = {}
+    all_metrics = {}
+    
+    for target_spec in targets:
+        target_name = target_spec["name"]
+        target_task = target_spec["task_type"]
+        print(f"\n{'─' * 60}")
+        print(f"Target: {target_name} ({target_task})")
+        print(f"{'─' * 60}")
+        
+        # Override config for this target
+        target_config_override = ChallengeConfig({
+            **config._data,
+            "target_col": target_name,
+            "task_type": target_task,
+        })
+        
+        result = compute_oof_predictions(
+            train, test, target_config_override, target_name,
+            state=state, n_splits=n_splits, random_seed=random_seed,
+            variant_name=f"{variant_name}_{target_name}" if variant_name else target_name
+        )
+        
+        oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = result[:6]
+        all_oof[target_name] = oof_preds
+        all_test_preds[target_name] = test_preds
+        all_metrics[target_name] = {
+            "oof_logloss": oof_logloss, "oof_auc": oof_auc,
+            "oof_f1": oof_f1, "threshold": best_t
+        }
+    
+    # Save multi-target OOF
+    oof_df = pd.DataFrame({id_col: train[id_col]})
+    for target_name, preds in all_oof.items():
+        oof_df[f"{target_name}_pred"] = preds
+    oof_path = paths.data_raw_dir / "oof_anchor_multi.csv"
+    oof_df.to_csv(oof_path, index=False)
+    print(f"\n✅ Multi-target OOF saved → {oof_path}")
+    
+    # Save multi-target submission
+    sub_df = pd.DataFrame({id_col: test[id_col]})
+    for target_name, preds in all_test_preds.items():
+        sub_df[target_name] = preds
+    sub_path = next_submission_path(paths, suffix="anchor_multi")
+    sub_df.to_csv(sub_path, index=False)
+    print(f"✅ Multi-target submission saved → {sub_path}")
+    
+    # Update state with multi-target metrics
+    avg_score = np.mean([m["oof_f1"] for m in all_metrics.values()])
+    state_store.update(
+        anchor_oof_score=avg_score,
+        anchor_multi_target_metrics=all_metrics,
+        dag_phase="phase_2_anchor_confirmed",
+        last_updated=datetime.now(timezone.utc).isoformat()
+    )
+    print(f"\n✅ Multi-target training complete. Avg score: {avg_score:.6f}")
+    
+    return {
+        "status": "OK",
+        "multi_target": True,
+        "targets": list(all_metrics.keys()),
+        "metrics": all_metrics,
+        "avg_score": avg_score,
+        "submission_path": str(sub_path),
+        "oof_path": str(oof_path)
     }
 
 
