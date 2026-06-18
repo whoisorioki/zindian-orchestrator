@@ -80,19 +80,34 @@ def _impute_mcar(
 def _drop_constants(
     train: pd.DataFrame,
     test: pd.DataFrame,
+    config: Dict[str, Any],
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], List[str], List[str]]:
     """Third pass — dynamic variance scan. Drop columns constant in BOTH splits.
-
-    Returns cleaned train, cleaned test, intersection of dropped cols,
-    dropped in train only, dropped in test only.
+    
+    Target columns are explicitly protected from dropping per A11/A12.
     """
+    # A11: Protect all target columns from dropping
+    protected_cols = set()
+    
+    # Multi-target protection
+    target_config = config.get("target_config")
+    if target_config and isinstance(target_config, dict):
+        targets = target_config.get("targets", [])
+        for t in targets:
+            protected_cols.add(t["name"])
+    
+    # Single-target protection (legacy)
+    for key in ("target_col", "target", "target_column", "label"):
+        value = config.get(key)
+        if value:
+            protected_cols.add(str(value))
+    
     train_nunique = train.nunique(dropna=False)
     test_nunique = test.nunique(dropna=False)
 
-    const_in_train = [str(c) for c, n in train_nunique.items() if n <= 1]
-    const_in_test = [str(c) for c, n in test_nunique.items() if n <= 1]
+    const_in_train = [str(c) for c, n in train_nunique.items() if n <= 1 and c not in protected_cols]
+    const_in_test = [str(c) for c, n in test_nunique.items() if n <= 1 and c not in protected_cols]
 
-    # Only drop columns constant in BOTH (intersection) to avoid split mismatch
     const_both = list(set(const_in_train) & set(const_in_test))
 
     train_clean = train.drop(columns=const_both, errors="ignore")
@@ -142,7 +157,7 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Step 3: Dynamic constant column dropping ────────────────────
     train, test, const_both, const_train_only, const_test_only = _drop_constants(
-        train, test
+        train, test, config
     )
 
     # ── Write cleaning metadata to state ────────────────────────────
