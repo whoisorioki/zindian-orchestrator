@@ -999,10 +999,26 @@ def _run_multi_target_variant(
     f1 = all_metrics.get("Target", {}).get("oof_f1", 0)
     composite = (1 - rmse/10) * 0.5 + f1 * 0.5
     
+    # Log to DuckDB ledger
+    from zindian.ledger import Ledger
+    feature_count = len([c for c in train_feat.columns if c not in {config.get("id_col", "ID"), "target"}])
+    with Ledger() as ledger:
+        exp_id = ledger.log_experiment(
+            branch_name=variant_name,
+            oof_rmse=rmse,
+            feature_count=feature_count,
+            calibration_method="none",
+            gate_result="PASS",
+            gate_reason=f"Multi-target variant: {len(targets)} targets trained",
+            dag_phase="phase_3_variant_training",
+            notes=f"composite={composite:.6f}; rmse={rmse:.4f}; f1={f1:.4f}; targets={[t['name'] for t in targets]}",
+        )
+    
     print(f"\n{'=' * 60}")
     print(f"VARIANT {variant_name} COMPOSITE: {composite:.6f}")
     print(f"  RMSE: {rmse:.4f} | F1: {f1:.4f}")
     print(f"  Baseline: {baseline_score:.6f} | Delta: {composite - baseline_score:+.6f}")
+    print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
     print(f"{'=' * 60}")
     
     return {"status": "OK", "composite_score": composite, "metrics": all_metrics}
