@@ -42,6 +42,7 @@ def _resolve_target_col(config: ChallengeConfig, train: pd.DataFrame) -> str:
     for col in ("target", "label", "y", "occ"):
         if col in train.columns:
             return col
+    
     raise RuntimeError("target_col not initialized in challenge_config.json")
 
 
@@ -312,13 +313,134 @@ def run(
     subs_dir = comp_dir / "submissions"
     raw_dir = paths.data_raw_dir if paths.data_raw_dir else comp_dir / "data" / "raw"
 
-    # Phase 1: Dynamic intake & strategy check
+    # Multi-target detection (A11)
+    target_config = config_obj.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target_fusion(config_obj, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, in_memory, dry_run)
+
+    # Phase 1: Dynamic intake & strategy check (single-target path)
     train_path = proc_dir / "features_train.csv"
     if not train_path.exists():
         print(f"Train file not found: {train_path}")
         return {"status": "FAILED", "reason": "Train file missing"}
 
     train = pd.read_csv(train_path)
+    return _run_single_target_fusion(config_obj, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, train, in_memory, dry_run, None)
+
+
+def _run_multi_target_fusion(
+    config_obj: ChallengeConfig,
+    state_obj: dict[str, Any],
+    paths: Any,
+    proc_dir: Path,
+    reports_dir: Path,
+    subs_dir: Path,
+    raw_dir: Path,
+    in_memory: bool,
+    dry_run: bool,
+) -> dict:
+    """Multi-target fusion with dynamic target isolation (A11)."""
+    print("\n🎯 MULTI-TARGET FUSION MODE (A11)\n")
+    target_config = config_obj.get("target_config", {})
+    targets = target_config.get("targets", [])
+    print(f"Targets: {[t['name'] for t in targets]}\n")
+
+    train_path = proc_dir / "features_train.csv"
+    if not train_path.exists():
+        return {"status": "FAILED", "reason": "Train file missing"}
+    train = pd.read_csv(train_path)
+    
+    # Load raw train for target columns (merge by index since features are encoded)
+    raw_train_path = raw_dir / "Train.csv"
+    if raw_train_path.exists():
+        raw_train = pd.read_csv(raw_train_path)
+        # Merge by index since features_train is label-encoded
+        for target_spec in targets:
+            target_name = target_spec["name"]
+            if target_name in raw_train.columns and target_name not in train.columns:
+                target_values = raw_train[target_name].values
+                # Encode categorical targets
+                if target_spec["task_type"] == "classification" and target_values.dtype == object:
+                    from sklearn.preprocessing import LabelEncoder
+                    le = LabelEncoder()
+                    target_values = le.fit_transform(target_values)
+                train[target_name] = target_values
+
+    fusion_results = {}
+    submission_columns = {}
+
+    for target_spec in targets:
+        target_name = target_spec["name"]
+        task_type = target_spec["task_type"]
+        print(f"\n{'─' * 60}")
+        print(f"Fusion: {target_name} ({task_type})")
+        print(f"{'─' * 60}")
+
+        # Dynamic config override (A5)
+        target_config_override = ChallengeConfig(
+            path=config_obj.path,
+            _data={
+                **config_obj._data,
+                "target_col": target_name,
+                "task_type": task_type,
+                "metric": target_spec.get("metric", config_obj.get("metric")),
+                "metric_direction": target_spec.get("metric_direction", config_obj.get("metric_direction")),
+                "use_probabilities": target_spec.get("use_probabilities", config_obj.get("use_probabilities")),
+            },
+        )
+
+        # Run single-target fusion logic
+        result = _run_single_target_fusion(
+            target_config_override, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, train, in_memory, dry_run, target_name
+        )
+        fusion_results[target_name] = result
+
+        if result["status"] == "OK" and "submission_column" in result:
+            submission_columns[target_name] = result["submission_column"]
+
+    # Combine multi-target submissions
+    if not dry_run and submission_columns:
+        sample_path = raw_dir / "SampleSubmission.csv"
+        if sample_path.exists():
+            sample = pd.read_csv(sample_path)
+            id_col = sample.columns[0]
+            combined_sub = pd.DataFrame({id_col: sample[id_col]})
+            for target_name, values in submission_columns.items():
+                combined_sub[target_name] = values
+
+            subs_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            out_path = subs_dir / f"sub_ensemble_multi_{timestamp}.csv"
+            combined_sub.to_csv(out_path, index=False)
+            print(f"\n✅ Multi-target submission saved: {out_path}")
+
+            if not in_memory:
+                store = SkillStateStore(paths.state_path)
+                store.update(
+                    last_ensemble_path=str(out_path),
+                    last_ensemble_multi_target_results=fusion_results,
+                    last_updated=datetime.now(timezone.utc).isoformat(),
+                )
+
+            return {"status": "OK", "submission_path": str(out_path), "multi_target": True, "results": fusion_results}
+
+    return {"status": "OK" if all(r.get("status") == "OK" for r in fusion_results.values()) else "PARTIAL", "multi_target": True, "results": fusion_results}
+
+
+def _run_single_target_fusion(
+    config_obj: ChallengeConfig,
+    state_obj: dict[str, Any],
+    paths: Any,
+    proc_dir: Path,
+    reports_dir: Path,
+    subs_dir: Path,
+    raw_dir: Path,
+    train: pd.DataFrame,
+    in_memory: bool,
+    dry_run: bool,
+    target_name: str | None = None,
+) -> dict:
+    """Single-target fusion logic (extracted for reuse)."""
     target_col = _resolve_target_col(config_obj, train)
 
     task_type = str(config_obj.get("task_type", "classification"))
@@ -476,8 +598,20 @@ def run(
         )
         return {"status": "FAILED", "reason": "Row count mismatch"}
 
-    # Save submission
-    target_out_col = sample.columns[-1]  # Use whatever column name sample uses
+    # For multi-target, return submission column instead of saving
+    if target_name:
+        return {
+            "status": "OK",
+            "blend_oof_metric": float(blend_score),
+            "metric": metric_name,
+            "threshold": (None if blend_threshold is None else float(blend_threshold)),
+            "variants": names,
+            "dropped_collinear": dropped_pairs,
+            "submission_column": submission_values,
+        }
+
+    # Save submission (single-target path)
+    target_out_col = sample.columns[-1]
     id_col_name = sample.columns[0]
 
     if config_obj.get("submission_log1p", False):
@@ -511,6 +645,7 @@ def run(
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
     if not in_memory:
+        store = SkillStateStore(paths.state_path)
         store.update(**updates)
     else:
         state_obj.update(updates)

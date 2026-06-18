@@ -207,10 +207,20 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     task_type = str(
         raw_config.get("task_type", config.get("task_type", "classification"))
     )
-    if task_type == "regression":
+    
+    # Skip for regression or multi-target competitions
+    if task_type == "regression" or task_type == "multi_target":
         return {
             "status": "SKIPPED",
-            "reason": "Probability calibration applies to classification tasks only",
+            "reason": "Probability calibration applies to single-target classification tasks only",
+        }
+    
+    # Check if multi-target via target_config
+    target_config = config.get("target_config")
+    if target_config and len(target_config.get("targets", [])) > 1:
+        return {
+            "status": "SKIPPED",
+            "reason": "Probability calibration not supported for multi-target competitions",
         }
 
     proc_dir = paths.data_processed_dir

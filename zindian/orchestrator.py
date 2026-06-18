@@ -184,6 +184,13 @@ def run_skill(
     Returns:
         Result dict from skill
     """
+    import time
+    import tracemalloc
+    
+    # Start telemetry
+    start_time = time.time()
+    tracemalloc.start()
+    
     # Handle split function notation (e.g., "skill_03.policy_writer")
     if "." in skill_name:
         base_skill, func_name = skill_name.split(".", 1)
@@ -210,40 +217,75 @@ def run_skill(
         
         try:
             func = getattr(skill_module, func_name)
-            return func(**kwargs)
+            result = func(**kwargs)
         except Exception as e:
             import traceback
+            from .config import ConfigNotPopulated
+            
+            # Graceful diagnostics for configuration errors
+            if isinstance(e, ConfigNotPopulated):
+                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
+            elif isinstance(e, KeyError):
+                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+            
+            result = {
+                "status": "ERROR",
+                "message": f"Skill {skill_name} failed: {str(e)}",
+                "traceback": traceback.format_exc(),
+            }
+    else:
+        # Standard skill execution
+        if skill_name not in SKILL_REGISTRY:
             return {
+                "status": "ERROR",
+                "message": f"Unknown skill: {skill_name}. Available: {list(SKILL_REGISTRY.keys())}",
+            }
+
+        description, skill_module = SKILL_REGISTRY[skill_name]
+
+        if skill_module is None:
+            return {
+                "status": "ERROR",
+                "message": f"Skill {skill_name} ({description}) not loaded",
+            }
+
+        try:
+            result = skill_module.run(**kwargs)
+        except Exception as e:
+            import traceback
+            from .config import ConfigNotPopulated
+            
+            # Graceful diagnostics for configuration errors
+            if isinstance(e, ConfigNotPopulated):
+                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
+            elif isinstance(e, KeyError):
+                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+            
+            result = {
                 "status": "ERROR",
                 "message": f"Skill {skill_name} failed: {str(e)}",
                 "traceback": traceback.format_exc(),
             }
     
-    # Standard skill execution
-    if skill_name not in SKILL_REGISTRY:
-        return {
-            "status": "ERROR",
-            "message": f"Unknown skill: {skill_name}. Available: {list(SKILL_REGISTRY.keys())}",
-        }
-
-    description, skill_module = SKILL_REGISTRY[skill_name]
-
-    if skill_module is None:
-        return {
-            "status": "ERROR",
-            "message": f"Skill {skill_name} ({description}) not loaded",
-        }
-
-    try:
-        return skill_module.run(**kwargs)
-    except Exception as e:
-        import traceback
-
-        return {
-            "status": "ERROR",
-            "message": f"Skill {skill_name} failed: {str(e)}",
-            "traceback": traceback.format_exc(),
-        }
+    # Stop telemetry
+    duration_sec = time.time() - start_time
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    peak_memory_mb = peak / 1024 / 1024
+    
+    # Normalize result
+    if result is None or not isinstance(result, dict):
+        result = {"status": "COMPLETED"}
+    elif "status" not in result:
+        result["status"] = "COMPLETED"
+    
+    # Add telemetry
+    result["telemetry"] = {
+        "duration_sec": round(duration_sec, 2),
+        "peak_memory_mb": round(peak_memory_mb, 2)
+    }
+    
+    return result
 
 
 def run_phase(
@@ -260,13 +302,29 @@ def run_phase(
     Returns:
         Dict with results for each skill
     """
-    # Enforce phase dependencies (Principle 4)
+    # Load config and state for skills that need them
     try:
+        from .config import ChallengeConfig
         from .state import SkillStateStore
         from .paths import resolve_competition_paths
         
         paths = resolve_competition_paths(require_competition=False)
-        if paths.state_path.exists():
+        config = ChallengeConfig.load()
+        store = SkillStateStore(paths.state_path)
+        state = store.read()
+    except Exception as e:
+        config = None
+        state = {}
+        store = None
+        paths = None
+    
+    # Enforce phase dependencies (Principle 4)
+    try:
+        if not paths:
+            from .paths import resolve_competition_paths
+            paths = resolve_competition_paths(require_competition=False)
+        if not store and paths.state_path.exists():
+            from .state import SkillStateStore
             store = SkillStateStore(paths.state_path)
             state = store.read()
             
@@ -343,7 +401,70 @@ def run_phase(
     for skill_name in skills:
         if skill_name in SKILL_REGISTRY or "." in skill_name:
             print(f"\nRunning {skill_name}...")
-            results[skill_name] = run_skill(skill_name, **kwargs)
+            # Pass config and state to skills that need them
+            skill_kwargs = kwargs.copy()
+            if skill_name == "skill_03.policy_gate":
+                # Load policy and planned_features for policy_gate
+                try:
+                    import json
+                    policy_path = paths.reports_dir / "feature_policy.json"
+                    if policy_path.exists():
+                        policy = json.loads(policy_path.read_text())
+                        skill_kwargs["policy"] = policy
+                    skill_kwargs["planned_features"] = state.get("planned_features", [])
+                except Exception:
+                    pass
+            elif skill_name == "skill_06":
+                # Materialize feature matrices for skill_06
+                import pandas as pd
+                
+                train_path = paths.data_raw_dir / "Train.csv"
+                test_path = paths.data_raw_dir / "Test.csv"
+                
+                df_train = pd.read_csv(train_path)
+                df_test = pd.read_csv(test_path)
+                
+                # Extract target columns dynamically from config
+                target_cols = []
+                id_col = config._data.get("id_col", "ID") if config else "ID"
+                
+                if config:
+                    target_config = config._data.get("target_config")
+                    if target_config and isinstance(target_config, dict):
+                        targets = target_config.get("targets", [])
+                        target_cols = [t["name"] for t in targets]
+                    else:
+                        # Fallback to single target
+                        for key in ("target_col", "target", "target_column", "label"):
+                            value = config._data.get(key)
+                            if value:
+                                target_cols.append(str(value))
+                                break
+                
+                # Separate targets and create feature matrices
+                y_train = df_train[target_cols].copy() if target_cols else None
+                X_train = df_train.drop(columns=[id_col] + target_cols, errors="ignore")
+                X_test = df_test.drop(columns=[id_col], errors="ignore")
+                
+                # Pass to skill_06
+                skill_kwargs["config"] = config._data if config else {}
+                skill_kwargs["state"] = {**state, "X_train": X_train, "X_test": X_test}
+            
+            result = run_skill(skill_name, **skill_kwargs)
+            results[skill_name] = result
+            
+            # Print telemetry
+            telemetry = result.get("telemetry", {})
+            if telemetry:
+                print(f"  ⏱️  Time: {telemetry.get('duration_sec', 0)}s | 💾 Peak RAM: {telemetry.get('peak_memory_mb', 0)}MB")
+            
+            # Store telemetry in state
+            try:
+                if store:
+                    telemetry_key = f"telemetry.{skill_name}"
+                    store.update(**{telemetry_key: telemetry})
+            except Exception:
+                pass
         else:
             results[skill_name] = {
                 "status": "SKIPPED",

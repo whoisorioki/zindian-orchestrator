@@ -494,6 +494,15 @@ def run(dry_run: bool = False) -> dict:
     # Multi-target detection (A12)
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
+        # A12 Assertion: Verify recombination policy exists for mixed-task competitions
+        targets = target_config.get("targets", [])
+        task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
+        if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+            assert "pseudo_label_recombination_policy" in target_config, (
+                "A12 Violation: Mixed-task multi-target competitions require a "
+                "recombination policy in challenge_config.json! Add "
+                "'pseudo_label_recombination_policy' to target_config."
+            )
         return _run_multi_target_pseudo_label(paths, config, store, state, dry_run)
 
     # ── Guard Condition 1: classification only ───────────────────────────────
@@ -958,11 +967,14 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
         print(f"{'─' * 70}")
         
         # Override config for this target
-        target_config_override = ChallengeConfig({
-            **config._data,
-            "target_col": target_name,
-            "task_type": "classification",
-        })
+        target_config_override = ChallengeConfig(
+            path=config.path,
+            _data={
+                **config._data,
+                "target_col": target_name,
+                "task_type": "classification",
+            }
+        )
         
         # Run single-target pseudo-labeling (call main run logic)
         # For now, mark as augmented (full implementation would call the main loop)

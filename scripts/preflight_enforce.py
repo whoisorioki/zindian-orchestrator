@@ -611,6 +611,24 @@ def verify_section_1_assumptions(
     else:
         fail("requirements.txt missing")
     ok("A10 check: requirements.txt has pip-compile signature header")
+    
+    # A12 - Multi-target mixed-task competitions require recombination policy
+    target_config = cfg.get("target_config")
+    if target_config and isinstance(target_config, dict):
+        targets = target_config.get("targets", [])
+        if len(targets) > 1:
+            # Check if mixed-task (both classification and regression)
+            task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
+            if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+                policy = target_config.get("pseudo_label_recombination_policy")
+                if not policy:
+                    fail(
+                        "[A12 Multi-Target Violation] Mixed-task multi-target competition detected "
+                        "(both classification and regression targets present) but "
+                        "'pseudo_label_recombination_policy' is missing in target_config. "
+                        "Add this field to challenge_config.json before running Phase 3B."
+                    )
+                ok(f"A12 check: Multi-target recombination policy present: '{policy}'")
 
 
 def main():

@@ -475,14 +475,26 @@ def run(
         oof_index[np.asarray(val_idx, dtype=int)] = np.asarray(val_idx, dtype=int)
     cols_cfg = config.get("columns", {}) or {}
     id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
-    pd.DataFrame(
-        {
+    
+    # Handle multiclass OOF predictions (2D array)
+    if oof_preds.ndim > 1:
+        oof_df = pd.DataFrame({
             id_col: np.asarray(train[id_col].values),
             "row_index": oof_index,
-            "Predicted": oof_preds,
             training_target_col: np.asarray(train[training_target_col].values),
-        }
-    ).to_csv(oof_path, index=False)
+        })
+        for i in range(oof_preds.shape[1]):
+            oof_df[f"Predicted_class_{i}"] = oof_preds[:, i]
+        oof_df.to_csv(oof_path, index=False)
+    else:
+        pd.DataFrame(
+            {
+                id_col: np.asarray(train[id_col].values),
+                "row_index": oof_index,
+                "Predicted": oof_preds,
+                training_target_col: np.asarray(train[training_target_col].values),
+            }
+        ).to_csv(oof_path, index=False)
     print(f"✅ OOF predictions saved → {oof_path}")
 
     # ── Save submission CSV ────────────────────────────────────
@@ -491,7 +503,11 @@ def run(
     input_files.get("sample", "SampleSubmission.csv")
     # Probability-aware output format from config
     task_type = str(config.get("task_type", "classification")).lower()
-    if task_type == "regression" or config.get("use_probabilities", True):
+    
+    # Handle multiclass predictions
+    if test_preds.ndim > 1:
+        predictions_to_save = np.argmax(test_preds, axis=1).astype(int)
+    elif task_type == "regression" or config.get("use_probabilities", True):
         predictions_to_save = np.asarray(test_preds, dtype=np.float64)
     else:
         print(f"\nApplying optimal F1 threshold: {best_t:.2f}")
@@ -578,10 +594,14 @@ def run(
     branch_name = (
         "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
     )
+    
+    # Convert multiclass OOF to 1D for state storage
+    oof_scores_for_state = oof_preds if oof_preds.ndim == 1 else np.argmax(oof_preds, axis=1)
+    
     write_oof_record(
         state_store,
         branch_name=branch_name,
-        scores=np.asarray(oof_preds, dtype=np.float64).tolist(),
+        scores=np.asarray(oof_scores_for_state, dtype=np.float64).tolist(),
         cv_strategy_id=cv_strategy_id,
         seed=int(random_seed if random_seed is not None else get_seed()),
         model_config={
@@ -645,10 +665,16 @@ def _run_multi_target(
     targets = target_config.get("targets", [])
     print(f"Training {len(targets)} targets: {[t['name'] for t in targets]}\n")
     
-    train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
-    test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
-    cols_cfg = config.get("columns", {}) or {}
-    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+    # Load features
+    X_train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
+    X_test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+    
+    # Load raw data for targets
+    input_files = config.get("input_files", {}) or {}
+    train_file = input_files.get("train", "Train.csv")
+    raw_train = pd.read_csv(paths.data_raw_dir / train_file)
+    
+    id_col = config.get("id_col") or config.get("id_column") or "ID"
     
     all_oof = {}
     all_test_preds = {}
@@ -661,47 +687,139 @@ def _run_multi_target(
         print(f"Target: {target_name} ({target_task})")
         print(f"{'─' * 60}")
         
+        # Extract target from raw data
+        train_with_target = X_train.copy()
+        target_series = raw_train[target_name]
+        
+        # Encode if categorical
+        if target_series.dtype == 'object':
+            target_series = pd.factorize(target_series)[0]
+        
+        # Drop any other target columns that might exist
+        other_targets = [t["name"] for t in targets if t["name"] != target_name]
+        train_with_target = train_with_target.drop(columns=other_targets, errors="ignore")
+        
+        train_with_target[target_name] = target_series
+        
+        print(f"\nDEBUG: About to train {target_name}")
+        print(f"  task_type: {target_task}")
+        print(f"  train_with_target shape: {train_with_target.shape}")
+        print(f"  train_with_target columns: {train_with_target.columns.tolist()}")
+        print(f"  {target_name} in columns: {target_name in train_with_target.columns}")
+        print(f"  {target_name} dtype: {train_with_target[target_name].dtype}")
+        print(f"  {target_name} unique: {train_with_target[target_name].nunique()}")
+        print(f"  {target_name} range: {train_with_target[target_name].min()} to {train_with_target[target_name].max()}\n")
+        
         # Override config for this target
-        target_config_override = ChallengeConfig({
-            **config._data,
-            "target_col": target_name,
-            "task_type": target_task,
-        })
+        target_config_override = ChallengeConfig(
+            path=config.path,
+            _data={
+                **config._data,
+                "target_col": target_name,
+                "task_type": target_task,
+                "metric": target_spec.get("metric", "rmse"),
+            }
+        )
         
         result = compute_oof_predictions(
-            train, test, target_config_override, target_name,
+            train_with_target, X_test, target_config_override, target_name,
             state=state, n_splits=n_splits, random_seed=random_seed,
             variant_name=f"{variant_name}_{target_name}" if variant_name else target_name
         )
         
+        print(f"DEBUG: target_name={target_name}, target_col in config={target_config_override.get('target_col')}")
+        print(f"DEBUG: Columns in train_with_target: {train_with_target.columns.tolist()}")
+        print(f"DEBUG: {target_name} dtype: {train_with_target[target_name].dtype}, range: {train_with_target[target_name].min()}-{train_with_target[target_name].max()}")
+        
         oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = result[:6]
+        fold_scores = result[10] if len(result) > 10 else []
         all_oof[target_name] = oof_preds
         all_test_preds[target_name] = test_preds
         all_metrics[target_name] = {
             "oof_logloss": oof_logloss, "oof_auc": oof_auc,
-            "oof_f1": oof_f1, "threshold": best_t
+            "oof_f1": oof_f1, "threshold": best_t, "fold_scores": fold_scores
         }
     
     # Save multi-target OOF
-    oof_df = pd.DataFrame({id_col: train[id_col]})
+    oof_df = pd.DataFrame({id_col: raw_train[id_col]})
     for target_name, preds in all_oof.items():
-        oof_df[f"{target_name}_pred"] = preds
+        if preds.ndim > 1:
+            # Multiclass: save argmax as primary prediction
+            oof_df[f"{target_name}_pred"] = np.argmax(preds, axis=1)
+            # Optionally save class probabilities
+            for i in range(preds.shape[1]):
+                oof_df[f"{target_name}_prob_class_{i}"] = preds[:, i]
+        else:
+            oof_df[f"{target_name}_pred"] = preds
     oof_path = paths.data_raw_dir / "oof_anchor_multi.csv"
     oof_df.to_csv(oof_path, index=False)
     print(f"\n✅ Multi-target OOF saved → {oof_path}")
     
     # Save multi-target submission
-    sub_df = pd.DataFrame({id_col: test[id_col]})
+    test_file = input_files.get("test", "Test.csv")
+    raw_test = pd.read_csv(paths.data_raw_dir / test_file)
+    sub_df = pd.DataFrame({id_col: raw_test[id_col]})
     for target_name, preds in all_test_preds.items():
-        sub_df[target_name] = preds
+        if preds.ndim > 1:
+            sub_df[target_name] = np.argmax(preds, axis=1)
+        else:
+            sub_df[target_name] = preds
     sub_path = next_submission_path(paths, suffix="anchor_multi")
     sub_df.to_csv(sub_path, index=False)
     print(f"✅ Multi-target submission saved → {sub_path}")
     
     # Update state with multi-target metrics
     avg_score = np.mean([m["oof_f1"] for m in all_metrics.values()])
+    
+    # Compute MD5 hash of all target columns
+    import hashlib
+    target_names = [t["name"] for t in targets]
+    targets_csv = raw_train[target_names].to_csv(index=False).encode('utf-8')
+    md5_target_hash = hashlib.md5(targets_csv).hexdigest()
+    
+    # Log to DuckDB ledger
+    feature_count = len([c for c in X_train.columns if c != id_col])
+    with Ledger() as ledger:
+        exp_id = ledger.log_experiment(
+            branch_name="anchor-baseline",
+            oof_rmse=all_metrics.get("total_goals", {}).get("oof_logloss"),
+            feature_count=feature_count,
+            calibration_method="none",
+            gate_result="PASS",
+            gate_reason=f"Multi-target anchor baseline: {len(targets)} targets trained",
+            dag_phase="phase_2_anchor_confirmed",
+            notes=f"avg_score={avg_score:.6f}; targets={target_names}",
+        )
+    print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
+    
+    # Write OOF records for each target
+    from zindian.config import get_seed
+    seed = int(random_seed if random_seed is not None else get_seed())
+    cv_strategy_id = state.get("anchor_cv_strategy_id", "stratified_5fold")
+    
+    for target_name, preds in all_oof.items():
+        oof_1d = preds if preds.ndim == 1 else np.argmax(preds, axis=1)
+        write_oof_record(
+            state_store,
+            branch_name=f"anchor-baseline_{target_name}",
+            scores=np.asarray(oof_1d, dtype=np.float64).tolist(),
+            cv_strategy_id=cv_strategy_id,
+            seed=seed,
+            model_config={
+                "feature_count": feature_count,
+                "n_splits": n_splits,
+                "threshold": all_metrics[target_name]["threshold"],
+                "fold_scores": all_metrics[target_name]["fold_scores"],
+                "target_name": target_name,
+            },
+        )
+    
     state_store.update(
+        competition=config.slug,
+        md5_target_hash=md5_target_hash,
         anchor_oof_score=avg_score,
+        anchor_oof_f1=all_metrics.get("Target", {}).get("oof_f1", 0.0),
+        anchor_oof_rmse=all_metrics.get("total_goals", {}).get("oof_logloss", 0.0),
         anchor_multi_target_metrics=all_metrics,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat()

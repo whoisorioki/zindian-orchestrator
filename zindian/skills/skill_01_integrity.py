@@ -143,25 +143,51 @@ def run(re_verify: bool = False) -> dict:
     print(f"  Test shape  : {test.shape}")
     print(f"  Sample sub  : {sub.shape}")
 
-    # Validate expected columns exist — be permissive for generality
-    if target_col not in train.columns:
-        raise AssertionError(
-            f"❌ Target column '{target_col}' not found in {train_file}"
-        )
-    if id_col not in train.columns:
-        raise AssertionError(f"❌ ID column '{id_col}' missing from train")
-    # Latitude/Longitude check only makes sense for geospatial challenges
-    if domain.lower() == "geospatial":
-        if "Latitude" not in train.columns or "Longitude" not in train.columns:
-            print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
-    if submission_target_col not in sub.columns:
-        raise AssertionError(
-            f"❌ '{submission_target_col}' not found in SampleSubmission.csv"
-        )
-    print("✅ Required columns present (warnings may have been emitted)")
+    # Check if we're in INIT mode (no config exists yet)
+    config_exists = paths.config_path.exists()
+    
+    # INIT mode: Skip target validation - skill_02 will detect multi-target structure
+    if not config_exists:
+        print("ℹ️  INIT mode detected - skipping target column validation")
+        print("   skill_02 will detect target structure from SampleSubmission.csv")
+        target_col = None  # Signal to skip target-dependent operations
+    else:
+        # ENFORCE mode: Validate expected columns
+        if target_col not in train.columns:
+            # Check if this is a multi-target competition
+            try:
+                target_config = cfg.get("target_config")
+                if target_config:
+                    print("ℹ️  Multi-target competition detected - skipping single target validation")
+                    target_col = None  # Skip single-target operations
+                else:
+                    raise AssertionError(
+                        f"❌ Target column '{target_col}' not found in {train_file}"
+                    )
+            except:
+                raise AssertionError(
+                    f"❌ Target column '{target_col}' not found in {train_file}"
+                )
+        
+        if id_col not in train.columns:
+            raise AssertionError(f"❌ ID column '{id_col}' missing from train")
+        
+        # Latitude/Longitude check only makes sense for geospatial challenges
+        if domain.lower() == "geospatial":
+            if "Latitude" not in train.columns or "Longitude" not in train.columns:
+                print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
+        
+        if submission_target_col not in sub.columns:
+            raise AssertionError(
+                f"❌ '{submission_target_col}' not found in SampleSubmission.csv"
+            )
+        print("✅ Required columns present (warnings may have been emitted)")
 
-    # Validate target values
-    if task_type == "regression":
+    # Validate target values (skip in INIT mode)
+    if target_col is None:
+        print("ℹ️  Skipping target validation in INIT mode")
+        counts = {}
+    elif task_type == "regression":
         # Continuous descriptive metrics
 
         t_arr = train[target_col].dropna().to_numpy()
@@ -201,7 +227,12 @@ def run(re_verify: bool = False) -> dict:
 
     # Compute hashes
     print("\nComputing MD5 hashes...")
-    md5_target = compute_md5(train[target_col])
+    # In INIT mode, skip target column hash (will be computed by skill_02)
+    if target_col is not None:
+        md5_target = compute_md5(train[target_col])
+    else:
+        md5_target = "pending_skill_02"  # Placeholder for INIT mode
+    
     md5_train_file = compute_file_md5(str(train_path))
     md5_test_file = compute_file_md5(str(test_path))
     md5_sample_sub = compute_file_md5(str(sample_path))
@@ -259,14 +290,18 @@ def run(re_verify: bool = False) -> dict:
         print("\n✅ Hashes locked in SKILL_STATE.json")
 
     # Derive feature columns (exclude ID and target)
-    raw_feature_cols = [c for c in train.columns if c not in {id_col, target_col}]
+    if target_col is not None:
+        raw_feature_cols = [c for c in train.columns if c not in {id_col, target_col}]
+    else:
+        # INIT mode: Just exclude ID column
+        raw_feature_cols = [c for c in train.columns if c != id_col]
     summary = {
         "status": "OK",
         "train_rows": len(train),
         "test_rows": len(test),
         "n_features_raw": len(raw_feature_cols),
-        "target_col": target_col,
-        "submission_target_col": submission_target_col,
+        "target_col": target_col if target_col else "pending_skill_02",
+        "submission_target_col": submission_target_col if target_col else "pending_skill_02",
         "task": "regression" if task_type == "regression" else "binary_classification",
         "class_distribution": counts,
         "feature_cols": raw_feature_cols,

@@ -361,12 +361,22 @@ def extract_config(data: dict, slug: str) -> dict:
     # Build final compliance notes from resolved values
     up = config.get("use_probabilities")
     cn = []
-    if up is True:
+    
+    # Check if multi-target before adding single-target compliance notes
+    target_config = config.get("target_config")
+    is_multi_target = target_config is not None and len(target_config.get("targets", [])) > 1
+    
+    if is_multi_target:
+        # Multi-target: describe each target's requirements
+        cn.append("Multi-target competition - see target_config for per-target metrics")
+    elif up is True:
         cn.append(
             "use_probabilities=True: submit raw float probabilities, do NOT threshold"
         )
     elif up is False:
-        if config.get("task_type") != "regression":
+        if config.get("task_type") == "regression":
+            cn.append("Regression task: submit continuous numeric predictions")
+        else:
             cn.append("use_probabilities=False: submit hard 0/1 integer labels only")
     else:
         cn.append("use_probabilities: unknown — confirm from competition page")
@@ -392,12 +402,13 @@ def extract_config(data: dict, slug: str) -> dict:
 
 
 def write_config(config: dict, paths: CompetitionPaths) -> None:
+    import shutil
     path = paths.config_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
         json.dump(config, tmp, indent=2)
         tmp_path = tmp.name
-    os.replace(tmp_path, path)
+    shutil.move(tmp_path, path)
     print(f"✅ challenge config populated -> {path}")
 
 
@@ -422,6 +433,7 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
     Returns target_config dict if multi-target, None otherwise.
     """
     import pandas as pd
+    import numpy as np
     
     df = pd.read_csv(sample_submission_path)
     cols = [c for c in df.columns if c.lower() not in ('id', 'team_id', 'uniqueid')]
@@ -434,8 +446,14 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
     for col in cols:
         # Infer task_type from column values
         sample_vals = df[col].dropna().head(100)
-        is_binary = set(sample_vals.unique()).issubset({0, 1, 0.0, 1.0})
-        is_prob = (sample_vals >= 0).all() and (sample_vals <= 1).all()
+        # Convert to numeric for comparison
+        try:
+            numeric_vals = pd.to_numeric(sample_vals, errors='coerce').dropna()
+            is_binary = set(numeric_vals.unique()).issubset({0, 1, 0.0, 1.0})
+            is_prob = (numeric_vals >= 0).all() and (numeric_vals <= 1).all()
+        except:
+            is_binary = False
+            is_prob = False
         
         task_type = "classification" if (is_binary or is_prob) else "regression"
         
@@ -485,10 +503,14 @@ def run(
                 "slug must be provided or set via COMPETITION_SLUG environment variable"
             )
 
+    # Lazy import headers only if needed
     if headers is None:
-        from zindian.zindi_monitor_core import _get_headers
-
-        headers = _get_headers()
+        try:
+            from zindian.zindi_monitor_core import _get_headers
+            headers = _get_headers()
+        except Exception:
+            # Network isolation - will use monitor fallback
+            headers = {"Accept": "application/json"}
 
     paths = resolve_competition_paths(slug=slug)
 
@@ -497,8 +519,21 @@ def run(
     print(f"Competition: {slug}")
     print(f"{'=' * 60}\n")
 
-    print("Fetching competition details from API...")
-    data = fetch_competition(slug, headers)
+    # Try API first, fall back to monitor file if network isolated
+    try:
+        print("Fetching competition details from API...")
+        data = fetch_competition(slug, headers)
+    except Exception as e:
+        print(f"⚠️  API fetch failed: {e}")
+        print("Attempting fallback to zindi_monitor.json...")
+        monitor_path = paths.reports_dir / "zindi_monitor.json"
+        if monitor_path.exists():
+            with open(monitor_path, encoding="utf-8") as f:
+                mon = json.load(f)
+            data = mon.get("competition_intel", {})
+            print("✅ Using competition intel from zindi_monitor.json")
+        else:
+            raise RuntimeError(f"API unavailable and no zindi_monitor.json found at {monitor_path}")
 
     print("Extracting config fields...")
     config = extract_config(data, slug)
@@ -565,7 +600,8 @@ def run(
         # Only write config during allowed intake phases per SoT
         store = SkillStateStore(paths.state_path)
         current_phase = store.read().get("dag_phase")
-        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1")
+        # Allow write in INIT mode (phase_1_complete from skill_01 is still INIT)
+        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1", "phase_1_complete", "phase_1_integrity")
         if current_phase in allowed_write_phases:
             write_config(final_to_write, paths)
             # Operator-agreed validation before advancing the DAG phase

@@ -12,6 +12,7 @@ setup(
     entry_points={
         "console_scripts": [
             "tabula=tabula.__main__:main",
+            "zindian-cli=zindian.cli:main",
         ]
     },
 )

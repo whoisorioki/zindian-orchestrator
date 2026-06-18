@@ -1,0 +1,32 @@
+#!/bin/bash
+# Zindian CLI Wrapper - Ensures proper competition context
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ZINDIAN_ROOT="$SCRIPT_DIR"
+
+# Set PYTHONPATH
+export PYTHONPATH="$ZINDIAN_ROOT:$PYTHONPATH"
+
+# Detect competition from current directory or use environment variable
+if [[ "$PWD" == *"/competitions/"* ]]; then
+    # Extract competition slug from path
+    COMP_PATH="${PWD#*/competitions/}"
+    COMP_SLUG="${COMP_PATH%%/*}"
+    export ZINDIAN_COMPETITION_SLUG="$COMP_SLUG"
+    export COMPETITION_SLUG="$COMP_SLUG"
+    echo "🎯 Detected competition: $COMP_SLUG"
+elif [[ -n "$ZINDIAN_COMPETITION" ]]; then
+    export ZINDIAN_COMPETITION_SLUG="$ZINDIAN_COMPETITION"
+    export COMPETITION_SLUG="$ZINDIAN_COMPETITION"
+    echo "🎯 Using competition from env: $ZINDIAN_COMPETITION"
+    cd "$ZINDIAN_ROOT/competitions/$ZINDIAN_COMPETITION" 2>/dev/null || {
+        echo "⚠️  Competition directory not found, staying in current directory"
+    }
+else
+    echo "⚠️  No competition context detected"
+    echo "   Set ZINDIAN_COMPETITION or run from competitions/<slug>/ directory"
+fi
+
+# Execute CLI with all arguments
+python -m zindian.cli "$@"

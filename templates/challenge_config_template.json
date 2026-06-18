@@ -30,17 +30,19 @@
     "automl_permitted": false,
     "data_modality": null,
     "domain": null,
+    "target_config": null,
     "data_shape": {
         "n_train": 0,
         "n_test": 0,
         "n_cols": 0
     },
     "phase_skill_map": {
-        "1": ["skill_01", "skill_02", "skill_15"],
-        "2": ["skill_03", "skill_08"],
-        "3": ["skill_04", "skill_05", "skill_09", "skill_10"],
-        "4": ["skill_11", "skill_16"],
-        "5": ["skill_13", "skill_14", "skill_17"]
+        "1": ["skill_01", "skill_02", "skill_03.policy_writer", "skill_04", "skill_05", "skill_15"],
+        "2A": ["skill_03.policy_gate", "skill_06"],
+        "2B": ["skill_08", "skill_07"],
+        "3A": ["skill_10", "skill_09", "skill_12"],
+        "3B": ["skill_11", "skill_21", "skill_13"],
+        "4": ["skill_14", "skill_16", "skill_17", "skill_22"]
     },
     "reproducibility": {
         "seed": 42

@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""CLI for Zindian orchestrator commands."""
+"""CLI for Zindian orchestrator commands.
+
+Available commands:
+  phase <1|2A|2B|3A|3B|4>  - Execute pipeline phase
+  status                    - Show competition state
+  sync                      - Update state from git/Zindi
+  submit <file>             - Submit to Zindi
+  submissions               - View submission history
+  leaderboard               - View rankings
+  ledger <query>            - Query experiments database
+  monitor                   - Check competition updates
+  report                    - Generate phase summary
+  audit                     - Run reproducibility check
+"""
 
 import sys
 import argparse
@@ -45,6 +58,19 @@ def main():
 
     # Sync command
     subparsers.add_parser("sync", help="Sync state with git and Zindi")
+
+    # Phase execution command
+    phase_parser = subparsers.add_parser("phase", help="Execute pipeline phase")
+    phase_parser.add_argument(
+        "phase_id",
+        choices=["1", "2A", "2B", "3A", "3B", "4"],
+        help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)"
+    )
+    phase_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show detailed skill output"
+    )
 
     args = parser.parse_args()
 
@@ -140,6 +166,36 @@ def main():
 
         result = sync_all()
         print("✅ State synchronized")
+
+    elif args.command == "phase":
+        from zindian.orchestrator import run_phase
+        
+        print(f"\n{'='*60}")
+        print(f"EXECUTING PHASE {args.phase_id}")
+        print(f"{'='*60}\n")
+        
+        results = run_phase(args.phase_id)
+        
+        # Display results
+        print(f"\n{'='*60}")
+        print(f"PHASE {args.phase_id} RESULTS")
+        print(f"{'='*60}")
+        
+        all_success = True
+        for skill_name, result in results.items():
+            status = result.get("status", "UNKNOWN")
+            print(f"\n{skill_name}: {status}")
+            
+            if status == "ERROR":
+                all_success = False
+                print(f"  Error: {result.get('message', 'Unknown error')}")
+                if args.verbose and "traceback" in result:
+                    print(f"\n{result['traceback']}")
+            elif status == "GO" and args.verbose:
+                print(f"  {result.get('message', '')}")
+        
+        # Exit with error code if any skill failed
+        sys.exit(0 if all_success else 1)
 
     else:
         parser.print_help()

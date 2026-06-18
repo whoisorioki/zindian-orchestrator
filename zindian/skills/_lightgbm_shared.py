@@ -96,6 +96,10 @@ def train_lightgbm_cv(
         task_type = str(cfg.get("task_type", "classification")).lower()
     except Exception:
         task_type = "classification"
+    
+    # Override task_type if regression_metric is explicitly provided
+    if regression_metric is not None:
+        task_type = "regression"
     # Resolve canonical seed if not provided
     if random_seed is None:
         from zindian.config import get_seed
@@ -202,8 +206,18 @@ def train_lightgbm_cv(
     if params:
         lgb_params.update(params)
 
-    oof_probs = np.zeros(len(train), dtype=np.float64)
-    test_probs = np.zeros(len(test), dtype=np.float64)
+    # Determine output shape for OOF/test arrays
+    if task_type == "regression":
+        oof_probs = np.zeros(len(train), dtype=np.float64)
+        test_probs = np.zeros(len(test), dtype=np.float64)
+    else:
+        n_classes = len(np.unique(y))
+        if n_classes > 2:
+            oof_probs = np.zeros((len(train), n_classes), dtype=np.float64)
+            test_probs = np.zeros((len(test), n_classes), dtype=np.float64)
+        else:
+            oof_probs = np.zeros(len(train), dtype=np.float64)
+            test_probs = np.zeros(len(test), dtype=np.float64)
     fold_scores: list[float] = []
 
     # Obtain CV splits. If `cv` is provided it may be either:
@@ -277,18 +291,20 @@ def train_lightgbm_cv(
         val_pred_raw = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
         test_pred_raw = np.asarray(model.predict(X_test), dtype=np.float64)
 
-        # If multiclass output, flatten to 1D
-        if len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] > 1:
-            val_pred_flat = (
-                val_pred_raw[:, 1]
-                if val_pred_raw.shape[1] == 2
-                else np.argmax(val_pred_raw, axis=1).astype(np.float64)
-            )
-            test_pred_flat = (
-                test_pred_raw[:, 1]
-                if test_pred_raw.shape[1] == 2
-                else np.argmax(test_pred_raw, axis=1).astype(np.float64)
-            )
+        # Store predictions based on task type and number of classes
+        if task_type == "regression":
+            val_pred_flat = val_pred_raw
+            test_pred_flat = test_pred_raw
+        elif len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] > 2:
+            # Multiclass: keep full probability matrix
+            oof_probs[val_idx] = val_pred_raw
+            test_probs += test_pred_raw / n_splits
+            val_pred_flat = np.argmax(val_pred_raw, axis=1).astype(np.float64)
+            test_pred_flat = None  # Not used for multiclass
+        elif len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] == 2:
+            # Binary classification with 2-column output
+            val_pred_flat = val_pred_raw[:, 1]
+            test_pred_flat = test_pred_raw[:, 1]
         else:
             val_pred_flat = val_pred_raw
             test_pred_flat = test_pred_raw
@@ -315,24 +331,27 @@ def train_lightgbm_cv(
                 else:
                     val_pred_final = val_pred_flat
                     test_pred_final = test_pred_flat
-        else:
+            oof_probs[val_idx] = val_pred_final
+            test_probs += test_pred_final / n_splits
+        elif len(val_pred_raw.shape) == 1 or val_pred_raw.shape[1] <= 2:
+            # Binary classification: store scalar predictions
             val_pred_final = val_pred_flat
             test_pred_final = test_pred_flat
-
-        oof_probs[val_idx] = val_pred_final
-        test_probs += test_pred_final / n_splits
+            oof_probs[val_idx] = val_pred_final
+            test_probs += test_pred_final / n_splits
+        # else: multiclass already stored above
         if task_type == "regression":
             if use_log1p:
                 # Compute RMSLE on back-transformed (original-space) predictions
                 fold_rmsle = float(
                     np.sqrt(
-                        np.mean((np.log1p(y[val_idx]) - np.log1p(val_pred_final)) ** 2)
+                        np.mean((np.log1p(y[val_idx]) - np.log1p(oof_probs[val_idx])) ** 2)
                     )
                 )
                 fold_scores.append(fold_rmsle)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmsle={fold_rmsle:.6f}")
             else:
-                fold_rmse = float(root_mean_squared_error(y[val_idx], val_pred_final))
+                fold_rmse = float(root_mean_squared_error(y[val_idx], oof_probs[val_idx]))
                 fold_scores.append(fold_rmse)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
@@ -371,24 +390,37 @@ def train_lightgbm_cv(
             fold_scores=fold_scores,
         )
     else:
+        n_classes = len(np.unique(y))
+        is_multiclass = n_classes > 2
+        
         try:
-            oof_auc = float(roc_auc_score(y, oof_probs))
+            if is_multiclass:
+                from sklearn.preprocessing import label_binarize
+                y_bin = label_binarize(y, classes=np.unique(y))
+                oof_auc = float(roc_auc_score(y_bin, oof_probs, average='macro', multi_class='ovr'))
+            else:
+                oof_auc = float(roc_auc_score(y, oof_probs))
         except Exception:
             oof_auc = 0.0
 
-        try:
-            if threshold_grid is None:
-                threshold_grid = np.arange(0.3, 0.7, 0.01)
-            best_t = float(
-                max(
-                    threshold_grid,
-                    key=lambda t: f1_score(y, (oof_probs >= t).astype(int)),
-                )
-            )
-            oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
-        except Exception:
+        if is_multiclass:
+            y_pred = np.argmax(oof_probs, axis=1)
+            oof_f1 = float(f1_score(y, y_pred, average='macro'))
             best_t = 0.0
-            oof_f1 = 0.0
+        else:
+            try:
+                if threshold_grid is None:
+                    threshold_grid = np.arange(0.3, 0.7, 0.01)
+                best_t = float(
+                    max(
+                        threshold_grid,
+                        key=lambda t: f1_score(y, (oof_probs >= t).astype(int)),
+                    )
+                )
+                oof_f1 = float(f1_score(y, (oof_probs >= best_t).astype(int)))
+            except Exception:
+                best_t = 0.0
+                oof_f1 = 0.0
 
         return LightGBMRunResult(
             oof_probs=oof_probs,
