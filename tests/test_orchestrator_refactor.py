@@ -140,11 +140,11 @@ class TestSkill03SplitContract:
 class TestPluginABCContract:
     """Test 4: Plugin ABC Zero-Hardcoding Rule"""
 
-    def test_abc_enforces_extract_features(self):
-        """ABC must raise TypeError if extract_features() not implemented"""
+    def test_abc_enforces_extract(self):
+        """ABC must raise TypeError if extract() not implemented"""
 
         class InvalidPlugin(FeatureExtractor):
-            pass  # Missing extract_features()
+            pass  # Missing extract()
 
         # Action: Attempt instantiation
         with pytest.raises(TypeError) as exc_info:
@@ -157,7 +157,7 @@ class TestPluginABCContract:
         """Plugin must read all column names from config, not hardcode"""
 
         class HardcodedPlugin(FeatureExtractor):
-            def extract_features(self, raw_data_dir, config):
+            def extract(self, paths, tiff_path, config):
                 # WRONG: Hardcoded column name
                 group_col = "UniqueID"  # Should be config["group_col"]
                 return None, None
@@ -244,22 +244,25 @@ class TestPluginContractImplementation:
         from plugins.base_extractor import FeatureExtractor
 
         assert FeatureExtractor is not None
-        assert hasattr(FeatureExtractor, "extract_features")
+        assert hasattr(FeatureExtractor, "extract")
 
     def test_nedbank_extractor_inherits_abc(self):
         """NedbankExtractor must inherit from FeatureExtractor"""
-        from plugins.nedbank_extractor import NedbankExtractor
+        from plugins.nedbank_extractor import Extractor
+        from plugins.base_extractor import FeatureExtractor
 
-        assert issubclass(NedbankExtractor, FeatureExtractor)
+        assert issubclass(Extractor, FeatureExtractor)
 
-    def test_extract_features_signature(self):
-        """extract_features must have correct signature"""
+    def test_extract_signature(self):
+        """extract must have correct signature"""
         import inspect
+        from plugins.base_extractor import FeatureExtractor
 
-        sig = inspect.signature(FeatureExtractor.extract_features)
+        sig = inspect.signature(FeatureExtractor.extract)
         params = list(sig.parameters.keys())
 
-        assert "raw_data_dir" in params
+        assert "paths" in params
+        assert "tiff_path" in params
         assert "config" in params
 
 

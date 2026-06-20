@@ -1177,14 +1177,28 @@ def run(
     print("\n[A] Feature extraction (plugin)")
     plugin_path = config.get("feature_extraction_plugin")
 
-    extractor = None
+    # -- Phase A: Load extractor plugin -------------------------
+    extractor_instance: Any = None
     if plugin_path:
         try:
-            extractor = importlib.import_module(plugin_path)
+            module = importlib.import_module(plugin_path)
+            if hasattr(module, "Extractor"):
+                from plugins.base_extractor import FeatureExtractor
+
+                instance = module.Extractor()
+                if isinstance(instance, FeatureExtractor):
+                    extractor_instance = instance
+                else:
+                    print(
+                        "  [WARN]  Extractor class does not inherit from FeatureExtractor"
+                    )
+                    extractor_instance = instance
+            else:
+                extractor_instance = module
         except Exception as e:
             print(f"  [WARN]  Failed to import plugin '{plugin_path}': {e}")
 
-    if extractor is None:
+    if extractor_instance is None:
         raise RuntimeError(
             "No feature extraction plugin configured or plugin failed to import. "
             "Set 'feature_extraction_plugin' in challenge_config.json."
@@ -1194,13 +1208,13 @@ def run(
     # don't actually use rasterio (e.g. tabular-only plugins touch the file or ignore it).
     tiff_path = paths.data_processed_dir / "plugin_data.tiff"
 
-    if not tiff_path.exists() and fetch and hasattr(extractor, "fetch"):
-        tiff_path = extractor.fetch(paths, config, allow_network=True)
+    if not tiff_path.exists() and fetch and hasattr(extractor_instance, "fetch"):
+        tiff_path = extractor_instance.fetch(paths, config, allow_network=True)
 
     # -- Phase B: Extract features -----------------------------
     print("\n[B] Feature Extraction")
-    if hasattr(extractor, "extract"):
-        train_feat, test_feat = extractor.extract(paths, tiff_path, config)
+    if hasattr(extractor_instance, "extract"):
+        train_feat, test_feat = extractor_instance.extract(paths, tiff_path, config)
     else:
         raise RuntimeError(
             f"Plugin '{plugin_path}' has no extract() function. "

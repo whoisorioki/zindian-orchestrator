@@ -15,12 +15,70 @@ class ConfigNotPopulated(RuntimeError):
     pass
 
 
+class FrozenDict(dict):
+    """A read-only dictionary to prevent configuration mutations in memory."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__()
+        temp = dict(*args, **kwargs)
+        for key, value in temp.items():
+            if isinstance(value, dict):
+                dict.__setitem__(self, key, FrozenDict(value))
+            elif isinstance(value, list):
+                dict.__setitem__(
+                    self,
+                    key,
+                    tuple(FrozenDict(v) if isinstance(v, dict) else v for v in value),
+                )
+            else:
+                dict.__setitem__(self, key, value)
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def __delitem__(self, key: Any) -> None:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def pop(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def popitem(self) -> Any:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def clear(self) -> None:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        raise TypeError(
+            "ChallengeConfig is read-only. Modifying configuration is prohibited."
+        )
+
+
 @dataclass
 class ChallengeConfig:
     """Reader for challenge_config.json with null guards and field validation."""
 
     path: Path
     _data: Dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self._data, FrozenDict):
+            self._data = FrozenDict(self._data)
 
     # Fields that MUST NOT be null
     REQUIRED_FIELDS = frozenset(

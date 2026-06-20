@@ -135,9 +135,11 @@ def _compute_shap_audit(
         y = np.asarray(frame[target].values, dtype=np.float64)
     else:
         _y_raw = frame[target].values
+        assert _y_raw is not None
         if _y_raw.dtype.kind in ("U", "S", "O"):
             _le = LabelEncoder()
-            y = _le.fit_transform(_y_raw.astype(str)).astype(np.int32)
+            transformed = _le.fit_transform(_y_raw.astype(str))
+            y = np.asarray(transformed, dtype=np.int32)
         else:
             y = np.asarray(_y_raw, dtype=np.int32)
 
@@ -383,9 +385,11 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
             y = np.asarray(frame[target].values, dtype=np.float64)
         else:
             _y_raw_sf = frame[target].values
+            assert _y_raw_sf is not None
             if _y_raw_sf.dtype.kind in ("U", "S", "O"):
                 _le_sf = LabelEncoder()
-                y = _le_sf.fit_transform(_y_raw_sf.astype(str)).astype(np.int32)
+                transformed_sf = _le_sf.fit_transform(_y_raw_sf.astype(str))
+                y = np.asarray(transformed_sf, dtype=np.int32)
             else:
                 y = np.asarray(_y_raw_sf, dtype=np.int32)
         scaler = StandardScaler()

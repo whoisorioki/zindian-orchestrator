@@ -23,9 +23,7 @@ from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 
-def run(
-    config: Dict[str, Any] | None = None, state: Dict[str, Any] | None = None
-) -> Dict[str, Any]:
+def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
     in_memory = state is not None
     if not in_memory:
         paths = resolve_competition_paths(require_competition=True)
@@ -45,16 +43,84 @@ def run(
         or "anchor-baseline"
     )
 
-    oof_key = f"branch_{active_branch}_oof"
+    if config is None:
+        try:
+            from zindian.config import ChallengeConfig
+
+            config = ChallengeConfig.load()
+        except Exception:
+            config = {}
+
+    target_config = config.get("target_config", {}) if config else {}
+    targets = target_config.get("targets", []) if target_config else []
+
     fold_scores = None
     recommended_threshold = 0.5
 
-    if oof_key in state:
-        oof_dict = state[oof_key]
-        if isinstance(oof_dict, dict):
-            model_config = oof_dict.get("model_config", {}) or {}
-            fold_scores = model_config.get("fold_scores")
-            recommended_threshold = model_config.get("threshold", 0.5)
+    if targets:
+        # Multi-target variance calculation
+        target_fold_scores = {}
+        for t in targets:
+            t_name = t.get("name")
+            if not t_name:
+                continue
+            oof_key = f"branch_{active_branch}_{t_name}_oof"
+            if oof_key in state:
+                oof_dict = state[oof_key]
+                if isinstance(oof_dict, dict):
+                    model_config = oof_dict.get("model_config", {}) or {}
+                    t_fold_scores = model_config.get("fold_scores")
+                    if t_fold_scores:
+                        target_fold_scores[t_name] = t_fold_scores
+
+        # If all targets have fold scores, calculate composite fold scores
+        if len(target_fold_scores) == len(targets):
+            first_scores = next(iter(target_fold_scores.values()))
+            n_splits = len(first_scores) if isinstance(first_scores, list) else 0
+            composite_fold_scores = []
+
+            for i in range(n_splits):
+                weighted_sum = 0.0
+                total_weight = 0.0
+                for t in targets:
+                    t_name = t.get("name")
+                    weight = t.get("weight", 0.5)
+                    task_type = t.get("task_type", "classification")
+                    raw_score = target_fold_scores[t_name][i]
+
+                    if task_type == "regression":
+                        eda_std = float(
+                            state.get("eda", {}).get(f"{t_name}_std", 0.0) or 0.0
+                        )
+                        if eda_std <= 0.0:
+                            eda_std = float(
+                                state.get("eda", {}).get("total_goals_std", 1.0) or 1.0
+                            )
+                        normalized_rmse = (
+                            raw_score / eda_std if eda_std > 0 else raw_score
+                        )
+                        score_val = max(0.0, 1.0 - normalized_rmse)
+                    else:
+                        score_val = raw_score
+
+                    weighted_sum += score_val * weight
+                    total_weight += weight
+
+                composite_fold_scores.append(
+                    weighted_sum / total_weight if total_weight > 0 else weighted_sum
+                )
+
+            if composite_fold_scores:
+                fold_scores = composite_fold_scores
+
+    if not fold_scores:
+        oof_key = f"branch_{active_branch}_oof"
+        if oof_key in state:
+            oof_dict = state[oof_key]
+            if isinstance(oof_dict, dict):
+                model_config = oof_dict.get("model_config", {}) or {}
+                fold_scores = model_config.get("fold_scores")
+                recommended_threshold = model_config.get("threshold", 0.5)
 
     # Fallback to search any branch_.*_oof key if not found
     if not fold_scores:

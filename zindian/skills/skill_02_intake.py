@@ -517,10 +517,12 @@ def run(
     # Lazy import headers only if needed
     if headers is None:
         try:
-            from zindian.zindi_monitor_core import _get_headers
+            from zindian.zindi_client import ZindiClient
 
-            headers = _get_headers()
-        except Exception:
+            client = ZindiClient()
+            headers = client._headers
+        except Exception as e:
+            print(f"[WARN] Failed to load Zindi Client for headers: {e}")
             # Network isolation - will use monitor fallback
             headers = {"Accept": "application/json"}
 
