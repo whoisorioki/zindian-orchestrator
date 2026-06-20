@@ -19,8 +19,11 @@ SoT §4 / §8 references:
     Pipeline does not halt — warning is advisory only.
 """
 
-import pytest
+import json
+import tempfile
+from pathlib import Path
 
+from zindian.config import ChallengeConfig
 from zindian.skills.skill_11_gate import _effective_thresholds
 
 # ---------------------------------------------------------------------------
@@ -28,24 +31,47 @@ from zindian.skills.skill_11_gate import _effective_thresholds
 # ---------------------------------------------------------------------------
 
 
-def _reg_config(metric: str, variance: float = 0.01, margin: float = 0.001) -> dict:
-    return {
-        "task_type": "regression",
-        "metric": metric,
-        "variance_gate_threshold": variance,
-        "gate_margin": margin,
+def _make_config(data: dict) -> ChallengeConfig:
+    """Build a minimal ChallengeConfig from a plain dict for testing."""
+    full = {
+        "metric": data.get("metric", "f1"),
+        "metric_direction": data.get("metric_direction", "maximize"),
+        "use_probabilities": False,
+        "automl_permitted": False,
+        "data_modality": "tabular",
+        **data,
     }
+    tmp = Path(tempfile.mktemp(suffix=".json"))
+    tmp.write_text(json.dumps(full))
+    return ChallengeConfig(path=tmp, _data=full)
+
+
+def _reg_config(
+    metric: str, variance: float = 0.01, margin: float = 0.001
+) -> ChallengeConfig:
+    return _make_config(
+        {
+            "task_type": "regression",
+            "metric": metric,
+            "metric_direction": "minimize",
+            "variance_gate_threshold": variance,
+            "gate_margin": margin,
+        }
+    )
 
 
 def _clf_config(
     metric: str = "auc", variance: float = 0.01, margin: float = 0.001
-) -> dict:
-    return {
-        "task_type": "classification",
-        "metric": metric,
-        "variance_gate_threshold": variance,
-        "gate_margin": margin,
-    }
+) -> ChallengeConfig:
+    return _make_config(
+        {
+            "task_type": "classification",
+            "metric": metric,
+            "metric_direction": "maximize",
+            "variance_gate_threshold": variance,
+            "gate_margin": margin,
+        }
+    )
 
 
 def _state(target_std: float) -> dict:

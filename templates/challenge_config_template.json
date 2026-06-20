@@ -2,6 +2,7 @@
     "name": null,
     "slug": null,
     "feature_extraction_plugin": null,
+    "plugin_config": null,
     "task_type": null,
     "metric": null,
     "metric_direction": null,

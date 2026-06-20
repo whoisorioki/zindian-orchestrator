@@ -64,20 +64,19 @@ def main():
     phase_parser.add_argument(
         "phase_id",
         choices=["1", "2A", "2B", "3A", "3B", "4"],
-        help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)"
+        help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)",
     )
     phase_parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Show detailed skill output"
+        "--verbose", "-v", action="store_true", help="Show detailed skill output"
     )
+    phase_parser.add_argument("--variant", help="Variant name to pass to phase skills")
 
     args = parser.parse_args()
 
     if args.command == "submit":
-        from zindian.skills.skill_16_submit import run
+        from zindian.skills.skill_16_submit import run as _submit_run
 
-        result = run(args.file)
+        result = _submit_run(args.file)
         print(f"\nResult: {result}")
 
     elif args.command == "submissions":
@@ -117,7 +116,7 @@ def main():
                 ledger_parser.print_help()
 
     elif args.command == "monitor":
-        from zindian.skills.skill_00_zindi_monitor import run
+        from zindian.skills.skill_00_zindi_monitor import run as _monitor_run
         from zindian.config import ChallengeConfig
         from zindian.state import SkillStateStore
         from zindian.paths import resolve_competition_paths
@@ -125,19 +124,19 @@ def main():
         paths = resolve_competition_paths()
         config = ChallengeConfig.load()
         state = SkillStateStore(paths.state_path).read()
-        result = run(config, state)
+        result = _monitor_run(config._data, state)
         print(json.dumps(result, indent=2, default=str))
 
     elif args.command == "report":
-        from zindian.skills.skill_15_reporter import run
+        from zindian.skills.skill_15_reporter import run as _report_run
 
-        result = run()
+        result = _report_run()
         print(json.dumps(result, indent=2, default=str))
 
     elif args.command == "audit":
-        from zindian.skills.skill_22_reproducibility_audit import run
+        from zindian.skills.skill_22_reproducibility_audit import run as _audit_run
 
-        result = run(slug=args.slug if hasattr(args, "slug") else None)
+        result = _audit_run(slug=args.slug if hasattr(args, "slug") else None)
         sys.exit(0 if result.get("success") else 1)
 
     elif args.command == "status":
@@ -169,23 +168,23 @@ def main():
 
     elif args.command == "phase":
         from zindian.orchestrator import run_phase
-        
-        print(f"\n{'='*60}")
+
+        print(f"\n{'=' * 60}")
         print(f"EXECUTING PHASE {args.phase_id}")
-        print(f"{'='*60}\n")
-        
-        results = run_phase(args.phase_id)
-        
+        print(f"{'=' * 60}\n")
+
+        results = run_phase(args.phase_id, variant_name=getattr(args, "variant", None))
+
         # Display results
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"PHASE {args.phase_id} RESULTS")
-        print(f"{'='*60}")
-        
+        print(f"{'=' * 60}")
+
         all_success = True
         for skill_name, result in results.items():
             status = result.get("status", "UNKNOWN")
             print(f"\n{skill_name}: {status}")
-            
+
             if status == "ERROR":
                 all_success = False
                 print(f"  Error: {result.get('message', 'Unknown error')}")
@@ -193,7 +192,7 @@ def main():
                     print(f"\n{result['traceback']}")
             elif status == "GO" and args.verbose:
                 print(f"  {result.get('message', '')}")
-        
+
         # Exit with error code if any skill failed
         sys.exit(0 if all_success else 1)
 

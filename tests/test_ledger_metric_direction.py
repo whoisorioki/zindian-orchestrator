@@ -1,6 +1,7 @@
 """Test ledger.get_best_experiment() respects metric_direction from config."""
 
 import json
+import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -74,7 +75,7 @@ def test_get_best_experiment_maximize():
             best = ledger.get_best_experiment()
             assert best is not None
             assert best["branch_name"] == "high_f1"
-            assert best["oof_rmse"] == 0.9
+            assert best["oof_rmse"] == pytest.approx(0.9)
 
 
 def test_get_best_experiment_default_minimize():

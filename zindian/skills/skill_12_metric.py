@@ -94,7 +94,7 @@ def run(
             state_store.update(metric_analysis=metric_analysis)
         else:
             state["metric_analysis"] = metric_analysis
-        print("⚠️  metric_analysis written with diagnostic: missing fold_scores")
+        print("[WARN]  metric_analysis written with diagnostic: missing fold_scores")
         return state if in_memory else metric_analysis
 
     # Ensure numeric array
@@ -145,7 +145,7 @@ def run(
         state_store.update(metric_analysis=metric_analysis)
     else:
         state["metric_analysis"] = metric_analysis
-    print(f"✅ metric_analysis written (variance ddof=1 = {fold_score_variance:.6g})")
+    print(f"[OK] metric_analysis written (variance ddof=1 = {fold_score_variance:.6g})")
     return state if in_memory else metric_analysis
 
 

@@ -83,30 +83,34 @@ def _drop_constants(
     config: Dict[str, Any],
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[str], List[str], List[str]]:
     """Third pass — dynamic variance scan. Drop columns constant in BOTH splits.
-    
+
     Target columns are explicitly protected from dropping per A11/A12.
     """
     # A11: Protect all target columns from dropping
     protected_cols = set()
-    
+
     # Multi-target protection
     target_config = config.get("target_config")
     if target_config and isinstance(target_config, dict):
         targets = target_config.get("targets", [])
         for t in targets:
             protected_cols.add(t["name"])
-    
+
     # Single-target protection (legacy)
     for key in ("target_col", "target", "target_column", "label"):
         value = config.get(key)
         if value:
             protected_cols.add(str(value))
-    
+
     train_nunique = train.nunique(dropna=False)
     test_nunique = test.nunique(dropna=False)
 
-    const_in_train = [str(c) for c, n in train_nunique.items() if n <= 1 and c not in protected_cols]
-    const_in_test = [str(c) for c, n in test_nunique.items() if n <= 1 and c not in protected_cols]
+    const_in_train = [
+        str(c) for c, n in train_nunique.items() if n <= 1 and c not in protected_cols
+    ]
+    const_in_test = [
+        str(c) for c, n in test_nunique.items() if n <= 1 and c not in protected_cols
+    ]
 
     const_both = list(set(const_in_train) & set(const_in_test))
 
@@ -126,7 +130,7 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Updated state dict with cleaning metadata written.
     """
-    # ── Read EDA state ──────────────────────────────────────────────
+    # -- Read EDA state ----------------------------------------------
     eda = state.get("eda", {})
     mnar_columns: List[str] = eda.get("mnar_columns", [])
     mcar_columns: List[str] = eda.get("mcar_columns", [])
@@ -144,23 +148,23 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     train: pd.DataFrame = _x_train_raw
     test: pd.DataFrame = _x_test_raw
 
-    # ── Step 1: MNAR indicators (all columns, before any fill) ─────
+    # -- Step 1: MNAR indicators (all columns, before any fill) -----
     train, indicators = _build_mnar_indicators(train, mnar_columns)
     test, _ = _build_mnar_indicators(test, mnar_columns)
 
-    # ── Step 2: MCAR imputation (fold-restricted median/mode) ──────
+    # -- Step 2: MCAR imputation (fold-restricted median/mode) ------
     train, impute_values = _impute_mcar(train, mcar_columns)
     # Use training-derived impute values on test to avoid data leakage
     for col, value in impute_values.items():
         if col in test.columns:
             test[col] = test[col].fillna(value)
 
-    # ── Step 3: Dynamic constant column dropping ────────────────────
+    # -- Step 3: Dynamic constant column dropping --------------------
     train, test, const_both, const_train_only, const_test_only = _drop_constants(
         train, test, config
     )
 
-    # ── Write cleaning metadata to state ────────────────────────────
+    # -- Write cleaning metadata to state ----------------------------
     state["cleaning"] = {
         "mnar_indicators_created": indicators,
         "mcar_imputed_medians": impute_values,

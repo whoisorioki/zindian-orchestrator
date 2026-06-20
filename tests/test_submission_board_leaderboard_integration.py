@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-import pytest
 from pathlib import Path
-import tempfile
 
 from zindian.skills import skill_16_submit as submitter
-from zindian.ledger import Ledger
 
 
 def _setup_comp(tmp_path: Path) -> Path:
@@ -40,7 +37,7 @@ def _setup_comp(tmp_path: Path) -> Path:
     }
     (comp / "challenge_config.json").write_text(json.dumps(config, indent=2))
 
-    state = {
+    state: dict = {
         "competition": "testcomp",
         "md5_target_hash": None,
         "anchor_oof_score": 0.85,

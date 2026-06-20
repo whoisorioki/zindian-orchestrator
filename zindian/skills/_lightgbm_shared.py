@@ -96,7 +96,7 @@ def train_lightgbm_cv(
         task_type = str(cfg.get("task_type", "classification")).lower()
     except Exception:
         task_type = "classification"
-    
+
     # Override task_type if regression_metric is explicitly provided
     if regression_metric is not None:
         task_type = "regression"
@@ -238,8 +238,8 @@ def train_lightgbm_cv(
     domain_bounds = None
     if task_type == "regression" and not use_log1p:
         try:
-            _cfg = ChallengeConfig.load()
-            _bounds = _cfg.get("target_domain_bounds") or {}
+            _bounds_cfg = ChallengeConfig.load()
+            _bounds = _bounds_cfg.get("target_domain_bounds") or {}
             min_b = _bounds.get("min")
             max_b = _bounds.get("max")
             if min_b is not None and max_b is not None:
@@ -314,6 +314,10 @@ def train_lightgbm_cv(
         #   rmsle  -> clip(raw, 0) then expm1
         #   RMSE/MAE -> clip(raw, domain_bounds)
         if task_type == "regression":
+            # For regression, test_pred_flat is always set (not None)
+            assert (
+                test_pred_flat is not None
+            ), "test_pred_flat must not be None for regression"
             if _variant_objective == "poisson":
                 val_pred_final = np.clip(val_pred_flat, 0, None)
                 test_pred_final = np.clip(test_pred_flat, 0, None)
@@ -335,6 +339,9 @@ def train_lightgbm_cv(
             test_probs += test_pred_final / n_splits
         elif len(val_pred_raw.shape) == 1 or val_pred_raw.shape[1] <= 2:
             # Binary classification: store scalar predictions
+            assert (
+                test_pred_flat is not None
+            ), "test_pred_flat must not be None for binary classification"
             val_pred_final = val_pred_flat
             test_pred_final = test_pred_flat
             oof_probs[val_idx] = val_pred_final
@@ -345,13 +352,17 @@ def train_lightgbm_cv(
                 # Compute RMSLE on back-transformed (original-space) predictions
                 fold_rmsle = float(
                     np.sqrt(
-                        np.mean((np.log1p(y[val_idx]) - np.log1p(oof_probs[val_idx])) ** 2)
+                        np.mean(
+                            (np.log1p(y[val_idx]) - np.log1p(oof_probs[val_idx])) ** 2
+                        )
                     )
                 )
                 fold_scores.append(fold_rmsle)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmsle={fold_rmsle:.6f}")
             else:
-                fold_rmse = float(root_mean_squared_error(y[val_idx], oof_probs[val_idx]))
+                fold_rmse = float(
+                    root_mean_squared_error(y[val_idx], oof_probs[val_idx])
+                )
                 fold_scores.append(fold_rmse)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
@@ -392,12 +403,15 @@ def train_lightgbm_cv(
     else:
         n_classes = len(np.unique(y))
         is_multiclass = n_classes > 2
-        
+
         try:
             if is_multiclass:
                 from sklearn.preprocessing import label_binarize
+
                 y_bin = label_binarize(y, classes=np.unique(y))
-                oof_auc = float(roc_auc_score(y_bin, oof_probs, average='macro', multi_class='ovr'))
+                oof_auc = float(
+                    roc_auc_score(y_bin, oof_probs, average="macro", multi_class="ovr")
+                )
             else:
                 oof_auc = float(roc_auc_score(y, oof_probs))
         except Exception:
@@ -405,7 +419,7 @@ def train_lightgbm_cv(
 
         if is_multiclass:
             y_pred = np.argmax(oof_probs, axis=1)
-            oof_f1 = float(f1_score(y, y_pred, average='macro'))
+            oof_f1 = float(f1_score(y, y_pred, average="macro"))
             best_t = 0.0
         else:
             try:

@@ -6,7 +6,6 @@ Must run after Skill 00 (compliance check).
 """
 
 import tabula.skill_state_autopatch  # noqa
-import os
 import json
 import requests
 import tempfile
@@ -60,9 +59,9 @@ def extract_config(data: dict, slug: str) -> dict:
             r"error metric.*?(f1|rmse|mae|auc|accuracy|log.?loss|f-1)",
         ]
         for pattern in metric_patterns:
-            m = re.search(pattern, text_lower)
-            if m:
-                raw = m.group(1).strip()
+            _match = re.search(pattern, text_lower)
+            if _match:
+                raw = _match.group(1).strip()
                 if "f1" in raw or "f-1" in raw:
                     metric = "f1_score"
                 elif "rmse" in raw:
@@ -361,11 +360,13 @@ def extract_config(data: dict, slug: str) -> dict:
     # Build final compliance notes from resolved values
     up = config.get("use_probabilities")
     cn = []
-    
+
     # Check if multi-target before adding single-target compliance notes
     target_config = config.get("target_config")
-    is_multi_target = target_config is not None and len(target_config.get("targets", [])) > 1
-    
+    is_multi_target = (
+        target_config is not None and len(target_config.get("targets", [])) > 1
+    )
+
     if is_multi_target:
         # Multi-target: describe each target's requirements
         cn.append("Multi-target competition - see target_config for per-target metrics")
@@ -403,13 +404,14 @@ def extract_config(data: dict, slug: str) -> dict:
 
 def write_config(config: dict, paths: CompetitionPaths) -> None:
     import shutil
+
     path = paths.config_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
         json.dump(config, tmp, indent=2)
         tmp_path = tmp.name
     shutil.move(tmp_path, path)
-    print(f"✅ challenge config populated -> {path}")
+    print(f"[OK] challenge config populated -> {path}")
 
 
 def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
@@ -422,25 +424,24 @@ def update_skill_state(slug: str, paths: CompetitionPaths) -> None:
     current_phase = state.get("dag_phase")
     if current_phase in (None, "uninitialized", "phase_0_foundation"):
         store.update(dag_phase="phase_1_integrity")
-        print(f"✅ {state_path} -> dag_phase: phase_1_integrity")
+        print(f"[OK] {state_path} -> dag_phase: phase_1_integrity")
     else:
-        print(f"ℹ️  SKIP dag_phase update (current phase: {current_phase})")
+        print(f"[INFO]  SKIP dag_phase update (current phase: {current_phase})")
 
 
 def _detect_multi_target_from_submission(sample_submission_path, config):
     """Detect if competition has multiple targets from submission format.
-    
+
     Returns target_config dict if multi-target, None otherwise.
     """
     import pandas as pd
-    import numpy as np
-    
+
     df = pd.read_csv(sample_submission_path)
-    cols = [c for c in df.columns if c.lower() not in ('id', 'team_id', 'uniqueid')]
-    
+    cols = [c for c in df.columns if c.lower() not in ("id", "team_id", "uniqueid")]
+
     if len(cols) <= 1:
         return None  # Single-target
-    
+
     # Multi-target detected
     targets = []
     for col in cols:
@@ -448,36 +449,46 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
         sample_vals = df[col].dropna().head(100)
         # Convert to numeric for comparison
         try:
-            numeric_vals = pd.to_numeric(sample_vals, errors='coerce').dropna()
+            numeric_vals = pd.to_numeric(sample_vals, errors="coerce").dropna()
             is_binary = set(numeric_vals.unique()).issubset({0, 1, 0.0, 1.0})
             is_prob = (numeric_vals >= 0).all() and (numeric_vals <= 1).all()
-        except:
+        except Exception:
             is_binary = False
             is_prob = False
-        
+
         task_type = "classification" if (is_binary or is_prob) else "regression"
-        
-        targets.append({
-            "name": col,
-            "task_type": task_type,
-            "metric": "rmse" if task_type == "regression" else "f1",
-            "metric_direction": "minimize" if task_type == "regression" else "maximize",
-            "weight": 1.0 / len(cols),
-            "target_domain_bounds": None if task_type == "classification" else {"min": None, "max": None}
-        })
-    
+
+        targets.append(
+            {
+                "name": col,
+                "task_type": task_type,
+                "metric": "rmse" if task_type == "regression" else "f1",
+                "metric_direction": (
+                    "minimize" if task_type == "regression" else "maximize"
+                ),
+                "weight": 1.0 / len(cols),
+                "target_domain_bounds": (
+                    None
+                    if task_type == "classification"
+                    else {"min": None, "max": None}
+                ),
+            }
+        )
+
     # A12: mixed-task requires recombination policy
     has_classification = any(t["task_type"] == "classification" for t in targets)
     has_regression = any(t["task_type"] == "regression" for t in targets)
-    
+
     target_config = {
         "targets": targets,
-        "composite_direction": "minimize_composite_distance"
+        "composite_direction": "minimize_composite_distance",
     }
-    
+
     if has_classification and has_regression:
-        target_config["pseudo_label_recombination_policy"] = "freeze_unaugmented_targets_at_original"
-    
+        target_config["pseudo_label_recombination_policy"] = (
+            "freeze_unaugmented_targets_at_original"
+        )
+
     return target_config
 
 
@@ -507,6 +518,7 @@ def run(
     if headers is None:
         try:
             from zindian.zindi_monitor_core import _get_headers
+
             headers = _get_headers()
         except Exception:
             # Network isolation - will use monitor fallback
@@ -524,16 +536,18 @@ def run(
         print("Fetching competition details from API...")
         data = fetch_competition(slug, headers)
     except Exception as e:
-        print(f"⚠️  API fetch failed: {e}")
+        print(f"[WARN]  API fetch failed: {e}")
         print("Attempting fallback to zindi_monitor.json...")
         monitor_path = paths.reports_dir / "zindi_monitor.json"
         if monitor_path.exists():
             with open(monitor_path, encoding="utf-8") as f:
                 mon = json.load(f)
             data = mon.get("competition_intel", {})
-            print("✅ Using competition intel from zindi_monitor.json")
+            print("[OK] Using competition intel from zindi_monitor.json")
         else:
-            raise RuntimeError(f"API unavailable and no zindi_monitor.json found at {monitor_path}")
+            raise RuntimeError(
+                f"API unavailable and no zindi_monitor.json found at {monitor_path}"
+            )
 
     print("Extracting config fields...")
     config = extract_config(data, slug)
@@ -580,16 +594,20 @@ def run(
         final_to_write["allowed_external_data"] = False
     if final_to_write.get("automl_permitted") is None:
         final_to_write["automl_permitted"] = False
-    
+
     # Multi-target detection (A11)
     if not dry_run:
         try:
             sample_sub_path = paths.data_raw_dir / "SampleSubmission.csv"
             if sample_sub_path.exists():
-                target_config = _detect_multi_target_from_submission(sample_sub_path, final_to_write)
+                target_config = _detect_multi_target_from_submission(
+                    sample_sub_path, final_to_write
+                )
                 if target_config:
                     final_to_write["target_config"] = target_config
-                    print(f"✅ Multi-target detected: {len(target_config['targets'])} targets")
+                    print(
+                        f"[OK] Multi-target detected: {len(target_config['targets'])} targets"
+                    )
         except Exception as e:
             print(f"Multi-target detection skipped: {e}")
 
@@ -601,7 +619,14 @@ def run(
         store = SkillStateStore(paths.state_path)
         current_phase = store.read().get("dag_phase")
         # Allow write in INIT mode (phase_1_complete from skill_01 is still INIT)
-        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1", "phase_1_complete", "phase_1_integrity")
+        allowed_write_phases = (
+            None,
+            "uninitialized",
+            "phase_0_foundation",
+            "phase_1",
+            "phase_1_complete",
+            "phase_1_integrity",
+        )
         if current_phase in allowed_write_phases:
             write_config(final_to_write, paths)
             # Operator-agreed validation before advancing the DAG phase
@@ -611,15 +636,15 @@ def run(
                     update_skill_state(slug, paths)
                 else:
                     print(
-                        "ℹ️  Skipping dag_phase update because task_type or target_col is still null/unconfigured."
+                        "[INFO]  Skipping dag_phase update because task_type or target_col is still null/unconfigured."
                     )
             except Exception as e:
                 print(
-                    f"ℹ️  Skipping dag_phase update because config is not fully validated: {e}"
+                    f"[INFO]  Skipping dag_phase update because config is not fully validated: {e}"
                 )
         else:
             print(
-                f"⚠️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
+                f"[WARN]  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
             )
 
     # If merge and dry_run, show a concise diff between existing and final_to_write
@@ -654,7 +679,7 @@ def run(
     print(f"Banned features: {final_to_write.get('banned_features')}")
     print("\nCompliance notes:")
     for note in final_to_write.get("compliance_notes", []):
-        print(f"  ⚠️  {note}")
+        print(f"  [WARN]  {note}")
 
     return {"status": "OK", "config": final_to_write}
 

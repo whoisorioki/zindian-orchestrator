@@ -1,10 +1,11 @@
 import pytest
-import sqlite3
 import duckdb
 
 
 def test_sql_syntax_loophole_valid_queries():
     conn = duckdb.connect()
+    # Create sequence first so it exists for the table default
+    conn.execute("CREATE SEQUENCE test_seq")
     # Test table creation with NEXTVAL stripping
     conn.execute("""
         CREATE TABLE IF NOT EXISTS test_table (
@@ -12,8 +13,6 @@ def test_sql_syntax_loophole_valid_queries():
             name VARCHAR NOT NULL
         )
     """)
-    # Test ignore CREATE SEQUENCE
-    conn.execute("CREATE SEQUENCE test_seq")
 
     # Test valid insert and select
     conn.execute("INSERT INTO test_table (name) VALUES (?)", ["Alice"])
@@ -28,9 +27,9 @@ def test_sql_syntax_loophole_valid_queries():
 
 def test_sql_syntax_loophole_catches_syntax_error():
     conn = duckdb.connect()
-    # Invalid SQL syntax should raise a sqlite3 operational/programming error
-    with pytest.raises(sqlite3.Error):
+    # Invalid SQL syntax should raise a duckdb database error
+    with pytest.raises(duckdb.Error):
         conn.execute("CREATE TABLE_INVALID test_table (id INTEGER)")
 
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(duckdb.Error):
         conn.execute("INSERT INTO test_table VALUES (invalid_syntax)")

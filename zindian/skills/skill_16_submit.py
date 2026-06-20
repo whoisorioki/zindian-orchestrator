@@ -48,7 +48,7 @@ class HardAbortException(RuntimeError):
     pass
 
 
-# ── Value validation (mirrors skill_14 semantics) ─────────────────────────────
+# -- Value validation (mirrors skill_14 semantics) -----------------------------
 
 
 def _validate_probability_interval(values: np.ndarray) -> list[str]:
@@ -107,6 +107,11 @@ def _value_validation_errors(
 ) -> list[str]:
     if target_column not in df.columns:
         return [f"Submission missing target column '{target_column}'."]
+
+    # Skip validation for multi_target competitions
+    if task_type == "multi_target":
+        return []
+
     values = df[target_column].to_numpy()
     if not np.issubdtype(values.dtype, np.number):
         try:
@@ -122,7 +127,7 @@ def _value_validation_errors(
     return [f"Unsupported task_type '{task_type}'."]
 
 
-# ── Public surface ─────────────────────────────────────────────────────────────
+# -- Public surface -------------------------------------------------------------
 
 
 def validate(
@@ -299,19 +304,25 @@ def _calibration_method_from_state(state: dict[str, Any], branch: str) -> str:
     return "none"
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# -- Entry point ----------------------------------------------------------------
 
 
-def run(submission_file: str = None, state: dict[str, Any] | None = None) -> dict:
+def run(
+    submission_file: str | None = None, state: dict[str, Any] | None = None
+) -> dict:
     print("\n" + "=" * 60)
     print("SKILL 16 — Zindi Submission")
     print("=" * 60 + "\n")
 
     paths = resolve_competition_paths()
-    
+
     if submission_file is None:
         if paths.submissions_dir.exists():
-            files = sorted(paths.submissions_dir.glob("sub_*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+            files = sorted(
+                paths.submissions_dir.glob("sub_*.csv"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
             if files:
                 submission_file = str(files[0])
             else:
@@ -351,11 +362,11 @@ def run(submission_file: str = None, state: dict[str, Any] | None = None) -> dic
     print(f"Validating: {sub_path.name}")
     errors = validate(sub_path, sample_path, config=config)
     if errors:
-        print("\n❌ VALIDATION FAILED:")
+        print("\n[FAIL] VALIDATION FAILED:")
         for e in errors:
             print(f"   {e}")
         return {"status": "BLOCKED", "errors": errors}
-    print("✅ Validation passed")
+    print("[OK] Validation passed")
 
     from zindian.zindi_client import ZindiClient
 
@@ -382,7 +393,7 @@ def run(submission_file: str = None, state: dict[str, Any] | None = None) -> dic
         }
         store.update(budget_warning=budget_warning_payload)
         print(
-            "\n⚠️  BUDGET WARNING: Only 1 live submission remaining today! "
+            "\n[WARN]  BUDGET WARNING: Only 1 live submission remaining today! "
             "Proceeding will exhaust the daily budget. "
             "Explicit confirmation required before proceeding. "
             "Warning written to SKILL_STATE['budget_warning']."
@@ -406,7 +417,7 @@ def run(submission_file: str = None, state: dict[str, Any] | None = None) -> dic
         }
         store.update(budget_warning=budget_warning_payload)
         print(
-            "\n⚠️  BUDGET WARNING: Only 1 cached submission remaining today! "
+            "\n[WARN]  BUDGET WARNING: Only 1 cached submission remaining today! "
             "Explicit confirmation required before proceeding. "
             "Warning written to SKILL_STATE['budget_warning']."
         )
@@ -430,13 +441,13 @@ Metric source     : {metric_source}
 Feature count     : {feature_count}
 Calibration       : {calibration_method}
 Live remaining    : {live_remaining if live_remaining >= 0 else "unknown"}
-Validation        : ✅ PASSED
+Validation        : [OK] PASSED
 
 Type YES to submit or NO to abort.
 ============================================================""")
     response = input("Submit? [YES/NO]: ").strip().upper()
     if response != "YES":
-        print("🛑 Submission aborted by user.")
+        print("[STOP] Submission aborted by user.")
         return {"status": "ABORTED"}
 
     oof_str = f"{best_f1:.4f}" if isinstance(best_f1, (int, float)) else "n/a"
@@ -453,7 +464,7 @@ Type YES to submit or NO to abort.
 
     # Only update state if submission succeeded
     if not result or result.get("error"):
-        print(f"❌ Submission failed: {result}")
+        print(f"[FAIL] Submission failed: {result}")
         return {"status": "FAILED", "error": result.get("error", "Unknown error")}
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -468,7 +479,7 @@ Type YES to submit or NO to abort.
             last_submission_at=now_iso,
         )
     except Exception as exc:
-        print(f"⚠️  State write failed after successful submit: {exc}")
+        print(f"[WARN]  State write failed after successful submit: {exc}")
 
     log_path = paths.reports_dir / "submission_log.md"
     log_entry = (
@@ -483,10 +494,10 @@ Type YES to submit or NO to abort.
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(log_entry)
     except Exception as exc:
-        print(f"⚠️  Failed to append submission log: {exc}")
+        print(f"[WARN]  Failed to append submission log: {exc}")
 
-    print(f"\n✅ Submitted. Result: {result}")
-    print(f"✅ Logged → {log_path}")
+    print(f"\n[OK] Submitted. Result: {result}")
+    print(f"[OK] Logged → {log_path}")
 
     print(f"\n{'=' * 60}")
     print("POST-SUBMISSION RESULTS")
@@ -504,16 +515,17 @@ Type YES to submit or NO to abort.
                 last_updated=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as exc:
-            print(f"⚠️  Failed to record anchor_rank: {exc}")
+            print(f"[WARN]  Failed to record anchor_rank: {exc}")
     except Exception as exc:
-        print(f"⚠️  Could not fetch leaderboard: {exc}")
+        print(f"[WARN]  Could not fetch leaderboard: {exc}")
 
     # Record to ledger
     try:
         with Ledger() as ledger:
             exp_id = ledger.log_experiment(
                 branch_name=git_branch,
-                oof_rmse=best_f1 if metric_name_lower == "rmse" else None,
+                oof_score=best_f1,
+                metric=metric_name_lower,
                 feature_count=feature_count if isinstance(feature_count, int) else None,
                 calibration_method=calibration_method,
                 gate_result="PASS",
@@ -527,9 +539,9 @@ Type YES to submit or NO to abort.
                 my_rank=my_rank if "my_rank" in locals() else None,
                 comment=comment,
             )
-        print(f"✅ Recorded to ledger (experiment_id={exp_id})")
+        print(f"[OK] Recorded to ledger (experiment_id={exp_id})")
     except Exception as exc:
-        print(f"⚠️  Failed to record to ledger: {exc}")
+        print(f"[WARN]  Failed to record to ledger: {exc}")
 
     return {"status": "SUBMITTED", "result": result, "comment": comment}
 

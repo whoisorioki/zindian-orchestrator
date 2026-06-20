@@ -14,7 +14,7 @@ def test_calibration_writes_oof(tmp_path, monkeypatch):
         "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
     )
 
-    state_payload = {
+    state_payload: dict = {
         "competition": "cmp",
         "md5_target_hash": None,
         "anchor_oof_f1": 0.1,
@@ -77,7 +77,7 @@ def test_calibration_writes_oof(tmp_path, monkeypatch):
         type("C", (), {"load": staticmethod(lambda: FakeCfg())}),
     )
 
-    calls = {}
+    calls: dict = {}
 
     def fake_write_oof_record(store, **kwargs):
         calls["called"] = True

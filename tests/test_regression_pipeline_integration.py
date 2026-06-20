@@ -1,12 +1,8 @@
 import json
-import os
-import pytest
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 from zindian.state import SkillStateStore
-from zindian.paths import resolve_competition_paths
 from zindian.skills import skill_04_eda
 from zindian.skills import skill_06_cleaning
 from zindian.skills import skill_07_features

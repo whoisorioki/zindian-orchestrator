@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import pytest
 from pathlib import Path
-import pandas as pd
 
 from zindian.skills import skill_16_submit as submitter
 from zindian.skills.skill_16_submit import HardAbortException
@@ -43,7 +42,7 @@ def _setup_comp(tmp_path: Path) -> Path:
         json.dumps(config, indent=2), encoding="utf-8"
     )
 
-    state = {
+    state: dict = {
         "competition": "subcomp",
         "md5_target_hash": None,
         "anchor_oof_score": 0.80,

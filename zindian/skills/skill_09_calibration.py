@@ -12,6 +12,7 @@ from __future__ import annotations
 import tabula.skill_state_autopatch  # noqa
 
 import json
+from sklearn.preprocessing import LabelEncoder
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -207,20 +208,19 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     task_type = str(
         raw_config.get("task_type", config.get("task_type", "classification"))
     )
-    
-    # Skip for regression or multi-target competitions
-    if task_type == "regression" or task_type == "multi_target":
-        return {
-            "status": "SKIPPED",
-            "reason": "Probability calibration applies to single-target classification tasks only",
-        }
-    
+
     # Check if multi-target via target_config
     target_config = config.get("target_config")
     if target_config and len(target_config.get("targets", [])) > 1:
+        return _run_multi_target(
+            method, dry_run, paths, config, store, state, target_config
+        )
+
+    # Skip for regression
+    if task_type == "regression":
         return {
             "status": "SKIPPED",
-            "reason": "Probability calibration not supported for multi-target competitions",
+            "reason": "Probability calibration applies to classification tasks only",
         }
 
     proc_dir = paths.data_processed_dir
@@ -230,7 +230,12 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     target = _resolve_target_col(config)
     if target not in train.columns:
         raise RuntimeError(f"target column '{target}' not present in training data")
-    y = np.asarray(train[target].values, dtype=int)
+    y_raw = train[target]
+    if y_raw.dtype == "object":
+        le = LabelEncoder()
+        y = le.fit_transform(y_raw)
+    else:
+        y = np.asarray(y_raw.values, dtype=int)
 
     retraining_active = bool(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
@@ -349,6 +354,309 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
             pass
 
     return {"status": "OK", "method": method, "mapping": mapping}
+
+
+def _run_multi_target(
+    method: str,
+    dry_run: bool,
+    paths: Any,
+    config: ChallengeConfig,
+    store: SkillStateStore,
+    state: dict[str, Any],
+    target_config: dict[str, Any],
+) -> Dict[str, object]:
+    print("Multi-target mode detected")
+
+    targets = target_config.get("targets", [])
+    proc_dir = paths.data_processed_dir
+    reports_dir = paths.reports_dir
+    train_features = pd.read_csv(proc_dir / "features_train.csv")
+    train_raw = pd.read_csv(paths.data_raw_dir / "Train.csv")
+
+    retraining_active = bool(
+        state.get("pseudo_label_result", {}).get("retraining_required", False)
+    )
+
+    # For multi-target, find branch from actual OOF keys
+    candidate_branch = None
+    for target_spec in targets:
+        target_name = target_spec.get("name")
+        # Look for OOF keys for this target
+        for key in state.keys():
+            if (
+                key.startswith("branch_")
+                and f"_{target_name}_" in key
+                and key.endswith("_oof")
+            ):
+                # Extract branch name
+                parts = key.removeprefix("branch_").removesuffix("_oof")
+                if retraining_active and parts.endswith("_augmented"):
+                    candidate_branch = parts.removesuffix(f"_{target_name}_augmented")
+                else:
+                    candidate_branch = parts.removesuffix(f"_{target_name}")
+                break
+        if candidate_branch:
+            break
+
+    if not candidate_branch:
+        candidate_branch = _resolve_candidate_branch(
+            state, retraining_active=retraining_active
+        )
+
+    print(f"Using branch: {candidate_branch}")
+
+    cv_strategy = _resolve_cv_strategy(config, state)
+    groups = _get_groups(train_features, config)
+
+    skipped_targets = []
+    mapping = {}
+    _calibrated_any = False
+
+    for target_spec in targets:
+        target_name = target_spec.get("name")
+        target_task_type = target_spec.get("task_type")
+
+        if target_task_type != "classification":
+            print(f"Skipping {target_name} (task_type={target_task_type})")
+            skipped_targets.append(target_name)
+            continue
+
+        print(f"\nCalibrating classification target: {target_name}")
+
+        if target_name not in train_raw.columns:
+            print(f"Warning: {target_name} not in training data, skipping")
+            skipped_targets.append(target_name)
+            continue
+
+        # Load OOF file with probabilities
+        oof_file = paths.data_raw_dir / "oof_anchor_multi.csv"
+        if not oof_file.exists():
+            print("Warning: OOF file not found, skipping actual calibration")
+            skipped_targets.append(target_name)
+            continue
+
+        oof_df = pd.read_csv(oof_file)
+
+        # Check for probability columns in OOF
+        prob_cols = [
+            c for c in oof_df.columns if c.startswith(f"{target_name}_prob_class_")
+        ]
+        if not prob_cols:
+            print(f"Warning: No probability columns for {target_name} in OOF, skipping")
+            skipped_targets.append(target_name)
+            continue
+
+        print(f"Found {len(prob_cols)} probability classes for {target_name}")
+
+        # For multi-class, calibrate each class probability separately
+        y_raw = train_raw[target_name]
+        if y_raw.dtype.kind in ("U", "S", "O"):
+            le = LabelEncoder()
+            y = le.fit_transform(y_raw.astype(str)).astype(int)
+        else:
+            y = np.asarray(y_raw.values, dtype=int)
+
+        oof_key = f"branch_{candidate_branch}_{target_name}_oof"
+        if retraining_active and not candidate_branch.endswith("_augmented"):
+            oof_key = f"branch_{candidate_branch}_{target_name}_augmented_oof"
+
+        oof_record = state.get(oof_key)
+        if not isinstance(oof_record, dict):
+            print(f"Warning: No OOF record at {oof_key}, skipping")
+            skipped_targets.append(target_name)
+            continue
+
+        # Extract probability matrix from OOF file
+        oof_probs_matrix = oof_df[prob_cols].values
+
+        if len(oof_probs_matrix) != len(y):
+            print(f"Warning: OOF length mismatch for {target_name}, skipping")
+            skipped_targets.append(target_name)
+            continue
+
+        # Find test probability files
+        test_names = _candidate_test_names(candidate_branch, retraining_active)
+        test_names_target = [
+            n.replace(candidate_branch, f"{candidate_branch}_{target_name}")
+            for n in test_names
+        ]
+        test_names_target.extend([f"test_probs_{candidate_branch}_{target_name}"])
+
+        test_path = None
+        for test_name in test_names_target:
+            for base_dir in (proc_dir, reports_dir):
+                candidate = base_dir / f"{test_name}.csv"
+                if candidate.exists():
+                    test_path = candidate
+                    break
+            if test_path:
+                break
+
+        if not test_path:
+            print(f"Note: No test probs for {target_name}, calibrating OOF only")
+            # Still calibrate OOF for state tracking
+            if method != "none":
+                calibrated_oof_matrix = np.zeros_like(oof_probs_matrix)
+                for class_idx in range(len(prob_cols)):
+                    y_binary = (y == class_idx).astype(int)
+                    oof_probs_class = oof_probs_matrix[:, class_idx]
+                    calibrated_oof_class, _ = _fit_calibrator_foldwise(
+                        method,
+                        oof_probs_class,
+                        y_binary,
+                        cv_strategy=cv_strategy,
+                        groups=groups,
+                    )
+                    calibrated_oof_matrix[:, class_idx] = calibrated_oof_class
+                row_sums = calibrated_oof_matrix.sum(axis=1, keepdims=True)
+                row_sums = np.where(row_sums == 0, 1, row_sums)
+                calibrated_oof_matrix = calibrated_oof_matrix / row_sums
+                _calibrated_any = True
+                if not dry_run:
+                    try:
+                        cfg_data = getattr(config, "_data", {}) or {}
+                        cv_id = resolve_active_cv_strategy_id(state, cfg_data)
+                        seed = int(cfg_data.get("reproducibility", {}).get("seed", 42))
+                        calibrated_oof_pred = np.argmax(calibrated_oof_matrix, axis=1)
+                        write_oof_record(
+                            store,
+                            branch_name=f"calibration_{candidate_branch}_{target_name}",
+                            scores=calibrated_oof_pred.tolist(),
+                            cv_strategy_id=cv_id,
+                            seed=seed,
+                            model_config={
+                                "method": method,
+                                "source_branch": candidate_branch,
+                                "target": target_name,
+                            },
+                        )
+                    except Exception:
+                        pass
+            continue
+
+        if method == "none":
+            out = proc_dir / f"calib_{test_path.name}"
+            mapping[test_path.name] = str(out)
+            continue
+
+        # Calibrate each class probability separately
+        calibrated_oof_matrix = np.zeros_like(oof_probs_matrix)
+
+        for class_idx in range(len(prob_cols)):
+            y_binary = (y == class_idx).astype(int)
+            oof_probs_class = oof_probs_matrix[:, class_idx]
+
+            calibrated_oof_class, global_calibrator = _fit_calibrator_foldwise(
+                method,
+                oof_probs_class,
+                y_binary,
+                cv_strategy=cv_strategy,
+                groups=groups,
+            )
+            calibrated_oof_matrix[:, class_idx] = calibrated_oof_class
+
+        # Normalize probabilities to sum to 1
+        row_sums = calibrated_oof_matrix.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1, row_sums)
+        calibrated_oof_matrix = calibrated_oof_matrix / row_sums
+
+        # Load and calibrate test probabilities
+        df_test = pd.read_csv(test_path)
+        id_col = config.get("id_col") or config.get("id_column") or "ID"
+
+        # Check if test file has probability columns
+        test_prob_cols = [
+            c
+            for c in df_test.columns
+            if c.startswith(f"{target_name}_prob_class_") or c.startswith("prob_class_")
+        ]
+        if not test_prob_cols:
+            print(
+                f"Warning: No probability columns in test file for {target_name}, skipping"
+            )
+            skipped_targets.append(target_name)
+            continue
+
+        test_probs_matrix = df_test[test_prob_cols].values
+        calibrated_test_matrix = np.zeros_like(test_probs_matrix)
+
+        for class_idx in range(len(prob_cols)):
+            y_binary = (y == class_idx).astype(int)
+            oof_probs_class = oof_probs_matrix[:, class_idx]
+
+            if np.unique(y_binary).size < 2:
+                calibrated_test_matrix[:, class_idx] = test_probs_matrix[:, class_idx]
+                continue
+
+            if method == "platt":
+                calibrator = _fit_platt(oof_probs_class, y_binary)
+                calibrated_test_matrix[:, class_idx] = calibrator.predict_proba(
+                    test_probs_matrix[:, class_idx].reshape(-1, 1)
+                )[:, 1]
+            elif method == "isotonic":
+                calibrator = _fit_isotonic(oof_probs_class, y_binary)
+                calibrated_test_matrix[:, class_idx] = calibrator.transform(
+                    test_probs_matrix[:, class_idx]
+                )
+            else:
+                calibrated_test_matrix[:, class_idx] = test_probs_matrix[:, class_idx]
+
+        # Normalize test probabilities
+        row_sums = calibrated_test_matrix.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0, 1, row_sums)
+        calibrated_test_matrix = calibrated_test_matrix / row_sums
+
+        # Save calibrated test probabilities
+        out = proc_dir / f"calib_{test_path.name}"
+        mapping[test_path.name] = str(out)
+        if not dry_run:
+            out_df = pd.DataFrame({id_col: df_test[id_col]})
+            for i, col in enumerate(test_prob_cols):
+                out_df[col] = calibrated_test_matrix[:, i]
+            out_df.to_csv(out, index=False)
+
+            try:
+                cfg_data = getattr(config, "_data", {}) or {}
+                cv_id = resolve_active_cv_strategy_id(state, cfg_data)
+                seed = int(cfg_data.get("reproducibility", {}).get("seed", 42))
+                # Store calibrated OOF as argmax for compatibility
+                calibrated_oof_pred = np.argmax(calibrated_oof_matrix, axis=1)
+                write_oof_record(
+                    store,
+                    branch_name=f"calibration_{candidate_branch}_{target_name}",
+                    scores=calibrated_oof_pred.tolist(),
+                    cv_strategy_id=cv_id,
+                    seed=seed,
+                    model_config={
+                        "method": method,
+                        "source_branch": candidate_branch,
+                        "target": target_name,
+                    },
+                )
+            except Exception:
+                pass
+
+    if not dry_run:
+        state_patch = {
+            "calibration_method": method,
+            "calibration_written_at": datetime.now(timezone.utc).isoformat(),
+            "calibration_candidate_branch": candidate_branch,
+            "calibration_skipped_targets": skipped_targets,
+        }
+        try:
+            cfg_data = getattr(config, "_data", {}) or {}
+            cv_id = resolve_active_cv_strategy_id(state, cfg_data)
+            state_patch["calibration_oof_cv_strategy_id"] = cv_id
+        except Exception:
+            pass
+        store.update(**state_patch)
+
+    return {
+        "status": "OK",
+        "method": method,
+        "mapping": mapping,
+        "skipped_targets": skipped_targets,
+    }
 
 
 if __name__ == "__main__":

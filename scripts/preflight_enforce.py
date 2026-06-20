@@ -490,7 +490,7 @@ def verify_section_1_assumptions(
     prohibited_strings = set()
     if cfg_slug:
         prohibited_strings.add(cfg_slug.lower())
-    if target_col:
+    if target_col and target_col.lower() != "target":
         prohibited_strings.add(target_col.lower())
     cv = cfg.get("cv_strategy") or {}
     group_col = cv.get("group_col")

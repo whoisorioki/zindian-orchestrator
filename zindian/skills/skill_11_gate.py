@@ -185,7 +185,7 @@ def run() -> dict:
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
-    
+
     # Multi-target detection
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
@@ -204,7 +204,7 @@ def run() -> dict:
         _effective_thresholds(config, state)
     )
     if threshold_warning is not None:
-        existing_warnings = store.get("metadata_warnings") or []
+        existing_warnings = state.get("metadata_warnings") or []
         if not isinstance(existing_warnings, list):
             existing_warnings = []
         store.update(metadata_warnings=existing_warnings + [threshold_warning])
@@ -330,16 +330,16 @@ def run() -> dict:
     round_num = int(state.get("feature_round") or 1)
     new_branch = f"anchor-v{round_num + 1}"
 
-    print(f"\n✅ GATE PASSED — promoting {branch_name} to {new_branch}")
+    print(f"\n[OK] GATE PASSED — promoting {branch_name} to {new_branch}")
 
     try:
         subprocess.run(
             ["git", "checkout", "-b", new_branch], check=True, capture_output=True
         )
-        print(f"✅ Git branch created: {new_branch}")
+        print(f"[OK] Git branch created: {new_branch}")
     except subprocess.CalledProcessError:
         subprocess.run(["git", "checkout", new_branch], check=True, capture_output=True)
-        print(f"✅ Switched to: {new_branch}")
+        print(f"[OK] Switched to: {new_branch}")
 
     updates = {
         "anchor_oof_score": best_score,
@@ -360,8 +360,8 @@ def run() -> dict:
         },
     }
     store.update(**updates)
-    print(f"✅ SKILL_STATE.json — new anchor {metric_key.upper()}: {best_score:.5f}")
-    print(f"✅ Feature round advanced to: {round_num + 1}")
+    print(f"[OK] SKILL_STATE.json — new anchor {metric_key.upper()}: {best_score:.5f}")
+    print(f"[OK] Feature round advanced to: {round_num + 1}")
 
     return {
         "status": "PASS",
@@ -374,32 +374,96 @@ def run() -> dict:
 
 def _run_multi_target_gate(config, store, state) -> dict:
     """Multi-target gate logic per SoT v2.2.1 A11."""
-    print("\n🎯 MULTI-TARGET GATE MODE\n")
+    print("\n[TARGET] MULTI-TARGET GATE MODE\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
-    
+
     multi_metrics = state.get("anchor_multi_target_metrics", {})
     if not multi_metrics:
         return {"status": "BLOCKED", "reason": "no multi-target metrics found"}
-    
+
     shap_results = state.get("shap_multi_target_results", {})
-    all_pass = all(shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets)
-    
+    all_pass = all(
+        shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
+    )
+
     if not all_pass:
         return {"status": "BLOCKED", "reason": "multi-target SHAP gate failed"}
-    
-    avg_score = np.mean([m["oof_f1"] for m in multi_metrics.values()])
+
+    # Check human approval gate before proceeding
+    best_variant = state.get("best_variant_this_round") or state.get(
+        "best_variant_branch"
+    )
+    branch_name = str(best_variant or "unknown")
+    human_gate_key = f"human_gate_2_{branch_name}_approved"
+    human_gate_approved = bool(state.get(human_gate_key, False))
+
+    diagnosis = {
+        "branch_name": branch_name,
+        "best_variant": best_variant,
+        "human_gate_key": human_gate_key,
+        "human_gate_approved": human_gate_approved,
+        "passed": False,
+    }
+
+    if not human_gate_approved:
+        diagnosis["failure_reason"] = "human_gate_missing"
+        _write_failure_diagnosis(store, diagnosis)
+        return {
+            "status": "BLOCKED",
+            "reason": "human gate missing",
+            "diagnosis": diagnosis,
+        }
+
+    # Compute proper composite score using config weights
+    classification_targets = [t for t in targets if t["task_type"] == "classification"]
+    regression_targets = [t for t in targets if t["task_type"] == "regression"]
+
+    weighted_scores = []
+
+    for t in classification_targets:
+        target_name = t["name"]
+        weight = t.get("weight", 0.5)
+        f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
+        weighted_scores.append(f1 * weight)
+
+    for t in regression_targets:
+        target_name = t["name"]
+        weight = t.get("weight", 0.5)
+        rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)
+        # Normalize by target std from eda block
+        eda_std = float(state.get("eda", {}).get(f"{target_name}_std", 0.0))
+        if eda_std <= 0.0:
+            # Fallback standard deviation
+            eda_std = float(state.get("eda", {}).get("total_goals_std", 1.0))
+        normalized_rmse = rmse / eda_std if eda_std > 0 else rmse
+        regression_score = max(0.0, 1.0 - normalized_rmse)
+        weighted_scores.append(regression_score * weight)
+
+    total_weight = sum(t.get("weight", 0.5) for t in targets)
+    avg_score = (
+        sum(weighted_scores) / total_weight
+        if total_weight > 0
+        else sum(weighted_scores)
+    )
+
     round_num = int(state.get("feature_round") or 1)
     new_branch = f"anchor-multi-v{round_num + 1}"
-    
+
     store.update(
         anchor_oof_score=avg_score,
         anchor_git_branch=new_branch,
         feature_round=round_num + 1,
         dag_phase="phase_3_anchor_promoted",
-        last_updated=datetime.now(timezone.utc).isoformat()
+        last_updated=datetime.now(timezone.utc).isoformat(),
+        phase_3_gate_diagnosis={
+            **diagnosis,
+            "passed": True,
+            "new_branch": new_branch,
+            "avg_score": avg_score,
+        },
     )
-    print(f"\n✅ Multi-target gate PASSED. New branch: {new_branch}")
+    print(f"\n[OK] Multi-target gate PASSED. New branch: {new_branch}")
     return {"status": "PASS", "new_branch": new_branch, "avg_score": avg_score}
 
 

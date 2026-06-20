@@ -212,7 +212,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
     skill_dir = repo_root / "zindian" / "skills"
     errors_found = 0
 
-    # ── Check 0: Lockfile consistency ─────────────────────────────────────────
+    # -- Check 0: Lockfile consistency -----------------------------------------
     print(
         "\n[Check 0] Verifying environment lock (requirements.in vs requirements.txt)"
     )
@@ -227,7 +227,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
             for issue in lock_issues:
                 print(f"  WARNING: {issue}")
 
-    # ── Check 1: AST scan for forbidden AutoML imports ────────────────────────
+    # -- Check 1: AST scan for forbidden AutoML imports ------------------------
     print("\n[Check 1] Scanning zindian/skills/ for forbidden AutoML imports")
     if not skill_dir.exists():
         print(f"  ERROR: skill directory missing at {skill_dir}")
@@ -242,7 +242,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
         else:
             print("  OK: no AutoML library imports detected in zindian/skills/")
 
-    # ── Check 2: Git branch alignment (informational) ─────────────────────────
+    # -- Check 2: Git branch alignment (informational) -------------------------
     print("\n[Check 2] Synchronizing Repository Branch State")
     current_branch = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     print(f"  - Active Git Branch : {current_branch}")
@@ -292,7 +292,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
                 f"'{current_branch}' but state records '{recorded_branch}'."
             )
 
-        # ── Check 3: OOF cv_strategy_id audit ───────────────────────────────
+        # -- Check 3: OOF cv_strategy_id audit -------------------------------
         print("\n[Check 3] Auditing OOF records for cv_strategy_id alignment")
         # Determine the active strategy id from SKILL_STATE / config.
         active_id: str | None = None

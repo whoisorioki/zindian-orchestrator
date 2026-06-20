@@ -1067,7 +1067,8 @@ def run(
         print(f"  Best LB score       : {sub_intel['best_score']:.9f}")
         print(f"  Chosen submissions  : {sub_intel['chosen_count']}/2")
         try:
-            metric_name = (config.get("metric") or "f1").upper()
+            metric_name = (config.get("metric") if config is not None else None) or "f1"
+            metric_name = str(metric_name).upper()
         except Exception:
             metric_name = "F1"
         metric_label = f"LB {metric_name}"

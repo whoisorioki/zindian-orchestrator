@@ -11,6 +11,7 @@ class SimplePaths:
     def __init__(self, root: Path):
         self.data_raw_dir = root / "data" / "raw"
         self.state_path = root / "SKILL_STATE.json"
+        self.config_path = root / "challenge_config.json"
 
 
 def test_skill01_uses_configured_target_column(tmp_path, monkeypatch):
@@ -34,6 +35,9 @@ def test_skill01_uses_configured_target_column(tmp_path, monkeypatch):
 
     state_path = tmp_path / "SKILL_STATE.json"
     state_path.write_text(json.dumps(skill_state_skeleton()), encoding="utf-8")
+
+    config_path = tmp_path / "challenge_config.json"
+    config_path.write_text(json.dumps({}), encoding="utf-8")
 
     monkeypatch.setattr(
         integrity, "resolve_competition_paths", lambda: SimplePaths(tmp_path)

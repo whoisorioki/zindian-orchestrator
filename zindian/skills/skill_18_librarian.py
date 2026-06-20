@@ -7,6 +7,7 @@ from __future__ import annotations
 import tabula.skill_state_autopatch  # noqa
 
 import json
+import re
 import time
 from typing import Any
 import requests
@@ -56,7 +57,7 @@ except Exception:
 def build_queries(tc_variables: list[str]) -> list[str]:
     keywords = []
     comp_name = "Species distribution modelling"
-    comp_domain = "biodiversity"
+    _comp_domain = "biodiversity"
     target_col = "Occurrence Status"
     slug = ""
     try:
@@ -66,7 +67,7 @@ def build_queries(tc_variables: list[str]) -> list[str]:
         if cfg.get("name"):
             comp_name = cfg.get("name")
         if cfg.get("domain"):
-            comp_domain = cfg.get("domain")
+            pass  # domain captured via config.get at call time
         if cfg.get("target_col"):
             target_col = cfg.get("target_col")
         if cfg.get("slug"):

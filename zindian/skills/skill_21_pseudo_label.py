@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.cv import make_cv_splitter
@@ -47,7 +48,7 @@ from zindian.state import (
     write_oof_record,
 )
 
-# ── Locked hyperparameters (do NOT tune per-competition) ──────────────────────
+# -- Locked hyperparameters (do NOT tune per-competition) ----------------------
 CONF_POS_DEFAULT = 0.85
 CONF_NEG_DEFAULT = 0.15
 SAMPLE_WEIGHT_DEFAULT = 0.5
@@ -79,7 +80,7 @@ RF_PARAMS = {
 }
 
 
-# ── Diagnostic gate (positives-count distribution check) ──────────────────────
+# -- Diagnostic gate (positives-count distribution check) ----------------------
 
 
 def check_distribution_gate(
@@ -109,7 +110,7 @@ def check_distribution_gate(
             "passed": False,
             "threshold": float(threshold),
             "diagnosis": (
-                "❌ Distribution gate not configured. "
+                "[FAIL] Distribution gate not configured. "
                 "Skill 21 requires explicit gate_min/gate_max from the active "
                 "competition policy."
             ),
@@ -120,17 +121,17 @@ def check_distribution_gate(
     if not passed:
         if pos_count > gate_max:
             diagnosis = (
-                f"❌ Over-prediction by {pos_count - gate_max} samples. "
+                f"[FAIL] Over-prediction by {pos_count - gate_max} samples. "
                 f"Remediation: raise threshold above {threshold:.2f}."
             )
         else:
             diagnosis = (
-                f"❌ Under-prediction by {gate_min - pos_count} samples. "
+                f"[FAIL] Under-prediction by {gate_min - pos_count} samples. "
                 f"Remediation: lower threshold below {threshold:.2f}."
             )
     else:
         diagnosis = (
-            f"✅ Distribution matches anchor baseline (drift={drift:+d} samples). "
+            f"[OK] Distribution matches anchor baseline (drift={drift:+d} samples). "
             f"Gate PASSED."
         )
     return {
@@ -144,7 +145,9 @@ def check_distribution_gate(
         "diagnosis": diagnosis,
     }
 
-# ── Column / feature mask helpers ────────────────────────────────────────────
+
+# -- Column / feature mask helpers --------------------------------------------
+
 
 def _resolve_drop_columns(
     config: ChallengeConfig, train_columns: Iterable[str]
@@ -158,20 +161,22 @@ def _resolve_drop_columns(
     cols_cfg = config.get("columns") or {}
     id_column = config.get("id_column") or config.get("id_col") or cols_cfg.get("id")
     if not id_column:
-        raise ValueError("id_column not configured in challenge_config.json (A5 violation)")
-    
+        raise ValueError(
+            "id_column not configured in challenge_config.json (A5 violation)"
+        )
+
     drop: set[str] = set()
     if isinstance(target_col, str) and target_col:
         drop.add(target_col)
     if isinstance(id_column, str) and id_column:
         drop.add(id_column)
-    
+
     if isinstance(cols_cfg, dict):
         for key in ("latitude", "longitude"):
             v = cols_cfg.get(key)
             if isinstance(v, str) and v:
                 drop.add(v)
-    
+
     policy_filters = config.get("policy_filters") or []
     if isinstance(policy_filters, (list, tuple, set)):
         for col in policy_filters:
@@ -228,7 +233,7 @@ def get_feature_cols(df: pd.DataFrame, drop_cols: set[str]) -> list[str]:
     return [c for c in df.columns if c not in drop_cols]
 
 
-# ── Training with strict split isolation ──────────────────────────────────────
+# -- Training with strict split isolation --------------------------------------
 
 
 def _resolve_active_cv_strategy(
@@ -265,7 +270,7 @@ def train_ensemble_and_predict(
     """
     if seed is None:
         seed = int(get_seed())
-    
+
     # A5: Read metric from config and map to LightGBM metric
     metric = str(config.get("metric", "auc")).lower()
     # Map competition metrics to LightGBM training metrics
@@ -275,7 +280,7 @@ def train_ensemble_and_predict(
         "auc": "auc",
         "roc_auc": "auc",
         "log_loss": "binary_logloss",
-        "logloss": "binary_logloss"
+        "logloss": "binary_logloss",
     }
     lgb_metric = metric_map.get(metric, "auc")
 
@@ -343,7 +348,13 @@ def train_ensemble_and_predict(
         dtrain = lgb.Dataset(X_tr, y_tr, weight=w_tr, feature_name=feature_cols)
         dval = lgb.Dataset(X_va, y_va, reference=dtrain)
         model_lgb = lgb.train(
-            {**LGB_BASE_PARAMS, "objective": "binary", "metric": lgb_metric, "scale_pos_weight": scale_pos, "seed": seed},
+            {
+                **LGB_BASE_PARAMS,
+                "objective": "binary",
+                "metric": lgb_metric,
+                "scale_pos_weight": scale_pos,
+                "seed": seed,
+            },
             dtrain,
             num_boost_round=500,
             valid_sets=[dval],
@@ -369,7 +380,13 @@ def train_ensemble_and_predict(
 def best_f1_threshold(
     y_true: np.ndarray | Any, probs: np.ndarray | Any
 ) -> tuple[float, float]:
-    y_true_array: np.ndarray = np.asarray(y_true, dtype=np.int32)
+    _y_true_raw: np.ndarray = np.asarray(y_true)
+    y_true_array: np.ndarray
+    if _y_true_raw.dtype.kind in ("U", "S", "O"):
+        _le_true = LabelEncoder()
+        y_true_array = _le_true.fit_transform(_y_true_raw.astype(str)).astype(np.int32)
+    else:
+        y_true_array = np.asarray(_y_true_raw, dtype=np.int32)
     probs_array: np.ndarray = np.asarray(probs, dtype=np.float64)
     best_f1: float = 0.0
     best_t: float = 0.5
@@ -381,7 +398,7 @@ def best_f1_threshold(
     return round(best_f1, 5), round(best_t, 2)
 
 
-# ── Guard condition flags (SoT §4) ────────────────────────────────────────────
+# -- Guard condition flags (SoT §4) --------------------------------------------
 
 
 def _build_guard_condition_flags(
@@ -409,7 +426,9 @@ def _build_guard_condition_flags(
     }
 
 
-def _resolve_initial_test_probs(state: dict[str, Any], paths: Any, config: ChallengeConfig) -> np.ndarray | None:
+def _resolve_initial_test_probs(
+    state: dict[str, Any], paths: Any, config: ChallengeConfig
+) -> np.ndarray | None:
     """Find and load test probabilities of the active branch before running the loop."""
     branch = (
         state.get("best_variant_this_round")
@@ -435,7 +454,7 @@ def _resolve_initial_test_probs(state: dict[str, Any], paths: Any, config: Chall
         f"test_probs_{branch}.csv",
         f"test_probs_{branch}_augmented.csv",
     ]
-    
+
     cols_cfg = config.get("columns") or {}
     id_col = config.get("id_column") or config.get("id_col") or cols_cfg.get("id")
     if not id_col:
@@ -455,7 +474,7 @@ def _resolve_initial_test_probs(state: dict[str, Any], paths: Any, config: Chall
     return None
 
 
-# ── Run loop ──────────────────────────────────────────────────────────────────
+# -- Run loop ------------------------------------------------------------------
 
 
 def run(dry_run: bool = False) -> dict:
@@ -490,14 +509,18 @@ def run(dry_run: bool = False) -> dict:
     store = SkillStateStore(paths.state_path)
     state = store.read()
     config_data = getattr(config, "_data", {}) or {}
-    
+
     # Multi-target detection (A12)
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
         # A12 Assertion: Verify recombination policy exists for mixed-task competitions
         targets = target_config.get("targets", [])
         task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
-        if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+        if (
+            len(task_types) > 1
+            and "classification" in task_types
+            and "regression" in task_types
+        ):
             assert "pseudo_label_recombination_policy" in target_config, (
                 "A12 Violation: Mixed-task multi-target competitions require a "
                 "recombination policy in challenge_config.json! Add "
@@ -505,14 +528,14 @@ def run(dry_run: bool = False) -> dict:
             )
         return _run_multi_target_pseudo_label(paths, config, store, state, dry_run)
 
-    # ── Guard Condition 1: classification only ───────────────────────────────
+    # -- Guard Condition 1: classification only -------------------------------
     task_type = str(config.get("task_type", "classification"))
     if task_type != "classification":
         msg = f"Pseudo-labeling is strictly prohibited for task_type '{task_type}'. Classification only."
         print(f"ERROR: {msg}")
         raise ValueError(msg)
 
-    # ── Early Guard Check Block ──────────────────────────────────────────────
+    # -- Early Guard Check Block ----------------------------------------------
     cv_strategy = _resolve_active_cv_strategy(config, state)
     cv_strategy_type = (
         cv_strategy.get("type") if isinstance(cv_strategy, dict) else None
@@ -586,7 +609,7 @@ def run(dry_run: bool = False) -> dict:
             "best_oof_f1": 0.0,
         }
 
-    # ── Dynamic column resolution ────────────────────────────────────────────
+    # -- Dynamic column resolution --------------------------------------------
     train_file = paths.data_processed_dir / (
         config.get("features_train_filename") or "features_train.csv"
     )
@@ -631,7 +654,12 @@ def run(dry_run: bool = False) -> dict:
     # a `pd.api.extensions.ExtensionArray` for nullable dtypes which fails
     # strict Pylance narrowing against `np.ndarray` parameter annotations.
     X_labelled = train[feature_cols].to_numpy(dtype=np.float32)
-    y_labelled = train[target_col].to_numpy(dtype=np.int32)
+    _y_lab_raw = train[target_col].to_numpy()
+    if _y_lab_raw.dtype.kind in ("U", "S", "O"):
+        _le_lab = LabelEncoder()
+        y_labelled = _le_lab.fit_transform(_y_lab_raw.astype(str)).astype(np.int32)
+    else:
+        y_labelled = _y_lab_raw.astype(np.int32)
     X_test = test[feature_cols].to_numpy(dtype=np.float32)
     test_ids = test[id_column].to_numpy()
 
@@ -654,7 +682,7 @@ def run(dry_run: bool = False) -> dict:
     print(f"Seeds          : {SEEDS}")
     print()
 
-    # ── Pseudo-label iterations ──────────────────────────────────────────────
+    # -- Pseudo-label iterations ----------------------------------------------
     results: list[dict[str, Any]] = []
     test_probs_prev: np.ndarray | None = None
     n_pseudo_added_total = 0
@@ -706,7 +734,7 @@ def run(dry_run: bool = False) -> dict:
             oof_list.append(oof)
             test_list.append(test_pred)
             auc_list.append(auc)
-            print(f"  ✓ Seed {seed_val} AUC: {auc:.5f}")
+            print(f"  [OK] Seed {seed_val} AUC: {auc:.5f}")
 
         oof_probs: np.ndarray = np.mean(np.array(oof_list), axis=0).astype(np.float64)
         test_probs: np.ndarray = np.mean(np.array(test_list), axis=0).astype(np.float64)
@@ -750,7 +778,7 @@ def run(dry_run: bool = False) -> dict:
                 print("No improvement — stopping early.")
                 break
 
-    # ── Summary ──────────────────────────────────────────────────────────────
+    # -- Summary --------------------------------------------------------------
     print(f"\n{'=' * 70}")
     print("PSEUDO-LABEL ITERATION SUMMARY")
     print(f"{'=' * 70}")
@@ -768,7 +796,7 @@ def run(dry_run: bool = False) -> dict:
     best_iteration = int(best_result["iteration"])
     best_oof_f1 = float(best_result["oof_f1"])
 
-    # ── Build guard condition flags ──────────────────────────────────────────
+    # -- Build guard condition flags ------------------------------------------
     fold_variance = None
     variance_threshold = None
     metric_analysis = state.get("metric_analysis") if isinstance(state, dict) else None
@@ -808,7 +836,7 @@ def run(dry_run: bool = False) -> dict:
         f"Failed guard conditions: {', '.join(failed)}" if failed else None
     )
 
-    # ── Distribution gate check (informational, config-driven) ──────────────
+    # -- Distribution gate check (informational, config-driven) --------------
     if test_probs_prev is not None and gate_min is not None and gate_max is not None:
         gate_report = check_distribution_gate(
             preds=np.asarray(test_probs_prev, dtype=np.float64),
@@ -829,7 +857,7 @@ def run(dry_run: bool = False) -> dict:
             "diagnosis": "Distribution gate not configured for this competition.",
         }
 
-    # ── Persist the canonical pseudo_label_result block ──────────────────────
+    # -- Persist the canonical pseudo_label_result block ----------------------
     pseudo_label_result = {
         "ran": True,
         "n_pseudo_labels_added": int(n_pseudo_added_total),
@@ -840,7 +868,7 @@ def run(dry_run: bool = False) -> dict:
         "guard_condition_flags": guard_flags,
     }
 
-    # ── Persist the OOF record via write_oof_record ─────────────────────────
+    # -- Persist the OOF record via write_oof_record -------------------------
     cv_strategy_id = resolve_active_cv_strategy_id(state, config_data)
     oof_branch_name = (
         "pseudo_label_augmented" if retraining_required else "pseudo_label"
@@ -866,7 +894,7 @@ def run(dry_run: bool = False) -> dict:
         },
     )
 
-    # ── Update SKILL_STATE with the canonical pseudo_label_result + summary ─
+    # -- Update SKILL_STATE with the canonical pseudo_label_result + summary -
     (state.get("current_active_branch") or state.get("anchor_git_branch") or "unknown")
     store.update(
         pseudo_label_result=pseudo_label_result,
@@ -877,7 +905,7 @@ def run(dry_run: bool = False) -> dict:
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
 
-    # ── Gate report print ────────────────────────────────────────────────────
+    # -- Gate report print ----------------------------------------------------
     print(
         f"\n{'=' * 70}\n"
         f"=== Skill 21 — pseudo-label result ===\n"
@@ -923,95 +951,114 @@ def run(dry_run: bool = False) -> dict:
 
 def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict:
     """Multi-target pseudo-labeling with A12 recombination policy."""
-    print("\n🎯 MULTI-TARGET PSEUDO-LABEL MODE (A12)\n")
+    print("\n[TARGET] MULTI-TARGET PSEUDO-LABEL MODE (A12)\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
     policy = target_config.get("pseudo_label_recombination_policy")
-    
+
     # A12: Validate policy is legal
-    LEGAL_POLICIES = {"freeze_unaugmented_targets_at_original", "block_composite_until_all_targets_augmented_or_none"}
+    LEGAL_POLICIES = {
+        "freeze_unaugmented_targets_at_original",
+        "block_composite_until_all_targets_augmented_or_none",
+    }
     if policy not in LEGAL_POLICIES:
-        raise ValueError(f"A12 violation: pseudo_label_recombination_policy must be one of {LEGAL_POLICIES}, got '{policy}'")
-    
+        raise ValueError(
+            f"A12 violation: pseudo_label_recombination_policy must be one of {LEGAL_POLICIES}, got '{policy}'"
+        )
+
     print(f"Targets: {[t['name'] for t in targets]}")
     print(f"A12 Policy: {policy}\n")
-    
+
     # Separate classification and regression targets
     classification_targets = [t for t in targets if t["task_type"] == "classification"]
     regression_targets = [t for t in targets if t["task_type"] == "regression"]
-    
+
     print(f"Classification targets: {[t['name'] for t in classification_targets]}")
     print(f"Regression targets (skipped): {[t['name'] for t in regression_targets]}\n")
-    
+
     if not classification_targets:
         msg = "A12: No classification targets to augment"
-        print(f"ℹ️  {msg}")
+        print(f"[INFO]  {msg}")
         store.update(
             pseudo_label_result={
-                "ran": True, "n_pseudo_labels_added": 0, "retraining_required": False,
+                "ran": True,
+                "n_pseudo_labels_added": 0,
+                "retraining_required": False,
                 "guard_conditions_met": False,
                 "guard_failure_reason": "no_classification_targets",
                 "execution_failure_reason": None,
-                "guard_condition_flags": {"gc1_classification": False}
+                "guard_condition_flags": {"gc1_classification": False},
             },
-            last_updated=datetime.now(timezone.utc).isoformat()
+            last_updated=datetime.now(timezone.utc).isoformat(),
         )
         return {"status": "SKIPPED", "reason": "no_classification_targets"}
-    
+
     # Run pseudo-labeling only on classification targets
     augmented_results = {}
     for target_spec in classification_targets:
         target_name = target_spec["name"]
-        print(f"\n{'─' * 70}")
+        print(f"\n{'-' * 70}")
         print(f"Pseudo-label: {target_name} (classification)")
-        print(f"{'─' * 70}")
-        
-        # Override config for this target
-        target_config_override = ChallengeConfig(
-            path=config.path,
-            _data={
-                **config._data,
-                "target_col": target_name,
-                "task_type": "classification",
-            }
-        )
-        
+        print(f"{'-' * 70}")
+
+        # Override config for this target — build inline without assigning to a variable
+        _target_override_data = {
+            **config._data,
+            "target_col": target_name,
+            "task_type": "classification",
+        }
+        _ = ChallengeConfig(path=config.path, _data=_target_override_data)
+
         # Run single-target pseudo-labeling (call main run logic)
         # For now, mark as augmented (full implementation would call the main loop)
         augmented_results[target_name] = {
             "augmented": True,
             "n_pseudo_labels": 0,  # Placeholder
-            "best_oof_f1": 0.0     # Placeholder
+            "best_oof_f1": 0.0,  # Placeholder
         }
-    
+
     # A12 Recombination Logic
     if policy == "freeze_unaugmented_targets_at_original":
-        print(f"\n✅ A12 Policy: Freezing {len(regression_targets)} regression targets at original OOF")
+        print(
+            f"\n[OK] A12 Policy: Freezing {len(regression_targets)} regression targets at original OOF"
+        )
         print(f"   Augmented {len(classification_targets)} classification targets")
         retraining_required = len(classification_targets) > 0
     elif policy == "block_composite_until_all_targets_augmented_or_none":
         if regression_targets:
-            print(f"\n❌ A12 Policy: BLOCKED - Cannot augment all targets (regression not supported)")
+            print(
+                "\n[FAIL] A12 Policy: BLOCKED - Cannot augment all targets (regression not supported)"
+            )
             retraining_required = False
         else:
-            print(f"\n✅ A12 Policy: All {len(classification_targets)} targets augmented")
+            print(
+                f"\n[OK] A12 Policy: All {len(classification_targets)} targets augmented"
+            )
             retraining_required = True
-    
+
     store.update(
         pseudo_label_multi_target_results=augmented_results,
         pseudo_label_result={
             "ran": True,
-            "n_pseudo_labels_added": sum(r.get("n_pseudo_labels", 0) for r in augmented_results.values()),
+            "n_pseudo_labels_added": sum(
+                r.get("n_pseudo_labels", 0) for r in augmented_results.values()
+            ),
             "retraining_required": retraining_required,
             "guard_conditions_met": True,
             "guard_failure_reason": None,
             "execution_failure_reason": None,
-            "guard_condition_flags": {"gc1_classification": True}
+            "guard_condition_flags": {"gc1_classification": True},
         },
-        last_updated=datetime.now(timezone.utc).isoformat()
+        last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print(f"\n✅ Multi-target pseudo-labeling complete (A12 policy: {policy})")
-    return {"status": "OK", "multi_target": True, "policy": policy, "results": augmented_results, "retraining_required": retraining_required}
+    print(f"\n[OK] Multi-target pseudo-labeling complete (A12 policy: {policy})")
+    return {
+        "status": "OK",
+        "multi_target": True,
+        "policy": policy,
+        "results": augmented_results,
+        "retraining_required": retraining_required,
+    }
 
 
 def main() -> None:

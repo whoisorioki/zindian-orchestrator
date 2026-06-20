@@ -42,12 +42,14 @@ from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 genai: Any = None
+GEMINI_AVAILABLE = False
 try:
-    import google.genai as genai
+    import google.genai as _genai_module
 
+    genai = _genai_module
     GEMINI_AVAILABLE = True
 except ImportError:
-    GEMINI_AVAILABLE = False
+    pass
 
 MODEL_NAME = "gemini-2.5-flash"
 
@@ -108,7 +110,7 @@ SEARCH_TEMPLATES = {
             "Habitat suitability modeling signals",
         ),
         (
-            "citizen science species distribution model " "environmental predictors",
+            "citizen science species distribution model environmental predictors",
             "Species distribution modeling approaches",
         ),
     ],
@@ -235,7 +237,7 @@ def query_gemini(
             entry["feature_ideas"] = []
             entry["ensemble_patterns"] = []
             print(
-                f"  ⚠️  JSON extraction failed on '{query_label}' — using empty result"
+                f"  [WARN]  JSON extraction failed on '{query_label}' — using empty result"
             )
             return entry
 
@@ -248,12 +250,12 @@ def query_gemini(
         entry["status"] = "success"
         entry["confidence"] = parsed.get("confidence", "unknown")
         entry["relevance"] = parsed.get("relevance_to_geospatial_species", "unknown")
-        print(f"  ✓ {query_label}: {len(entry['tricks'])} tricks found")
+        print(f"  [OK] {query_label}: {len(entry['tricks'])} tricks found")
 
     except Exception as e:
         entry["status"] = "error"
         entry["warnings"] = [f"API error: {e}"]
-        print(f"  ❌ API error on '{query_label}': {e}")
+        print(f"  [FAIL] API error on '{query_label}': {e}")
 
     return entry
 
@@ -612,11 +614,11 @@ def write_markdown_report(
         for feat in e.get("feature_ideas", []):
             lines.append(f"- **Feature**: {feat}")
         for warn in e.get("warnings", []):
-            lines.append(f"- ⚠️  {warn}")
+            lines.append(f"- [WARN]  {warn}")
         lines.append("")
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"✅ Report written → {report_path}")
+    print(f"[OK] Report written → {report_path}")
 
 
 def run(
@@ -633,20 +635,20 @@ def run(
     config = ChallengeConfig.load()
 
     if not GEMINI_AVAILABLE and not dry_run:
-        print("❌ google-genai not installed.")
+        print("[FAIL] google-genai not installed.")
         print("   Run: pip install google-genai")
         return {"status": "ERROR", "message": "google-genai not installed"}
 
     if not dry_run:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            print("❌ GEMINI_API_KEY not found in environment.")
+            print("[FAIL] GEMINI_API_KEY not found in environment.")
             print("   Add to .env: GEMINI_API_KEY=your_key_here")
             print("   Get free key: https://aistudio.google.com/app/apikey")
             return {"status": "ERROR", "message": "GEMINI_API_KEY not set"}
 
         gemini_model = genai.Client(api_key=api_key)
-        print("✅ Gemini Flash initialized")
+        print("[OK] Gemini Flash initialized")
     else:
         gemini_model = None
 
@@ -710,7 +712,7 @@ def run(
     }
     json_path = reports_dir / "ml_priorart.json"
     json_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
-    print(f"✅ JSON saved → {json_path}")
+    print(f"[OK] JSON saved → {json_path}")
 
     legacy_cache_path = reports_dir / "code_miner_cache.json"
     legacy_patterns_path = reports_dir / "code_miner_patterns.json"
@@ -720,8 +722,8 @@ def run(
     legacy_patterns_path.write_text(
         json.dumps(legacy_patterns, indent=2), encoding="utf-8"
     )
-    print(f"✅ Legacy cache saved → {legacy_cache_path}")
-    print(f"✅ Legacy patterns saved → {legacy_patterns_path}")
+    print(f"[OK] Legacy cache saved → {legacy_cache_path}")
+    print(f"[OK] Legacy patterns saved → {legacy_patterns_path}")
 
     report_path = reports_dir / "code_miner_report.md"
     write_markdown_report(entries, synthesis, report_path, domain)
@@ -777,7 +779,7 @@ if __name__ == "__main__":
 
     valid_domains = list(SEARCH_TEMPLATES.keys()) + ["all"]
     if domain not in valid_domains:
-        print(f"❌ Unknown domain '{domain}'. Choose from: {valid_domains}")
+        print(f"[FAIL] Unknown domain '{domain}'. Choose from: {valid_domains}")
         sys.exit(1)
 
     result = run_code_miner(domain=domain, dry_run=dry_run)

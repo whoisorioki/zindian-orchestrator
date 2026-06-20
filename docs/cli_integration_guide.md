@@ -109,105 +109,22 @@ python -m zindian.cli report
 ```
 **Creates:** `reports/phase_<N>_summary.json`
 
-### 9. Audit - Reproducibility Check
+### 10. Phase - Execute Pipeline Phase
 ```bash
-python -m zindian.cli audit [--slug competition-slug]
+python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--verbose]
 ```
-**Validates:** Requirements lockfile, no AutoML, git alignment
+**Executes:** Complete phase with all skills, returns status for each
 
 ---
 
-## Adding Phase Execution
+## Phase Execution
 
-### Problem Statement
-Currently, phase execution requires Python imports:
-```python
-from zindian.orchestrator import run_phase
-result = run_phase("1")
-```
-
-**Goal:** Enable CLI-based phase execution:
+### Execute Pipeline Phases
 ```bash
-python -m zindian.cli phase 1
-python -m zindian.cli phase 2A
-python -m zindian.cli phase 2B
+python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--verbose]
 ```
 
-### Implementation Steps
-
-#### Step 1: Add Phase Subparser to `zindian/cli.py`
-
-```python
-# In main() function, after line 42 (after sync_parser)
-phase_parser = subparsers.add_parser("phase", help="Execute pipeline phase")
-phase_parser.add_argument(
-    "phase_id",
-    choices=["1", "2A", "2B", "3A", "3B", "4"],
-    help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)"
-)
-phase_parser.add_argument(
-    "--verbose", "-v",
-    action="store_true",
-    help="Show detailed skill output"
-)
-```
-
-#### Step 2: Add Phase Handler
-
-```python
-# In main() function, after line 145 (after sync handler)
-elif args.command == "phase":
-    from zindian.orchestrator import run_phase
-    
-    print(f"\n{'='*60}")
-    print(f"EXECUTING PHASE {args.phase_id}")
-    print(f"{'='*60}\n")
-    
-    results = run_phase(args.phase_id)
-    
-    # Display results
-    print(f"\n{'='*60}")
-    print(f"PHASE {args.phase_id} RESULTS")
-    print(f"{'='*60}")
-    
-    all_success = True
-    for skill_name, result in results.items():
-        status = result.get("status", "UNKNOWN")
-        print(f"\n{skill_name}: {status}")
-        
-        if status == "ERROR":
-            all_success = False
-            print(f"  Error: {result.get('message', 'Unknown error')}")
-            if args.verbose and "traceback" in result:
-                print(f"\n{result['traceback']}")
-        elif status == "GO" and args.verbose:
-            print(f"  {result.get('message', '')}")
-    
-    # Exit with error code if any skill failed
-    sys.exit(0 if all_success else 1)
-```
-
-#### Step 3: Update Help Text
-
-Add to docstring at top of `cli.py`:
-```python
-"""CLI for Zindian orchestrator commands.
-
-Available commands:
-  phase <1|2A|2B|3A|3B|4>  - Execute pipeline phase
-  status                    - Show competition state
-  sync                      - Update state from git/Zindi
-  submit <file>             - Submit to Zindi
-  submissions               - View submission history
-  leaderboard               - View rankings
-  ledger <query>            - Query experiments database
-  monitor                   - Check competition updates
-  report                    - Generate phase summary
-  audit                     - Run reproducibility check
-"""
-```
-
-### Usage Examples
+**Usage Examples:**
 
 ```bash
 # Execute Phase 1 (Intake & EDA)
@@ -223,7 +140,7 @@ python -m zindian.cli phase 2B
 python -m zindian.cli status
 ```
 
-### Advanced: Phase Execution with Competition Override
+**Competition Override:**
 
 ```bash
 # Execute phase for specific competition
@@ -387,6 +304,34 @@ def test_status_command():
     assert "dag_phase" in data
 ```
 
+def test_phase_1_execution():
+    """Test Phase 1 execution via CLI."""
+    result = subprocess.run(
+        ["python", "-m", "zindian.cli", "phase", "1"],
+        cwd="/path/to/competitions/test-comp",
+        capture_output=True,
+        text=True
+    )
+    
+    assert result.returncode == 0
+    assert "PHASE 1 RESULTS" in result.stdout
+    assert "skill_01: GO" in result.stdout
+
+def test_status_command():
+    """Test status command returns valid JSON."""
+    result = subprocess.run(
+        ["python", "-m", "zindian.cli", "status"],
+        cwd="/path/to/competitions/test-comp",
+        capture_output=True,
+        text=True
+    )
+    
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert "competition" in data
+    assert "dag_phase" in data
+```
+
 ### Manual Testing Checklist
 
 ```bash
@@ -504,11 +449,10 @@ cd competitions/<slug>                    # Auto-detect from pwd
 
 ## Next Steps
 
-1. **Implement phase command** using the pattern above
+1. **Use phase command** for automated execution
 2. **Test with World Cup 2026** validation workflow
 3. **Add to CI/CD** for automated phase execution
-4. **Document in README** for end users
-5. **Create shell aliases** for common workflows:
+4. **Create shell aliases** for common workflows:
    ```bash
    alias zp1='python -m zindian.cli phase 1'
    alias zp2a='python -m zindian.cli phase 2A'

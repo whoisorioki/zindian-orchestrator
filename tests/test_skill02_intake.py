@@ -10,7 +10,7 @@ from zindian.skills.skill_02_intake import extract_config, run
 def test_extract_config_monitor_fallback_preserves_missing_external_flag(
     monkeypatch, tmp_path
 ):
-    data = {
+    data: dict = {
         "name": "Test Comp",
         "metric": None,
         "sections": [],
@@ -44,7 +44,7 @@ def test_extract_config_monitor_fallback_preserves_missing_external_flag(
 
 
 def test_extract_config_minimal_auc():
-    data = {
+    data: dict = {
         "name": "Test Comp",
         "metric": "auc",
         "metric_direction": None,

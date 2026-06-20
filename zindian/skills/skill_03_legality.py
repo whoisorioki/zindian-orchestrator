@@ -29,20 +29,23 @@ def policy_writer(
     monitor_data: Dict[str, Any], config: Mapping[str, Any], flagged_titles: List[str]
 ) -> Dict[str, Any]:
     """Phase 1 function: Synthesize feature policy from monitor and config.
-    
+
     Reads: challenge_config.json, community_signals from skill_00
     Writes: reports/feature_policy.json
     Fields: allowed_features, blocked_features, block_reasons
     Side effects: none — pure writer, no gating
     """
-    return synthesise_feature_policy(monitor_data, config, flagged_titles)
+    paths = resolve_competition_paths()
+    policy = synthesise_feature_policy(monitor_data, config, flagged_titles)
+    _write_feature_policy(paths, policy)
+    return policy
 
 
 def policy_gate(
     policy: Dict[str, Any], planned_features: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """Phase 2A function: Enforce feature exclusions.
-    
+
     Reads: reports/feature_policy.json, current feature matrix column list
     Asserts: no blocked column present in feature matrix
     On violation: Write to SKILL_STATE.json, Halt pipeline
@@ -51,7 +54,7 @@ def policy_gate(
     checks = check_planned_features(policy, planned_features)
     blocked_reasons = [c for c in checks if c.get("blocks")]
     status = "GO" if not blocked_reasons else "BLOCKED"
-    
+
     return {
         "status": status,
         "blocked_reasons": blocked_reasons,
@@ -277,7 +280,7 @@ def _write_feature_policy(paths, policy: Dict[str, Any]) -> None:
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
     p = paths.reports_dir / "feature_policy.json"
     p.write_text(json.dumps(policy, indent=2), encoding="utf-8")
-    print(f"  ✅ feature_policy.json written -> {p}")
+    print(f"  [OK] feature_policy.json written -> {p}")
 
 
 def _write_legality_report(
@@ -306,7 +309,7 @@ def _write_legality_report(
         ]
 
     p.write_text("\n".join(lines), encoding="utf-8")
-    print(f"  ✅ legality_report.md written -> {p}")
+    print(f"  [OK] legality_report.md written -> {p}")
 
 
 def run(
@@ -327,7 +330,7 @@ def run(
         print(f"  Loaded monitor data from {monitor_path}")
     else:
         print(
-            f"  ⚠️  zindi_monitor.json not found at {monitor_path} — proceeding with config only"
+            f"  [WARN]  zindi_monitor.json not found at {monitor_path} — proceeding with config only"
         )
 
     # Load config
@@ -336,7 +339,7 @@ def run(
         print(f"  Loaded challenge_config for {cfg.slug}")
     except Exception:
         cfg = None
-        print("  ⚠️  challenge_config.json not available or invalid")
+        print("  [WARN]  challenge_config.json not available or invalid")
 
     # Synthesise feature policy
     policy = synthesise_feature_policy(
@@ -382,7 +385,7 @@ def run(
         patch["dag_phase"] = "phase_2_legality_checked"
 
     store.update(**patch)
-    print(f"  ✅ SKILL_STATE.json updated with legality_status={status}")
+    print(f"  [OK] SKILL_STATE.json updated with legality_status={status}")
 
     result = {
         "status": status,

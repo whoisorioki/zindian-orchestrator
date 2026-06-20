@@ -87,4 +87,4 @@ builtins.open = _patched_open
 json.load = _patched_json_load
 json.dump = _patched_json_dump
 
-print("✓ SKILL_STATE auto-optimization enabled")
+print("[OK] SKILL_STATE auto-optimization enabled")

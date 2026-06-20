@@ -14,7 +14,8 @@ class Ledger:
     def __init__(self, path: str | None = None):
         """Initialize DuckDB connection to ledger."""
         if path is None:
-            self.path = resolve_competition_paths().reports_dir / "experiments.db"
+            comp_paths = resolve_competition_paths()
+            self.path = comp_paths.reports_dir / "experiments.db"
         else:
             self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -22,7 +23,7 @@ class Ledger:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """Create tables if they don't exist."""
+        """Create tables and add any missing columns to existing tables."""
         # Create sequences first
         try:
             self.conn.execute(
@@ -42,6 +43,8 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS experiments (
                 experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
                 branch_name         VARCHAR NOT NULL,
+                oof_score           FLOAT,
+                metric              VARCHAR,
                 oof_rmse            FLOAT,
                 feature_count       INTEGER,
                 calibration_method  VARCHAR,
@@ -53,6 +56,33 @@ class Ledger:
                 created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Safe migration: add columns that may be absent in pre-existing databases.
+        for col_def in (
+            "oof_score FLOAT",
+            "metric VARCHAR",
+        ):
+            col_name = col_def.split()[0]
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE experiments ADD COLUMN IF NOT EXISTS {col_def}"
+                )
+            except Exception:
+                # DuckDB < 0.8 does not support IF NOT EXISTS on ALTER TABLE;
+                # fall back to checking the column list manually.
+                try:
+                    cols = [
+                        r[0]
+                        for r in self.conn.execute(
+                            "PRAGMA table_info('experiments')"
+                        ).fetchall()
+                    ]
+                    if col_name not in cols:
+                        self.conn.execute(
+                            f"ALTER TABLE experiments ADD COLUMN {col_def}"
+                        )
+                except Exception:
+                    pass  # Column already exists — safe to ignore.
 
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS submissions (
@@ -77,7 +107,9 @@ class Ledger:
         self,
         *,
         branch_name: str,
-        oof_rmse: Optional[float] = None,
+        oof_score: Optional[float] = None,
+        metric: Optional[str] = None,
+        oof_rmse: Optional[float] = None,  # deprecated alias — use oof_score instead
         feature_count: Optional[int] = None,
         calibration_method: Optional[str] = None,
         gate_result: str = "PENDING",
@@ -89,20 +121,36 @@ class Ledger:
         """
         Log an experiment (branch training run).
 
+        Args:
+            oof_score:  Generic primary OOF metric value (F1, AUC, RMSE, etc.).
+                        Preferred over the legacy oof_rmse parameter.
+            metric:     Name of the metric stored in oof_score (e.g. "f1", "rmse", "auc").
+            oof_rmse:   Deprecated. Alias for oof_score when metric is 'rmse'.
+                        If oof_score is None and oof_rmse is set, oof_score is populated
+                        from oof_rmse and metric is forced to 'rmse'.
+
         Returns: experiment_id
         """
+        # Backward-compat alias resolution
+        if oof_score is None and oof_rmse is not None:
+            oof_score = oof_rmse
+            metric = metric or "rmse"
+
         cursor = self.conn.execute(
             """
             INSERT INTO experiments (
-                branch_name, oof_rmse, feature_count, calibration_method,
+                branch_name, oof_score, metric, oof_rmse,
+                feature_count, calibration_method,
                 gate_result, gate_reason, md5_target_hash, dag_phase, notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING experiment_id
         """,
             [
                 branch_name,
-                oof_rmse,
+                oof_score,
+                metric,
+                oof_rmse,  # also write to legacy column for any direct SQL queries
                 feature_count,
                 calibration_method,
                 gate_result,
@@ -180,32 +228,56 @@ class Ledger:
         return dict(zip(cols, row))
 
     def get_best_experiment(self) -> Optional[Dict[str, Any]]:
-        """Get experiment with best OOF score per config metric_direction."""
-        # Load config to determine metric direction
+        """Get experiment with best OOF score respecting config metric_direction."""
+        _comp_paths = resolve_competition_paths()
         config_path = (
-            resolve_competition_paths().competition_dir / "challenge_config.json"
+            _comp_paths.competition_dir / "challenge_config.json"
+            if _comp_paths.competition_dir is not None
+            else _comp_paths.config_path
         )
-        with open(config_path) as f:
-            config = json.load(f)
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            metric_direction = config.get("metric_direction", "minimize")
+        except Exception:
+            metric_direction = "minimize"
 
-        metric_direction = config.get("metric_direction", "minimize")
+        # Use oof_score (generic column); fall back to oof_rmse for legacy rows.
         order = "ASC" if metric_direction == "minimize" else "DESC"
-
-        cursor = self.conn.execute(
-            f"SELECT * FROM experiments WHERE oof_rmse IS NOT NULL ORDER BY oof_rmse {order} LIMIT 1"
-        )
+        cursor = self.conn.execute(f"""
+            SELECT * FROM experiments
+            WHERE COALESCE(oof_score, oof_rmse) IS NOT NULL
+            ORDER BY COALESCE(oof_score, oof_rmse) {order}
+            LIMIT 1
+            """)
         row = cursor.fetchone()
         if row is None:
             return None
-
         cols = [desc[0] for desc in cursor.description]
         return dict(zip(cols, row))
 
     def get_passed_experiments(self) -> List[Dict[str, Any]]:
-        """Get all experiments that passed the gate."""
-        cursor = self.conn.execute(
-            "SELECT * FROM experiments WHERE gate_result = 'PASS' ORDER BY oof_rmse ASC"
-        )
+        """Get all experiments that passed the gate, ordered by oof_score.
+
+        Direction-aware: minimize metrics ordered ASC, maximize metrics ordered DESC.
+        Falls back to oof_rmse for legacy rows that predate the oof_score column.
+        """
+        from zindian.config import ChallengeConfig
+
+        try:
+            cfg = ChallengeConfig.load()
+            order = (
+                "ASC"
+                if cfg.get("metric_direction", "minimize") == "minimize"
+                else "DESC"
+            )
+        except Exception:
+            order = "ASC"
+        cursor = self.conn.execute(f"""
+            SELECT * FROM experiments
+            WHERE gate_result = 'PASS'
+            ORDER BY COALESCE(oof_score, oof_rmse) {order}
+            """)
         cols = [desc[0] for desc in cursor.description]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
@@ -238,7 +310,7 @@ class Ledger:
     ) -> None:
         """Mark submission as selected (or deselected) for final private judging."""
         self.conn.execute(
-            """UPDATE submissions 
+            """UPDATE submissions
                SET selected_for_final = ?, selection_rationale = ?
                WHERE submission_id = ?""",
             [selected, rationale, submission_id],

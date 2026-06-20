@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import pytest
 
 
@@ -112,6 +112,9 @@ def test_submit_zero_remaining_budget():
                 "competition": "test-competition",
                 "remaining_submissions": 0,
                 "submissions_used_today": 5,
+                "human_gate_4_approved": True,
+                "human_gate_2_main_approved": True,
+                "anchor_git_branch": "main",
             }
         )
         state_path.write_text(json.dumps(state))
@@ -119,22 +122,24 @@ def test_submit_zero_remaining_budget():
         config = {"slug": "test-competition", "daily_limit": 5}
         config_path.write_text(json.dumps(config))
 
-        # Create dummy submission file
-        submission_file.write_text("id,prediction\n1,0.5\n2,0.7\n")
+        # Create dummy submission and sample files
+        submission_file.write_text("id,Target\n1,0.5\n2,0.7\n")
+        raw_dir = Path(tmpdir) / "data" / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "SampleSubmission.csv").write_text("id,Target\n1,0.5\n2,0.7\n")
 
         with patch(
             "zindian.skills.skill_16_submit.resolve_competition_paths"
         ) as mock_paths:
             mock_paths.return_value.state_path = state_path
             mock_paths.return_value.competition_dir = Path(tmpdir)
+            mock_paths.return_value.data_raw_dir = raw_dir
 
             # Should abort before attempting submission
-            result = submit_run(config, state, str(submission_file))
-            # Check if aborted due to budget
-            assert (
-                result.get("status") in ["aborted", "error"]
-                or result.get("remaining_submissions") == 0
-            )
+            from zindian.skills.skill_16_submit import HardAbortException
+
+            with pytest.raises(HardAbortException, match="zero submissions remaining"):
+                submit_run(str(submission_file), state)
 
 
 def test_ledger_query_sql_injection():

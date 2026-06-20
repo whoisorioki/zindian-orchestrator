@@ -1,19 +1,23 @@
-"""Skill 15 — Reporter: Event Logger and Phase Summary Generator.
+"""Skill 15 - Reporter: Event Logger and Phase Summary Generator.
 
 Phase 1. Logs pipeline events, generates phase summaries, and initialises
 session-scoped log files.
 
-Phase contract (SoT §Phase 1):
-    skill_01 → skill_02 → skill_03 → skill_04 → skill_05 → skill_15
+Phase 2B / 3B. Generates consolidated Markdown branch-metric summaries from
+SKILL_STATE.json via `run_phase_summary(phase)`.
+
+Phase contract (SoT Phase 1):
+    skill_01 -> skill_02 -> skill_03 -> skill_04 -> skill_05 -> skill_15
 
 Reads:
-    config["task_type"]          — used for semantic mapping in event data
-    state["dag_phase"]           — current pipeline phase
+    config["task_type"]          -- used for semantic mapping in event data
+    state["dag_phase"]           -- current pipeline phase
     state["submissions_used_today"], state["submissions_used_total"]
 
 Writes:
-    state["last_reported"]       — timestamp of last report generation
-    reports/{phase}_summary.json — per-phase summary files
+    state["last_reported"]       -- timestamp of last report generation
+    reports/{phase}_summary.json -- per-phase summary files
+    reports/phase_{2b,3b}_summary.md -- Phase 2B / 3B Markdown branch summaries
 
 Does NOT write:
     - Does NOT write to long-term history_log.jsonl during initialisation
@@ -33,7 +37,7 @@ from zindian.ledger import Ledger
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
-# ── Session-scoped event logging ────────────────────────────────────
+# -- Session-scoped event logging ------------------------------------
 
 
 def _log_startup_event(
@@ -51,7 +55,7 @@ def _log_startup_event(
         f.write(json.dumps(event_data) + "\n")
 
 
-# ── Semantic metric mapping ─────────────────────────────────────────
+# -- Semantic metric mapping -----------------------------------------
 
 
 def _metric_display_name(task_type: Optional[str]) -> str:
@@ -77,7 +81,7 @@ def _task_type_display(task_type: Optional[str]) -> str:
     return mapping.get(task_type or "", "Unknown")
 
 
-# ── Entry point ─────────────────────────────────────────────────────
+# -- Entry point -----------------------------------------------------
 
 
 def run(
@@ -136,7 +140,7 @@ def run(
             except Exception:
                 sub_count = 0
 
-        # ── Session-scoped startup logging ─────────────────────────
+        # -- Session-scoped startup logging -------------------------
         # Route startup events to session-scoped files, NOT history_log.jsonl
         session_dir = paths.reports_dir / "sessions"
         session_start = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -161,7 +165,7 @@ def run(
         }
         _log_startup_event(session_log_path, startup_event)
 
-        # ── Generate phase summary report ──────────────────────────
+        # -- Generate phase summary report --------------------------
         report_path = paths.reports_dir / "phase_1_summary.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -219,7 +223,7 @@ def run(
             except Exception:
                 return str(p)
 
-        # ── Phase transition event (session-scoped) ────────────────
+        # -- Phase transition event (session-scoped) ----------------
         phase_event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": "phase_1_summary_generated",
@@ -269,6 +273,218 @@ def run(
             "message": f"Skill 15 failed: {str(e)}",
             "traceback": traceback.format_exc(),
         }
+
+
+# -- Phase 2B / 3B Markdown summary --------------------------------
+
+
+def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
+    """
+    Generate a consolidated Markdown summary of branch metrics for Phase 2B or 3B.
+
+    Reads SKILL_STATE.json and writes reports/phase_{phase}_summary.md.
+    Safe to call multiple times -- overwrites the previous report.
+
+    Args:
+        phase: One of "2b" or "3b" (case-insensitive).
+
+    Returns:
+        Status dict with report path and key metric counts.
+    """
+    import numpy as np
+
+    phase = phase.lower().strip()
+    if phase not in ("2b", "3b"):
+        return {
+            "status": "ERROR",
+            "message": f"Unknown phase '{phase}'. Use '2b' or '3b'.",
+        }
+
+    paths = resolve_competition_paths()
+    state_store = SkillStateStore(paths.state_path)
+    state = state_store.read()
+
+    try:
+        config = ChallengeConfig.load(str(paths.config_path))
+        competition = config.slug or "unknown"
+        metric_name = str(config.get("metric", "score")).lower()
+        metric_direction = str(config.get("metric_direction", "maximize")).lower()
+        task_type = str(config.get("task_type", "classification")).lower()
+    except Exception:
+        competition = "unknown"
+        metric_name = "score"
+        metric_direction = "maximize"
+        task_type = "classification"
+
+    now = datetime.now(timezone.utc).isoformat()
+    lines: list[str] = []
+
+    if phase == "2b":
+        lines += [
+            "# Phase 2B Branch Metrics Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Metric:** `{metric_name}` ({metric_direction})  ",
+            f"**Task type:** {task_type}  ",
+            f"**Generated:** {now}  ",
+            "",
+        ]
+
+        # Anchor baseline
+        anchor = state.get("anchor_oof_score")
+        anchor_branch = state.get("anchor_git_branch", "anchor-baseline")
+        if anchor is not None:
+            lines.append(f"**Anchor baseline ({anchor_branch}):** `{anchor:.6f}`  ")
+            lines.append("")
+
+        # Collect all branch OOF records from state
+        branch_rows: list[dict] = []
+        for key, val in state.items():
+            if not (key.startswith("branch_") and key.endswith("_oof")):
+                continue
+            if not isinstance(val, dict):
+                continue
+            branch_name = val.get("branch_name") or key.removeprefix(
+                "branch_"
+            ).removesuffix("_oof")
+            # scores field holds OOF predictions, not fold scores -- check model_config
+            model_cfg = val.get("model_config") or {}
+            fold_scores_raw = model_cfg.get("fold_scores") or []
+            cv_id = val.get("cv_strategy_id", "")
+            if fold_scores_raw and len(fold_scores_raw) > 1:
+                variance = float(np.var(fold_scores_raw, ddof=1))
+                mean_fold = float(np.mean(fold_scores_raw))
+            else:
+                variance = None
+                mean_fold = None
+            branch_rows.append(
+                {
+                    "branch": branch_name,
+                    "cv_id": cv_id,
+                    "mean_fold": mean_fold,
+                    "variance": variance,
+                    "fold_scores": fold_scores_raw,
+                }
+            )
+
+        # Gate results
+        gate_result = state.get("gate_result", {})
+        gate_summary = state.get("gate_summary", "")
+        best_branch = state.get("best_variant_branch") or state.get(
+            "best_variant_this_round"
+        )
+
+        lines.append("## Branch OOF Records")
+        lines.append("")
+        if not branch_rows:
+            lines.append("_No branch OOF records found in SKILL_STATE._")
+        else:
+            lines.append(
+                "| Branch | CV Strategy | Mean Fold Score | Fold Variance (ddof=1) | Fold Scores |"
+            )
+            lines.append(
+                "|--------|-------------|-----------------|----------------------|-------------|"
+            )
+            for row in branch_rows:
+                mean_s = (
+                    f"{row['mean_fold']:.6f}" if row["mean_fold"] is not None else "N/A"
+                )
+                var_s = (
+                    f"{row['variance']:.6g}" if row["variance"] is not None else "N/A"
+                )
+                fs = (
+                    ", ".join(f"{s:.4f}" for s in row["fold_scores"])
+                    if row["fold_scores"]
+                    else "N/A"
+                )
+                lines.append(
+                    f"| `{row['branch']}` | {row['cv_id']} | {mean_s} | {var_s} | {fs} |"
+                )
+        lines.append("")
+
+        if best_branch:
+            lines.append(f"**Promoted branch:** `{best_branch}`  ")
+        if gate_summary:
+            lines.append(f"**Gate summary:** {gate_summary}  ")
+        if isinstance(gate_result, dict):
+            gate_pass = gate_result.get("gate", "")
+            gate_reason = gate_result.get("reason", "")
+            if gate_pass:
+                lines.append(f"**Gate result:** `{gate_pass}`  ")
+            if gate_reason:
+                lines.append(f"**Gate reason:** {gate_reason}  ")
+        lines.append("")
+
+    elif phase == "3b":
+        lines += [
+            "# Phase 3B SHAP + Calibration Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Generated:** {now}  ",
+            "",
+        ]
+
+        # SHAP section
+        shap_top = state.get("shap_top_features", [])
+        shap_count = state.get("shap_feature_count")
+        pruning_delta = state.get("pruning_delta_f1")
+        pruning_pass = state.get("pruning_pass")
+        shap_skipped = state.get("shap_audit_skipped_reason")
+
+        lines.append("## SHAP Audit")
+        lines.append("")
+        if shap_skipped:
+            lines.append(f"**Skipped:** `{shap_skipped}`  ")
+        else:
+            if shap_count is not None:
+                lines.append(f"**Features audited:** {shap_count}  ")
+            if pruning_delta is not None:
+                lines.append(f"**Pruning delta:** `{pruning_delta:+.6f}`  ")
+            if pruning_pass is not None:
+                lines.append(
+                    f"**Pruning gate:** `{'PASS' if pruning_pass else 'PRUNE'}`  "
+                )
+            if shap_top:
+                lines.append("")
+                lines.append("**Top SHAP features:**")
+                for i, feat in enumerate(shap_top[:10], 1):
+                    lines.append(f"{i}. `{feat}`")
+        lines.append("")
+
+        # Calibration section
+        cal_method = state.get("calibration_method")
+        cal_branch = state.get("calibration_candidate_branch")
+        cal_cv_id = state.get("calibration_oof_cv_strategy_id")
+        cal_at = state.get("calibration_written_at")
+
+        lines.append("## Calibration")
+        lines.append("")
+        if cal_method:
+            lines.append(f"**Method:** `{cal_method}`  ")
+        if cal_branch:
+            lines.append(f"**Source branch:** `{cal_branch}`  ")
+        if cal_cv_id:
+            lines.append(f"**CV strategy ID:** `{cal_cv_id}`  ")
+        if cal_at:
+            lines.append(f"**Written at:** {cal_at}  ")
+        lines.append("")
+
+    # Write report
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    report_filename = f"phase_{phase}_summary.md"
+    report_path = paths.reports_dir / report_filename
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Update SKILL_STATE
+    state_store.update(last_reported=now)
+
+    print(f"[OK] Phase {phase.upper()} summary -> {report_path}")
+    return {
+        "status": "OK",
+        "phase": phase,
+        "report_path": str(report_path),
+        "branch_count": len(branch_rows) if phase == "2b" else None,
+    }
 
 
 if __name__ == "__main__":

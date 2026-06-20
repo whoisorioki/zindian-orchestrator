@@ -14,6 +14,13 @@ lightgbm
 shap
 duckdb
 pyarrow
+scipy
+xgboost
+pydantic
+planetary-computer
+pystac-client
+rasterio
+xarray
 
 # Optional / research
 google-genai

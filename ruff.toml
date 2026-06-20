@@ -1,0 +1,8 @@
+[lint]
+select = ["E", "F", "W"]
+# E501: line-too-long — black handles line length; ruff E501 conflicts with black's
+# intentional long lines (docstrings, URLs, f-strings). Suppress to match black behavior.
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+"tests/*" = ["F841"]

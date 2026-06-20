@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# ── Prerequisite gate keys ──────────────────────────────────────────
+# -- Prerequisite gate keys ------------------------------------------
 
 PREREQUISITE_GATES = [
     "human_gate_1_approved",  # Anchor evaluation before variant generation
@@ -42,7 +42,7 @@ PREREQUISITE_GATES = [
 FINAL_GATE_KEY = "human_gate_5_selection"  # Final private LB pair
 
 
-# ── Submission lock ─────────────────────────────────────────────────
+# -- Submission lock -------------------------------------------------
 
 
 def _apply_structural_lock(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -62,7 +62,7 @@ def _is_locked(state: Dict[str, Any]) -> bool:
     return bool(state.get("selected_submissions_final", False))
 
 
-# ── Gate verification ──────────────────────────────────────────────
+# -- Gate verification ----------------------------------------------
 
 
 def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
@@ -115,7 +115,7 @@ def _verify_final_gate(state: Dict[str, Any]) -> Optional[str]:
     return f"Gate '{FINAL_GATE_KEY}' has invalid type: {type(gate_entry)}"
 
 
-# ── Human selection prompt ──────────────────────────────────────────
+# -- Human selection prompt ------------------------------------------
 
 
 def _human_selection_prompt(
@@ -157,15 +157,15 @@ def _human_selection_prompt(
         try:
             parts = resp.split()
             if len(parts) != 2:
-                print("❌ Need exactly 2 indices. Try again.")
+                print("[FAIL] Need exactly 2 indices. Try again.")
                 continue
             idx1, idx2 = int(parts[0]), int(parts[1])
             if idx1 == idx2:
-                print("❌ Select 2 different submissions. Try again.")
+                print("[FAIL] Select 2 different submissions. Try again.")
                 continue
             sel = [scored_subs[idx1], scored_subs[idx2]]
         except (ValueError, IndexError) as e:
-            print(f"❌ {e}. Try again.")
+            print(f"[FAIL] {e}. Try again.")
             continue
 
         print("\nYou selected:")
@@ -180,7 +180,7 @@ def _human_selection_prompt(
         print("Re-selecting...")
 
 
-# ── Convenience: fetch from API (competition-specific) ─────────────
+# -- Convenience: fetch from API (competition-specific) -------------
 
 
 def _fetch_mock_scored_subs() -> List[Dict[str, Any]]:
@@ -196,10 +196,12 @@ def _fetch_mock_scored_subs() -> List[Dict[str, Any]]:
     ]
 
 
-# ── Main entry point ───────────────────────────────────────────────
+# -- Main entry point -----------------------------------------------
 
 
-def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str, Any]:
+def run(
+    config: Dict[str, Any] | None = None, state: Dict[str, Any] | None = None
+) -> Dict[str, Any]:
     """Run the submission governance skill.
 
     Phase contract: Verifies all prerequisite human gates, surfaces
@@ -212,7 +214,7 @@ def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str
     from zindian.paths import resolve_competition_paths
     from zindian.config import ChallengeConfig
     from zindian.state import SkillStateStore
-    
+
     if config is None or state is None:
         paths = resolve_competition_paths()
         if config is None:
@@ -220,10 +222,9 @@ def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str
         if state is None:
             state = SkillStateStore(paths.state_path).read()
 
-    Returns:
-        Updated state dict with final selections and structural lock.
-    """
-    # ── Check structural lock ──────────────────────────────────────
+    # Returns:
+    #     Updated state dict with final selections and structural lock.
+    # -- Check structural lock --------------------------------------
     if _is_locked(state):
         print(
             "SKILL 17 — Structural lock active. "
@@ -231,16 +232,16 @@ def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str
         )
         return state
 
-    # ── Verify prerequisite gates ──────────────────────────────────
+    # -- Verify prerequisite gates ----------------------------------
     missing_gates = _verify_prerequisite_gates(state)
     if missing_gates:
         raise RuntimeError(
             f"Missing prerequisite human gate approvals in SKILL_STATE.json: "
             f"{missing_gates}. All gates 1-4 must be approved before Gate 5."
         )
-    print("✅ All prerequisite human gates (1-4) confirmed.")
+    print("[OK] All prerequisite human gates (1-4) confirmed.")
 
-    # ── Check submissions are available ────────────────────────────
+    # -- Check submissions are available ----------------------------
     # In production, scored submissions come from the orchestrator
     # via state or from an API client.
     scored_subs: List[Dict[str, Any]] = state.get(
@@ -249,26 +250,26 @@ def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str
     )
 
     if not scored_subs:
-        print("❌ No scored submissions available for selection.")
+        print("[FAIL] No scored submissions available for selection.")
         return state
 
-    print(f"✅ {len(scored_subs)} scored submissions available.")
+    print(f"[OK] {len(scored_subs)} scored submissions available.")
 
-    # ── Check final gate ───────────────────────────────────────────
+    # -- Check final gate -------------------------------------------
     final_gate_issue = _verify_final_gate(state)
     if final_gate_issue:
-        print(f"ℹ️  {final_gate_issue}")
+        print(f"[INFO]  {final_gate_issue}")
         # Gate 5 is resolved through the interactive prompt below
 
-    # ── Prompt human operator (Gate 5) ─────────────────────────────
+    # -- Prompt human operator (Gate 5) -----------------------------
     current_selections = state.get("selected_submissions", [])
     selections = _human_selection_prompt(scored_subs, current_selections)
 
     if not selections:
-        print("❌ No selections made. Governance gate not passed.")
+        print("[FAIL] No selections made. Governance gate not passed.")
         return state
 
-    # ── Apply structural lock ──────────────────────────────────────
+    # -- Apply structural lock --------------------------------------
     state["selected_submissions"] = selections
     state = _apply_structural_lock(state)
     state[FINAL_GATE_KEY] = {
@@ -297,7 +298,7 @@ def run(config: Dict[str, Any] = None, state: Dict[str, Any] = None) -> Dict[str
         encoding="utf-8",
     )
 
-    print("✅ SKILL 17 COMPLETE")
+    print("[OK] SKILL 17 COMPLETE")
     print(f"   Selected: {[s.get('filename') for s in selections]}")
     print(f"   Report : {report_path}")
     print("   Structural lock applied — selected_submissions is final.")

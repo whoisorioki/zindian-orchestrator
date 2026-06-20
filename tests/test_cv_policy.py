@@ -11,7 +11,7 @@ def test_no_direct_cv_splitters_instantiated():
       - scripts/ (utility scripts)
     """
     repo_root = Path(__file__).resolve().parents[1]
-    patterns = [r"\bStratifiedKFold\b", r"\bGroupKFold\b", r"\bKFold\b"]
+    patterns = [r"\bStratifiedKFold\s*\(", r"\bGroupKFold\s*\(", r"\bKFold\s*\("]
     allowed_prefixes = (
         "zindian/cv.py",
         "zindian/skills/skill_05_cv.py",

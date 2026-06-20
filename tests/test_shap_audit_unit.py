@@ -24,8 +24,9 @@ def test_compute_shap_audit_monkeypatch(monkeypatch):
             return probs
 
     monkeypatch.setattr(
-        shap_mod, "_train_shap_fold_model", lambda a, b, c, d, seed: FakeModel()
+        shap_mod, "_train_shap_fold_model", lambda *args, **kwargs: FakeModel()
     )
+    monkeypatch.setattr(shap_mod.ChallengeConfig, "load", lambda *args, **kwargs: None)
 
     # Fake SHAP explainer that returns constant positive values
     class FakeExplainer:

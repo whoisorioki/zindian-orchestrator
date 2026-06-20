@@ -88,7 +88,7 @@ def test_run_raises_before_guessing_target(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
 
-    with pytest.raises(ValueError, match="will not guess a target column"):
+    with pytest.raises(ValueError, match="Unable to resolve target column"):
         run()
 
     assert not (competition_dir / "reports" / "eda_report.json").exists()

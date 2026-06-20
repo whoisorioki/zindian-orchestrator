@@ -43,7 +43,7 @@ def test_monitor_writes_community_signals_to_state_only():
         comp_intel = {"metric": "rmsle", "external_banned": True}
         lb_intel = {"my_rank": 25, "remaining": 3}
         sub_intel = {"best_score": 0.552}
-        flagged = [
+        flagged: list[dict] = [
             {
                 "title": "External data clarification",
                 "published": "2024-01-15",
@@ -53,7 +53,7 @@ def test_monitor_writes_community_signals_to_state_only():
                 "resolved_by_organizer": True,
             }
         ]
-        all_discussions = [{"title": "Test", "published_at": "2024-01-15"}]
+        all_discussions: list[dict] = [{"title": "Test", "published_at": "2024-01-15"}]
 
         # Call update_state
         with patch("zindian.zindi_monitor_core.ChallengeConfig") as mock_config:
@@ -108,8 +108,8 @@ def test_monitor_does_not_write_compliance_to_state():
         comp_intel = {"metric": "rmsle"}
         lb_intel = {"my_rank": 25, "remaining": 3}
         sub_intel = {"best_score": 0.552}
-        flagged = []
-        all_discussions = []
+        flagged: list[dict] = []
+        all_discussions: list[dict] = []
 
         with patch("zindian.zindi_monitor_core.ChallengeConfig") as mock_config:
             mock_config.load.return_value = config
@@ -157,8 +157,8 @@ def test_monitor_preserves_existing_state_fields():
         comp_intel = {"metric": "rmsle"}
         lb_intel = {"my_rank": 30, "remaining": 2}
         sub_intel = {"best_score": 0.560}
-        flagged = []
-        all_discussions = []
+        flagged: list[dict] = []
+        all_discussions: list[dict] = []
 
         with patch("zindian.zindi_monitor_core.ChallengeConfig") as mock_config:
             mock_config.load.return_value = config

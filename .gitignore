@@ -33,6 +33,8 @@ __pycache__/
 .ipynb_checkpoints/
 *.egg-info/
 *.mypy_cache
+.coverage
+*.duckdb
 
 ## Debug artifacts
 opencode_output.txt

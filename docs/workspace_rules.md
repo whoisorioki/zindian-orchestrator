@@ -52,12 +52,15 @@ zindian_orchestrator/
 │   ├── zindi_client.py       # Zindi API client
 │   ├── clients/              # External API clients
 │   │   └── semantic_scholar.py
-│   └── skills/               # All skill modules (22 skills)
+│   └── skills/               # All skill modules (25 files across 23 slots)
 │       ├── __init__.py       # Single line: """Skill modules (competition-aware)."""
 │       ├── _lightgbm_shared.py  # Private shared helper (leading underscore)
-│       ├── skill_00_zindi_monitor.py
+│       ├── skill_00_discussion_monitor.py  # skill_00 variant 1
+│       ├── skill_00_zindi_monitor.py       # skill_00 variant 2
 │       ├── skill_01_integrity.py
 │       ├── ... (skill_NN_name.py)
+│       ├── skill_13_ensemble.py            # skill_13 compatibility shim
+│       ├── skill_13_oracle_fusion.py       # skill_13 core implementation
 │       ├── skill_22_reproducibility_audit.py
 │       └── skill_NN_reference.md  # Reference docs (paired with some skills)
 ├── tests/                    # All tests (flat, no subdirectories)

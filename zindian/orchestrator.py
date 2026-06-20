@@ -14,9 +14,23 @@ import zindian.skills as skills_pkg
 # Phase definitions (names correspond to module prefixes `skill_XX`)
 # SoT v2.2.1 specifies 6 sub-phases: 1, 2A, 2B, 3A, 3B, 4
 # skill_03 is split: policy_writer() runs in Phase 1, policy_gate() runs first in Phase 2A
-PHASE_1_SKILLS = ["skill_01", "skill_02", "skill_03.policy_writer", "skill_04", "skill_05", "skill_15"]
-PHASE_2A_SKILLS = ["skill_03.policy_gate", "skill_06"]  # Policy gate runs FIRST, then data cleaning
-PHASE_2B_SKILLS = ["skill_08", "skill_07"]  # Anchor then feature engineering
+PHASE_1_SKILLS = [
+    "skill_01",
+    "skill_02",
+    "skill_03.policy_writer",
+    "skill_04",
+    "skill_05",
+    "skill_15",
+]
+PHASE_2A_SKILLS = [
+    "skill_03.policy_gate",
+    "skill_06",
+]  # Policy gate runs FIRST, then data cleaning
+PHASE_2B_SKILLS = [
+    "skill_07",
+    "skill_08",
+    "skill_07",
+]  # Feature extraction, then anchor baseline, then variant training
 PHASE_3A_SKILLS = ["skill_10", "skill_09", "skill_12"]  # Generalization audit
 PHASE_3B_SKILLS = ["skill_11", "skill_21", "skill_13"]  # Promotion and fusion
 PHASE_4_SKILLS = ["skill_14", "skill_16", "skill_17", "skill_22"]  # Governance
@@ -51,9 +65,7 @@ def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
                 if prefix in registry:
                     # Resolve precedence for dual-file skills
                     existing_mod = registry[prefix][1]
-                    existing_name = (
-                        existing_mod.__name__.split(".")[-1] if existing_mod else ""
-                    )
+                    _ = existing_mod.__name__.split(".")[-1] if existing_mod else ""
                     if prefix == "skill_13" and name == "skill_13_oracle_fusion":
                         registry[prefix] = (desc, mod)
                     elif prefix == "skill_00" and name == "skill_00_zindi_monitor":
@@ -186,11 +198,11 @@ def run_skill(
     """
     import time
     import tracemalloc
-    
+
     # Start telemetry
     start_time = time.time()
     tracemalloc.start()
-    
+
     # Handle split function notation (e.g., "skill_03.policy_writer")
     if "." in skill_name:
         base_skill, func_name = skill_name.split(".", 1)
@@ -199,35 +211,46 @@ def run_skill(
                 "status": "ERROR",
                 "message": f"Unknown skill: {base_skill}. Available: {list(SKILL_REGISTRY.keys())}",
             }
-        
+
         description, skill_module = SKILL_REGISTRY[base_skill]
-        
+
         if skill_module is None:
             return {
                 "status": "ERROR",
                 "message": f"Skill {base_skill} ({description}) not loaded",
             }
-        
+
         # Call the specific function
         if not hasattr(skill_module, func_name):
             return {
                 "status": "ERROR",
                 "message": f"Skill {base_skill} has no function {func_name}",
             }
-        
+
         try:
             func = getattr(skill_module, func_name)
-            result = func(**kwargs)
+            import inspect
+
+            sig = inspect.signature(func)
+            has_var_keyword = any(
+                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            filtered_kwargs = (
+                kwargs
+                if has_var_keyword
+                else {k: v for k, v in kwargs.items() if k in sig.parameters}
+            )
+            result = func(**filtered_kwargs)
         except Exception as e:
             import traceback
             from .config import ConfigNotPopulated
-            
+
             # Graceful diagnostics for configuration errors
             if isinstance(e, ConfigNotPopulated):
                 print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
             elif isinstance(e, KeyError):
                 print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
-            
+
             result = {
                 "status": "ERROR",
                 "message": f"Skill {skill_name} failed: {str(e)}",
@@ -250,41 +273,52 @@ def run_skill(
             }
 
         try:
-            result = skill_module.run(**kwargs)
+            import inspect
+
+            sig = inspect.signature(skill_module.run)
+            has_var_keyword = any(
+                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            filtered_kwargs = (
+                kwargs
+                if has_var_keyword
+                else {k: v for k, v in kwargs.items() if k in sig.parameters}
+            )
+            result = skill_module.run(**filtered_kwargs)
         except Exception as e:
             import traceback
             from .config import ConfigNotPopulated
-            
+
             # Graceful diagnostics for configuration errors
             if isinstance(e, ConfigNotPopulated):
                 print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
             elif isinstance(e, KeyError):
                 print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
-            
+
             result = {
                 "status": "ERROR",
                 "message": f"Skill {skill_name} failed: {str(e)}",
                 "traceback": traceback.format_exc(),
             }
-    
+
     # Stop telemetry
     duration_sec = time.time() - start_time
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     peak_memory_mb = peak / 1024 / 1024
-    
+
     # Normalize result
     if result is None or not isinstance(result, dict):
         result = {"status": "COMPLETED"}
     elif "status" not in result:
         result["status"] = "COMPLETED"
-    
+
     # Add telemetry
     result["telemetry"] = {
         "duration_sec": round(duration_sec, 2),
-        "peak_memory_mb": round(peak_memory_mb, 2)
+        "peak_memory_mb": round(peak_memory_mb, 2),
     }
-    
+
     return result
 
 
@@ -307,30 +341,35 @@ def run_phase(
         from .config import ChallengeConfig
         from .state import SkillStateStore
         from .paths import resolve_competition_paths
-        
+
         paths = resolve_competition_paths(require_competition=False)
         config = ChallengeConfig.load()
         store = SkillStateStore(paths.state_path)
         state = store.read()
-    except Exception as e:
+    except Exception:
         config = None
         state = {}
         store = None
         paths = None
-    
+
     # Enforce phase dependencies (Principle 4)
     try:
         if not paths:
             from .paths import resolve_competition_paths
+
             paths = resolve_competition_paths(require_competition=False)
         if not store and paths.state_path.exists():
             from .state import SkillStateStore
+
             store = SkillStateStore(paths.state_path)
             state = store.read()
-            
+
             # Phase dependency checks - block execution if prerequisites not met
             if phase == "2A":
-                if not state.get("phase_1_complete") and state.get("dag_phase") != "phase_1_complete":
+                if (
+                    not state.get("phase_1_complete")
+                    and state.get("dag_phase") != "phase_1_complete"
+                ):
                     return {
                         "status": "ERROR",
                         "message": "Phase 2A blocked: Phase 1 must complete first",
@@ -366,7 +405,7 @@ def run_phase(
                     }
     except Exception:
         pass  # Allow execution if state check fails (INIT mode)
-    
+
     # Prefer configured phase map if present; otherwise fall back to hardcoded lists
     try:
         from .config import ChallengeConfig
@@ -407,27 +446,43 @@ def run_phase(
                 # Load policy and planned_features for policy_gate
                 try:
                     import json
-                    policy_path = paths.reports_dir / "feature_policy.json"
-                    if policy_path.exists():
-                        policy = json.loads(policy_path.read_text())
-                        skill_kwargs["policy"] = policy
+
+                    if paths is not None:
+                        policy_path = paths.reports_dir / "feature_policy.json"
+                        if policy_path.exists():
+                            policy = json.loads(policy_path.read_text())
+                            skill_kwargs["policy"] = policy
                     skill_kwargs["planned_features"] = state.get("planned_features", [])
+                    pass
                 except Exception:
                     pass
+            elif skill_name == "skill_03.policy_writer":
+                skill_kwargs["monitor_data"] = (
+                    state.get("monitor_data", state.get("community_signals", {})) or {}
+                )
+                skill_kwargs["config"] = config._data if config else {}
+                skill_kwargs["flagged_titles"] = state.get("flagged_titles", []) or []
             elif skill_name == "skill_06":
                 # Materialize feature matrices for skill_06
                 import pandas as pd
-                
-                train_path = paths.data_raw_dir / "Train.csv"
-                test_path = paths.data_raw_dir / "Test.csv"
-                
+
+                if paths is not None:
+                    train_path = paths.data_raw_dir / "Train.csv"
+                    test_path = paths.data_raw_dir / "Test.csv"
+                else:
+                    from zindian.paths import resolve_competition_paths as _rcp
+
+                    _p = _rcp()
+                    train_path = _p.data_raw_dir / "Train.csv"
+                    test_path = _p.data_raw_dir / "Test.csv"
+
                 df_train = pd.read_csv(train_path)
                 df_test = pd.read_csv(test_path)
-                
+
                 # Extract target columns dynamically from config
                 target_cols = []
                 id_col = config._data.get("id_col", "ID") if config else "ID"
-                
+
                 if config:
                     target_config = config._data.get("target_config")
                     if target_config and isinstance(target_config, dict):
@@ -440,24 +495,25 @@ def run_phase(
                             if value:
                                 target_cols.append(str(value))
                                 break
-                
+
                 # Separate targets and create feature matrices
-                y_train = df_train[target_cols].copy() if target_cols else None
                 X_train = df_train.drop(columns=[id_col] + target_cols, errors="ignore")
                 X_test = df_test.drop(columns=[id_col], errors="ignore")
-                
+
                 # Pass to skill_06
                 skill_kwargs["config"] = config._data if config else {}
                 skill_kwargs["state"] = {**state, "X_train": X_train, "X_test": X_test}
-            
+
             result = run_skill(skill_name, **skill_kwargs)
             results[skill_name] = result
-            
+
             # Print telemetry
             telemetry = result.get("telemetry", {})
             if telemetry:
-                print(f"  ⏱️  Time: {telemetry.get('duration_sec', 0)}s | 💾 Peak RAM: {telemetry.get('peak_memory_mb', 0)}MB")
-            
+                print(
+                    f"  Time: {telemetry.get('duration_sec', 0)}s | Peak RAM: {telemetry.get('peak_memory_mb', 0)}MB"
+                )
+
             # Store telemetry in state
             try:
                 if store:
@@ -470,16 +526,18 @@ def run_phase(
                 "status": "SKIPPED",
                 "message": f"Skill {skill_name} not yet implemented",
             }
-    
+
     # Mark phase complete in state
     try:
         from .state import SkillStateStore
         from .paths import resolve_competition_paths
-        
+
         paths = resolve_competition_paths(require_competition=False)
         if paths.state_path.exists():
             store = SkillStateStore(paths.state_path)
-            phase_key = f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
+            phase_key = (
+                f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
+            )
             store.update(**{phase_key: True})
     except Exception:
         pass

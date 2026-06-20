@@ -4,6 +4,7 @@ Loads and aggregates transactions, financials, and demographics parquet files
 using DuckDB and pandas, factorizes categorical columns, joins everything,
 and saves the output to the processed data directory.
 """
+
 from __future__ import annotations
 
 import os
@@ -13,7 +14,11 @@ import pandas as pd
 
 try:
     orig_path = sys.path.copy()
-    sys.path = [p for p in sys.path if p not in ("", ".", os.getcwd(), os.path.abspath(os.getcwd()))]
+    sys.path = [
+        p
+        for p in sys.path
+        if p not in ("", ".", os.getcwd(), os.path.abspath(os.getcwd()))
+    ]
     if "duckdb" in sys.modules:
         del sys.modules["duckdb"]
     import duckdb
@@ -31,10 +36,30 @@ class NedbankExtractor(FeatureExtractor):
         self, raw_data_dir: Path, config: dict
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Extract features from Nedbank raw data."""
-        return extract(type('Paths', (), {
-            'data_raw_dir': raw_data_dir,
-            'data_processed_dir': raw_data_dir.parent / 'processed'
-        })(), raw_data_dir / "plugin_data.tiff", ChallengeConfig(config))
+        from zindian.config import ChallengeConfig
+
+        _paths = type(
+            "Paths",
+            (),
+            {
+                "data_raw_dir": raw_data_dir,
+                "data_processed_dir": raw_data_dir.parent / "processed",
+            },
+        )()
+        # Load ChallengeConfig from the default path; pass config dict as fallback
+        try:
+            _cfg = ChallengeConfig.load()
+        except Exception:
+            # Construct a minimal ChallengeConfig from the provided dict
+            import tempfile
+            import json as _json
+            from pathlib import Path as _Path
+
+            _tmp = _Path(tempfile.mktemp(suffix=".json"))
+            _tmp.write_text(_json.dumps(config))
+            _cfg = ChallengeConfig(path=_tmp, _data=config)
+        tiff_path = raw_data_dir / "plugin_data.tiff"
+        return extract(_paths, tiff_path, _cfg)
 
 
 def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
@@ -45,7 +70,9 @@ def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
     return tiff_path
 
 
-def extract(paths, tiff_path: Path, config: ChallengeConfig) -> tuple[pd.DataFrame, pd.DataFrame]:
+def extract(
+    paths, tiff_path: Path, config: ChallengeConfig
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load raw datasets, aggregate via DuckDB, join, and save to processed directory."""
     out_train = paths.data_processed_dir / "features_train.csv"
     out_test = paths.data_processed_dir / "features_test.csv"
@@ -91,7 +118,9 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig) -> tuple[pd.DataFra
     demo_df = pd.read_parquet(f"{raw_dir}/demographics_clean.parquet")
 
     # Calculate Age from BirthDate
-    demo_df["Age"] = 2015 - pd.to_datetime(demo_df["BirthDate"], errors="coerce").dt.year
+    demo_df["Age"] = (
+        2015 - pd.to_datetime(demo_df["BirthDate"], errors="coerce").dt.year
+    )
     demo_df["Age"] = demo_df["Age"].fillna(demo_df["Age"].median())
     demo_df = demo_df.drop(columns=["BirthDate"])
 
@@ -119,7 +148,9 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig) -> tuple[pd.DataFra
     test_feat = test_feat.merge(fin_df, on="UniqueID", how="left")
 
     # Fill NaNs with 0
-    target_col = config.get("target_col") or config.get("target_column") or "next_3m_txn_count"
+    target_col = (
+        config.get("target_col") or config.get("target_column") or "next_3m_txn_count"
+    )
     for col in train_feat.columns:
         if col not in ("UniqueID", target_col):
             train_feat[col] = train_feat[col].fillna(0.0)

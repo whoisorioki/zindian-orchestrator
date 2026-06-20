@@ -18,7 +18,7 @@ The orchestrator is now a dynamic skill runner rather than a static import list.
 
 ### Phase layout in the orchestrator
 
-The built-in phase map for execution dispatch currently is:
+The built-in phase map for execution dispatch (legacy default, see SoT for canonical) currently is:
 
 - Phase 1: `skill_01`, `skill_02`, `skill_15`
 - Phase 2: `skill_03`, `skill_08`
@@ -27,6 +27,8 @@ The built-in phase map for execution dispatch currently is:
 - Phase 5: `skill_13`, `skill_14`, `skill_17`
 
 If `challenge_config.json` defines `phase_skill_map`, the orchestrator uses that instead. At import time it also validates that the configured skills exist in the discovered registry.
+
+**Note:** The built-in phase map does not match the canonical 6-phase model of the Three-Lens framework (splitting Phase 2 into 2A/2B and Phase 3 into 3A/3B). The orchestrator resolves its actual execution flow using `phase_skill_map` defined in `challenge_config.json`.
 
 ### Canonical Validation Sequence (Three-Lens Framework)
 
@@ -153,15 +155,15 @@ The following tests directly exercise the skill surface and the research scaffol
 	- Verifies librarian, scientist, code miner, governance, and orchestrator imports.
 	- Checks that research/reporting artifacts exist and have the expected schema.
 
-The repository currently validates with `pytest -q`.
+The repository currently has 225/232 tests passing. 7 failures are due to test infrastructure/fixture issues which are being addressed.
 
 ## Notable Implementation Details
 
 - The orchestrator no longer depends on a long chain of static skill imports.
 - `run_deep_research()` now resolves paths through the active competition rather than assuming a specific competition name.
 - `skill_18_librarian.py` no longer hardcodes `ey-frogs` paths and now resolves the active competition automatically.
-- `skill_13_ensemble.py` exists as a shim for compatibility with tests and older references.
-- The current validation state for the repository is clean: the full test suite passes.
+- skill_13_ensemble.py exists as a shim for compatibility with tests and older references.
+- The current validation state for the repository has 225/232 tests passing.
 
 ## Practical Reading Order
 
@@ -180,4 +182,4 @@ If you are trying to understand the orchestrator quickly, read the files in this
 
 ## Validation
 
-The repository currently validates with `pytest -q`.
+The repository currently has 225/232 tests passing.

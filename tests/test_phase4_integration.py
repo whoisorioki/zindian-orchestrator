@@ -41,7 +41,7 @@ def test_governance_runs_and_records_selection(tmp_path, monkeypatch):
 
     res_state = gov.run(config, state)
     assert res_state.get("selected_submissions_final") is True
-    assert len(res_state.get("selected_submissions")) == 2
+    assert len(res_state.get("selected_submissions") or []) == 2
     assert res_state["selected_submissions"][0]["filename"] == "sub1.csv"
     assert res_state["selected_submissions"][1]["filename"] == "sub2.csv"
 

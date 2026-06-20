@@ -44,7 +44,7 @@ def verify_hash(current: str, locked: str, name: str) -> bool:
     """Compare current hash to locked hash. Halt if mismatch."""
     if current != locked:
         raise RuntimeError(
-            f"\n❌ MD5 MISMATCH DETECTED — {name}\n"
+            f"\n[FAIL] MD5 MISMATCH DETECTED — {name}\n"
             f"  Locked : {locked}\n"
             f"  Current: {current}\n"
             f"  Data may have been corrupted or tampered with.\n"
@@ -73,7 +73,7 @@ def update_skill_state(integrity: dict, state_path: Path) -> None:
     if current_phase in (None, "uninitialized", "phase_0_foundation"):
         updates["dag_phase"] = "phase_1_complete"
     store.update(**updates)
-    print(f"✅ {state_path} updated with MD5 hashes via SkillStateStore")
+    print(f"[OK] {state_path} updated with MD5 hashes via SkillStateStore")
 
 
 def run(re_verify: bool = False) -> dict:
@@ -100,11 +100,11 @@ def run(re_verify: bool = False) -> dict:
 
     # Load ChallengeConfig to check for input_files override and target cols
     task_type = "classification"
-    target_col = TARGET_COL
-    submission_target_col = SUBMISSION_TARGET_COL
+    target_col: str | None = TARGET_COL
+    submission_target_col: str | None = SUBMISSION_TARGET_COL
     id_col = "ID"
     domain = ""
-    input_files = {}
+    input_files: dict[str, str] = {}
 
     try:
         cfg = ChallengeConfig.load()
@@ -145,10 +145,10 @@ def run(re_verify: bool = False) -> dict:
 
     # Check if we're in INIT mode (no config exists yet)
     config_exists = paths.config_path.exists()
-    
+
     # INIT mode: Skip target validation - skill_02 will detect multi-target structure
     if not config_exists:
-        print("ℹ️  INIT mode detected - skipping target column validation")
+        print("[INFO]  INIT mode detected - skipping target column validation")
         print("   skill_02 will detect target structure from SampleSubmission.csv")
         target_col = None  # Signal to skip target-dependent operations
     else:
@@ -158,35 +158,39 @@ def run(re_verify: bool = False) -> dict:
             try:
                 target_config = cfg.get("target_config")
                 if target_config:
-                    print("ℹ️  Multi-target competition detected - skipping single target validation")
+                    print(
+                        "[INFO]  Multi-target competition detected - skipping single target validation"
+                    )
                     target_col = None  # Skip single-target operations
                 else:
                     raise AssertionError(
-                        f"❌ Target column '{target_col}' not found in {train_file}"
+                        f"[FAIL] Target column '{target_col}' not found in {train_file}"
                     )
-            except:
+            except Exception:
                 raise AssertionError(
-                    f"❌ Target column '{target_col}' not found in {train_file}"
+                    f"[FAIL] Target column '{target_col}' not found in {train_file}"
                 )
-        
+
         if id_col not in train.columns:
-            raise AssertionError(f"❌ ID column '{id_col}' missing from train")
-        
+            raise AssertionError(f"[FAIL] ID column '{id_col}' missing from train")
+
         # Latitude/Longitude check only makes sense for geospatial challenges
         if domain.lower() == "geospatial":
             if "Latitude" not in train.columns or "Longitude" not in train.columns:
-                print("⚠️ Latitude/Longitude columns missing — continuing (not mandatory)")
-        
+                print(
+                    "[WARN] Latitude/Longitude columns missing — continuing (not mandatory)"
+                )
+
         if submission_target_col not in sub.columns:
             raise AssertionError(
-                f"❌ '{submission_target_col}' not found in SampleSubmission.csv"
+                f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"
             )
-        print("✅ Required columns present (warnings may have been emitted)")
+        print("[OK] Required columns present (warnings may have been emitted)")
 
     # Validate target values (skip in INIT mode)
     if target_col is None:
-        print("ℹ️  Skipping target validation in INIT mode")
-        counts = {}
+        print("[INFO]  Skipping target validation in INIT mode")
+        counts: dict = {}
     elif task_type == "regression":
         # Continuous descriptive metrics
 
@@ -209,10 +213,10 @@ def run(re_verify: bool = False) -> dict:
         is_binary_numeric = set(train[target_col].dropna().unique()) <= {0, 1}
         if not is_binary_numeric:
             print(
-                f"⚠️ Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
+                f"[WARN] Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
             )
         else:
-            print(f"✅ Target values confirmed numeric binary: {[0, 1]}")
+            print(f"[OK] Target values confirmed numeric binary: {[0, 1]}")
 
         # Print class distribution
         counts = train[target_col].value_counts().to_dict()
@@ -232,7 +236,7 @@ def run(re_verify: bool = False) -> dict:
         md5_target = compute_md5(train[target_col])
     else:
         md5_target = "pending_skill_02"  # Placeholder for INIT mode
-    
+
     md5_train_file = compute_file_md5(str(train_path))
     md5_test_file = compute_file_md5(str(test_path))
     md5_sample_sub = compute_file_md5(str(sample_path))
@@ -283,11 +287,11 @@ def run(re_verify: bool = False) -> dict:
             )
         verify_hash(md5_sample_sub, locked, "sample submission")
 
-        print("✅ All hashes match — data integrity confirmed")
+        print("[OK] All hashes match — data integrity confirmed")
     else:
         # First run — lock the hashes (do not downgrade dag_phase if beyond)
         update_skill_state(integrity, state_path)
-        print("\n✅ Hashes locked in SKILL_STATE.json")
+        print("\n[OK] Hashes locked in SKILL_STATE.json")
 
     # Derive feature columns (exclude ID and target)
     if target_col is not None:
@@ -301,7 +305,9 @@ def run(re_verify: bool = False) -> dict:
         "test_rows": len(test),
         "n_features_raw": len(raw_feature_cols),
         "target_col": target_col if target_col else "pending_skill_02",
-        "submission_target_col": submission_target_col if target_col else "pending_skill_02",
+        "submission_target_col": (
+            submission_target_col if target_col else "pending_skill_02"
+        ),
         "task": "regression" if task_type == "regression" else "binary_classification",
         "class_distribution": counts,
         "feature_cols": raw_feature_cols,

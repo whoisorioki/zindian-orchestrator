@@ -8,11 +8,10 @@ This file contains the dataset-specific logic and is imported dynamically
 by `skill_07_features` when `feature_extraction_plugin` is set in
 `challenge_config.json`.
 """
+
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 import time
 from pathlib import Path
 
@@ -62,7 +61,12 @@ def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
         max_lat_v = spatial_cfg.get("max_lat")
         if None in (min_lon_v, max_lon_v, min_lat_v, max_lat_v):
             raise RuntimeError("spatial_signal bounding box not populated in config")
-        assert min_lon_v is not None and max_lon_v is not None and min_lat_v is not None and max_lat_v is not None
+        assert (
+            min_lon_v is not None
+            and max_lon_v is not None
+            and min_lat_v is not None
+            and max_lat_v is not None
+        )
         min_lon = float(min_lon_v)
         max_lon = float(max_lon_v)
         min_lat = float(min_lat_v)
@@ -126,15 +130,18 @@ def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
     max_lon_v = spatial_cfg.get("max_lon")
     min_lat_v = spatial_cfg.get("min_lat")
     max_lat_v = spatial_cfg.get("max_lat")
-    assert min_lon_v is not None and max_lon_v is not None and min_lat_v is not None and max_lat_v is not None
+    assert (
+        min_lon_v is not None
+        and max_lon_v is not None
+        and min_lat_v is not None
+        and max_lat_v is not None
+    )
     min_lon = float(min_lon_v)
     max_lon = float(max_lon_v)
     min_lat = float(min_lat_v)
     max_lat = float(max_lat_v)
 
     transform = from_bounds(min_lon, min_lat, max_lon, max_lat, width, height)
-
-    import rasterio
 
     with rasterio.open(
         tiff_path,
@@ -194,7 +201,10 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
                 r = int(max(0, min(src.height - 1, r)))
                 c = int(max(0, min(src.width - 1, c)))
                 values[i] = spiral_search(data, r, c)
-        return pd.concat([df.reset_index(drop=True), pd.DataFrame(values, columns=band_names)], axis=1)
+        return pd.concat(
+            [df.reset_index(drop=True), pd.DataFrame(values, columns=band_names)],
+            axis=1,
+        )
 
     input_files = config.get("input_files", {}) or {}
     train_file = input_files.get("train", "Training_Data.csv")
@@ -204,7 +214,9 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
     test = pd.read_csv(paths.data_raw_dir / test_file)
 
     with rasterio.open(tiff_path) as src:
-        band_names = [src.tags(i).get("name", f"band_{i}") for i in range(1, src.count + 1)]
+        band_names = [
+            src.tags(i).get("name", f"band_{i}") for i in range(1, src.count + 1)
+        ]
         data = src.read().astype(np.float64)
 
         train_feat = extract_df(train, src, band_names, data)

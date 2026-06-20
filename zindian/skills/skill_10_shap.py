@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 import shap
 from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from zindian.cv import make_cv_splitter
-from sklearn.preprocessing import StandardScaler
 
 from zindian.config import ChallengeConfig
 from zindian.config import get_seed
@@ -134,7 +134,12 @@ def _compute_shap_audit(
     if task_type == "regression":
         y = np.asarray(frame[target].values, dtype=np.float64)
     else:
-        y = np.asarray(frame[target].values, dtype=np.int32)
+        _y_raw = frame[target].values
+        if _y_raw.dtype.kind in ("U", "S", "O"):
+            _le = LabelEncoder()
+            y = _le.fit_transform(_y_raw.astype(str)).astype(np.int32)
+        else:
+            y = np.asarray(_y_raw, dtype=np.int32)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
@@ -144,12 +149,32 @@ def _compute_shap_audit(
         from zindian.config import get_seed
 
         seed = get_seed()
-    seed = int(seed)
+    # Safely cast seed to int if possible
+    try:
+        seed = int(seed)
+    except (ValueError, TypeError):
+        # Fallback to default seed from config
+        from zindian.config import get_seed
 
-    # Use KFold for regression, StratifiedKFold for classification
-    cv_strategy = {"type": "kfold" if task_type == "regression" else "stratified", "n_splits": n_splits}
+        seed = get_seed()
+
+    # Use config's cv_strategy block if defined, otherwise fall back to central factory
+    from zindian.config import ChallengeConfig
+
+    try:
+        config = ChallengeConfig.load()
+        cv_strategy = config.get("cv_strategy")
+    except Exception:
+        cv_strategy = None
+
+    if not cv_strategy:
+        # Use KFold for regression, StratifiedKFold for classification
+        cv_strategy = {
+            "type": "kfold" if task_type == "regression" else "stratified",
+            "n_splits": n_splits,
+        }
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-    
+
     # Initialize OOF array based on task type
     if task_type == "regression":
         oof_probs = np.zeros(len(frame), dtype=np.float64)
@@ -159,7 +184,7 @@ def _compute_shap_audit(
             oof_probs = np.zeros(len(frame), dtype=np.float64)
         else:
             oof_probs = np.zeros((len(frame), n_classes), dtype=np.float64)
-    
+
     fold_scores: list[float] = []
     fold_importances: list[np.ndarray] = []
 
@@ -192,7 +217,9 @@ def _compute_shap_audit(
                 oof_probs[val_idx] = val_probs_1d
             else:
                 try:
-                    fold_auc = float(roc_auc_score(y[val_idx], val_probs, multi_class='ovr'))
+                    fold_auc = float(
+                        roc_auc_score(y[val_idx], val_probs, multi_class="ovr")
+                    )
                 except ValueError:
                     # Missing class in fold - skip AUC
                     fold_auc = 0.0
@@ -250,9 +277,9 @@ def _compute_shap_audit(
         else:
             # Multiclass classification
             oof_preds = np.argmax(oof_probs, axis=1)
-            oof_f1 = float(f1_score(y, oof_preds, average='weighted'))
+            oof_f1 = float(f1_score(y, oof_preds, average="weighted"))
             try:
-                oof_auc = float(roc_auc_score(y, oof_probs, multi_class='ovr'))
+                oof_auc = float(roc_auc_score(y, oof_probs, multi_class="ovr"))
             except ValueError:
                 oof_auc = 0.0
             best_threshold = 0.0
@@ -313,8 +340,8 @@ def _write_outputs(
     summary_path = paths.reports_dir / "shap_summary.md"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
-    print(f"✅ SHAP report written → {report_path}")
-    print(f"✅ SHAP summary written → {summary_path}")
+    print(f"OK SHAP report written -> {report_path}")
+    print(f"OK SHAP summary written -> {summary_path}")
 
 
 def run(n_splits: int = 5, seed: int | None = None) -> dict:
@@ -324,12 +351,12 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
 
     config = ChallengeConfig.load()
     state = SkillStateStore(paths.state_path).read()
-    
+
     # Multi-target detection
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
         return _run_multi_target_shap(paths, config, state, n_splits, seed)
-    
+
     frame = _load_train_frame(paths)
     target = config.get("target_col") or config.get("target_column")
     if not target:
@@ -348,14 +375,19 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
     task_type = config.get("task_type", "classification")
 
     if len(feature_cols) < 2:
-        print("⚠️ X.shape[1] < 2: skipping SHAP ratio audit.")
+        print("[WARN] X.shape[1] < 2: skipping SHAP ratio audit.")
         # Perform 5-fold CV to get oof_probs and metrics
         splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed or get_seed())
         X = np.asarray(frame[feature_cols].values, dtype=np.float64)
         if task_type == "regression":
             y = np.asarray(frame[target].values, dtype=np.float64)
         else:
-            y = np.asarray(frame[target].values, dtype=np.int32)
+            _y_raw_sf = frame[target].values
+            if _y_raw_sf.dtype.kind in ("U", "S", "O"):
+                _le_sf = LabelEncoder()
+                y = _le_sf.fit_transform(_y_raw_sf.astype(str)).astype(np.int32)
+            else:
+                y = np.asarray(_y_raw_sf, dtype=np.int32)
         scaler = StandardScaler()
         X = scaler.fit_transform(X)
         oof_probs = np.zeros(len(frame), dtype=np.float64)
@@ -393,12 +425,16 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
             last_updated=datetime.now(timezone.utc).isoformat(),
             shap_oof_cv_strategy_id=cv_id,
         )
+        try:
+            _seed_val_sf = int(seed) if seed is not None else get_seed()
+        except (ValueError, TypeError):
+            _seed_val_sf = get_seed()
         write_oof_record(
             state_store,
             branch_name="shap_audit",
             scores=np.asarray(oof_probs, dtype=np.float64).tolist(),
             cv_strategy_id=cv_id,
-            seed=int(seed if seed is not None else get_seed()),
+            seed=_seed_val_sf,
             model_config={
                 "feature_count": len(feature_cols),
                 "n_splits": n_splits,
@@ -592,65 +628,89 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
 
 def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
     """Multi-target SHAP analysis per SoT v2.2.1 A11."""
-    print("\n🎯 MULTI-TARGET SHAP MODE\n")
+    print("\n[TARGET] MULTI-TARGET SHAP MODE\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
     print(f"Analyzing {len(targets)} targets: {[t['name'] for t in targets]}\n")
-    
+
     # Load features and raw data with targets
     frame = _load_train_frame(paths)
     input_files = config.get("input_files", {}) or {}
     train_file = input_files.get("train", "Train.csv")
     raw_train = pd.read_csv(paths.data_raw_dir / train_file)
-    
+
     all_results = {}
     all_pass = True
-    
+
     for target_spec in targets:
         target_name = target_spec["name"]
         target_task = target_spec["task_type"]
-        print(f"\n{'─' * 60}")
+        print(f"\n{'-' * 60}")
         print(f"SHAP: {target_name} ({target_task})")
-        print(f"{'─' * 60}")
-        
+        print(f"{'-' * 60}")
+
         # Merge target from raw data
         frame_with_target = frame.copy()
         if target_name in raw_train.columns:
             target_series = raw_train[target_name]
-            if target_series.dtype == 'object':
+            if target_series.dtype == "object":
                 target_series = pd.factorize(target_series)[0]
             frame_with_target[target_name] = target_series
         else:
-            print(f"⚠️ Target {target_name} not in raw data, skipping")
+            print(f"[WARN] Target {target_name} not in raw data, skipping")
             continue
-        
+
         feature_cols = _feature_columns(frame_with_target, target_name)
         full_audit = _compute_shap_audit(
-            frame_with_target, feature_cols, target_name, n_splits=n_splits, seed=seed, task_type=target_task
+            frame_with_target,
+            feature_cols,
+            target_name,
+            n_splits=n_splits,
+            seed=seed,
+            task_type=target_task,
         )
         ranking = full_audit["ranking"]
         pruning = _build_pruned_feature_set(feature_cols, ranking, frame_with_target)
-        
+
         # Use appropriate CV strategy for task type
-        cv_strategy_dict = {"type": "kfold" if target_task == "regression" else "stratified", "n_splits": n_splits}
+        cv_strategy_dict = {
+            "type": "kfold" if target_task == "regression" else "stratified",
+            "n_splits": n_splits,
+        }
         splitter = make_cv_splitter(cv_strategy=cv_strategy_dict, random_seed=seed)
-        
+
         # Pre-generate splits to avoid stratification issues
         X_dummy = np.zeros((len(frame_with_target), 1))
         y_dummy = frame_with_target[target_name].values
         cv_splits = list(splitter.split(X_dummy, y_dummy))
-        
+
         full_cv = train_lightgbm_cv(
-            train=frame_with_target, test=frame_with_target, feature_cols=feature_cols, target_col=target_name,
-            n_splits=n_splits, random_seed=seed, cv=cv_splits, scale=True, num_boost_round=500, early_stopping_rounds=50,
-            regression_metric="rmse" if target_task == "regression" else None
+            train=frame_with_target,
+            test=frame_with_target,
+            feature_cols=feature_cols,
+            target_col=target_name,
+            n_splits=n_splits,
+            random_seed=seed,
+            cv=cv_splits,
+            scale=True,
+            num_boost_round=500,
+            early_stopping_rounds=50,
+            regression_metric="rmse" if target_task == "regression" else None,
         )
         pruned_cv = train_lightgbm_cv(
-            train=frame_with_target, test=frame_with_target, feature_cols=pruning["pruned_features"], target_col=target_name,
-            n_splits=n_splits, random_seed=seed, cv=cv_splits, scale=True, num_boost_round=500, early_stopping_rounds=50,
-            regression_metric="rmse" if target_task == "regression" else None
+            train=frame_with_target,
+            test=frame_with_target,
+            feature_cols=pruning["pruned_features"],
+            target_col=target_name,
+            n_splits=n_splits,
+            random_seed=seed,
+            cv=cv_splits,
+            scale=True,
+            num_boost_round=500,
+            early_stopping_rounds=50,
+            regression_metric="rmse" if target_task == "regression" else None,
         )
-        
+
         if target_task == "regression":
             pruning_delta = float(full_cv.oof_rmse - pruned_cv.oof_rmse)
             pruning_pass = pruning_delta >= -0.01
@@ -662,22 +722,22 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
             # Multiclass - skip pruning comparison (complex AUC calculation)
             pruning_delta = 0.0
             pruning_pass = True
-        
+
         all_results[target_name] = {
             "pruning_pass": pruning_pass,
             "pruning_delta": pruning_delta,
-            "top_feature": ranking.iloc[0]["feature"] if not ranking.empty else None
+            "top_feature": ranking.iloc[0]["feature"] if not ranking.empty else None,
         }
         all_pass = all_pass and pruning_pass
-    
+
     state_store = SkillStateStore(paths.state_path)
     state_store.update(
         shap_completed_at=datetime.now(timezone.utc).isoformat(),
         shap_multi_target_results=all_results,
         pruning_pass=all_pass,
-        last_updated=datetime.now(timezone.utc).isoformat()
+        last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print(f"\n✅ Multi-target SHAP complete. Overall pass: {all_pass}")
+    print(f"\n[OK] Multi-target SHAP complete. Overall pass: {all_pass}")
     return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}
 
 
@@ -689,14 +749,26 @@ if __name__ == "__main__":
     seed = None
     for idx, arg in enumerate(args):
         if arg == "--n-splits" and idx + 1 < len(args):
-            n_splits = int(args[idx + 1])
+            try:
+                n_splits = int(args[idx + 1])
+            except ValueError:
+                pass
         elif arg.startswith("--n-splits="):
-            n_splits = int(arg.split("=", 1)[1])
+            try:
+                n_splits = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
         elif arg == "--seed" and idx + 1 < len(args):
-            seed = int(args[idx + 1])
+            try:
+                seed = int(args[idx + 1])
+            except ValueError:
+                pass
         elif arg.startswith("--seed="):
-            seed = int(arg.split("=", 1)[1])
-
+            try:
+                seed = int(arg.split("=", 1)[1])
+            except ValueError:
+                pass
+        # ignore any other positional arguments (e.g., 'final')
     result = run(n_splits=n_splits, seed=seed)
     if result.get("multi_target"):
         print(json.dumps(result, indent=2))

@@ -409,7 +409,9 @@ Generate feature engineering hypotheses as a raw JSON array now.
                 if not raw:
                     raise ValueError("No structured output returned by Gemini response")
                 hypotheses = json.loads(_normalize_json_block(raw))
-            print(f"[Scientist] ✅ Cloud synthesis successful on attempt {attempt + 1}")
+            print(
+                f"[Scientist] [OK] Cloud synthesis successful on attempt {attempt + 1}"
+            )
             break
         except Exception as e:
             if attempt < 2:

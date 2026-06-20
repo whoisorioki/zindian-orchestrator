@@ -36,6 +36,7 @@ import importlib
 import lightgbm as lgb
 from zindian.cv import make_cv_splitter
 from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.state import resolve_active_cv_strategy_id, write_oof_record
@@ -45,7 +46,7 @@ from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 warnings.filterwarnings("ignore")
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# -- Constants -----------------------------------------------------------------
 
 SEED = get_seed()
 
@@ -53,7 +54,7 @@ SEED = get_seed()
 NO_NETWORK = bool(os.environ.get("ZINDIAN_DISABLE_NETWORK", False))
 
 
-# ── State helpers ─────────────────────────────────────────────────────────────
+# -- State helpers -------------------------------------------------------------
 
 
 def _write_state(state: dict, path: Path) -> None:
@@ -63,7 +64,7 @@ def _write_state(state: dict, path: Path) -> None:
     os.replace(tmp_path, path)
 
 
-# ── Default feature engineering config (empty — all values come from config) ──
+# -- Default feature engineering config (empty — all values come from config) --
 #
 # When challenge_config.json contains no "feature_engineering" block, this
 # empty fallback is used. No competition-specific column names are present here.
@@ -319,7 +320,7 @@ def build_hypothesis_features(
     return train[final_cols], test[test_final_cols]
 
 
-# ── Variant Training ──────────────────────────────────────────────────────────
+# -- Variant Training ----------------------------------------------------------
 
 
 def train_variant(
@@ -373,7 +374,12 @@ def train_variant(
     if task_type == "regression":
         y = np.asarray(train[TARGET].values, dtype=np.float64)
     else:
-        y = np.asarray(train[TARGET].values, dtype=np.int32)
+        _y_raw_07 = train[TARGET].values
+        if _y_raw_07.dtype.kind in ("U", "S", "O"):
+            _le_07 = LabelEncoder()
+            y = _le_07.fit_transform(_y_raw_07.astype(str)).astype(np.int32)
+        else:
+            y = np.asarray(_y_raw_07, dtype=np.int32)
     X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
 
     shared_lgb_variants = {
@@ -397,6 +403,8 @@ def train_variant(
         "variant-35",
         "variant-37",
         "strength",
+        "recency_strength",
+        "squad_manager_experience",
     }
     tuned_lgb_variants = {
         "variant-13": {
@@ -525,7 +533,7 @@ def train_variant(
             ret[primary_key] = oof_score
         return ret
 
-    # ── Non-shared variants: per-fold manual loop ─────────────────────────────
+    # -- Non-shared variants: per-fold manual loop -----------------------------
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     n_splits = getattr(splitter, "n_splits", 5)
     oof_probs = np.zeros(len(y))
@@ -771,7 +779,7 @@ def train_variant(
     }
 
 
-# ── Round Report Writer ───────────────────────────────────────────────────────
+# -- Round Report Writer -------------------------------------------------------
 
 
 def write_round_report(
@@ -826,7 +834,7 @@ def write_round_report(
             "|---|---|---|---|---|",
         ]
         for r in results:
-            icon = "✅" if r["gate"] == "PASS" else "❌"
+            icon = "[OK]" if r["gate"] == "PASS" else "[FAIL]"
             score_val = r.get(primary_key, 0.0)
             lines.append(
                 f"| {r['variant']} | {r['features']} | {r['delta']:+.5f} | {score_val:.5f} | {icon} {r['gate']} |"
@@ -862,7 +870,7 @@ def write_round_report(
             "|---|---|---|---|---|---|",
         ]
         for r in results:
-            icon = "✅" if r["gate"] == "PASS" else "❌"
+            icon = "[OK]" if r["gate"] == "PASS" else "[FAIL]"
             lines.append(
                 f"| {r['variant']} | {r['features']} | {r['oof_auc']:.5f} "
                 f"| {r['delta']:+.5f} | {r['oof_f1']:.5f} | {icon} {r['gate']} |"
@@ -879,56 +887,66 @@ def write_round_report(
     report_path = paths.reports_dir / f"feature_round_{round_num:02d}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n  ✅ Round report → {report_path}")
+    print(f"\n  [OK] Round report → {report_path}")
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
+# -- Entry Point ---------------------------------------------------------------
 
 
-# ── Multi-Target Variant Training ────────────────────────────────────────────
+# -- Multi-Target Variant Training --------------------------------------------
+
 
 def _run_multi_target_variant(
-    variant_name, config, state, paths, baseline_score, 
-    effective_gate_margin, cv_strategy, train_feat, test_feat
+    variant_name,
+    config,
+    state,
+    paths,
+    baseline_score,
+    effective_gate_margin,
+    cv_strategy,
+    train_feat,
+    test_feat,
 ):
     """Train variant across multiple targets per SoT v2.2.1 A11."""
     from zindian.state import write_oof_record, SkillStateStore
-    
+
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
-    
-    print(f"\n🎯 MULTI-TARGET VARIANT: {variant_name}")
+
+    print(f"\n[TARGET] MULTI-TARGET VARIANT: {variant_name}")
     print(f"Training {len(targets)} targets: {[t['name'] for t in targets]}\n")
-    
+
     # Load raw data for targets
     input_files = config.get("input_files", {}) or {}
     train_file = input_files.get("train", "Train.csv")
     raw_train = pd.read_csv(paths.data_raw_dir / train_file)
-    
+
     id_col = config.get("id_col") or "ID"
     cols_cfg = config.get("columns", {}) or {}
     lat_col = cols_cfg.get("latitude", "Latitude")
     lon_col = cols_cfg.get("longitude", "Longitude")
     DROP = {id_col, lat_col, lon_col, "ID", "target"}
     all_features = [c for c in train_feat.columns if c not in DROP]
-    
+
     all_metrics = {}
     all_oof = {}
-    
+
     for target_spec in targets:
         target_name = target_spec["name"]
         target_task = target_spec["task_type"]
-        
-        print(f"\n{'─' * 60}")
+
+        print(f"\n{'-' * 60}")
         print(f"Target: {target_name} ({target_task})")
-        print(f"{'─' * 60}")
-        
+        print(f"{'-' * 60}")
+
         # Prepare train data with this target
         train_with_target = train_feat.copy()
         target_series = raw_train[target_name]
-        if target_series.dtype == 'object':
-            target_series = pd.factorize(target_series)[0]
-        
+        if not pd.api.types.is_numeric_dtype(target_series):
+            target_series = pd.Series(
+                pd.factorize(target_series)[0], index=target_series.index
+            )
+
         # Remove other targets from features
         other_targets = [t["name"] for t in targets if t["name"] != target_name]
         for ot in other_targets:
@@ -936,9 +954,9 @@ def _run_multi_target_variant(
                 train_with_target = train_with_target.drop(columns=[ot])
                 if ot in all_features:
                     all_features.remove(ot)
-        
+
         train_with_target[target_name] = target_series
-        
+
         # Override config for this target
         target_config_override = ChallengeConfig(
             path=config.path,
@@ -946,38 +964,48 @@ def _run_multi_target_variant(
                 **config._data,
                 "target_col": target_name,
                 "task_type": target_task,
-                "metric": target_spec.get("metric", "rmse" if target_task == "regression" else "f1_score"),
-            }
+                "metric": target_spec.get(
+                    "metric", "rmse" if target_task == "regression" else "f1_score"
+                ),
+            },
         )
-        
+
         # Train variant for this target
         SEEDS = [42, 43, 44]
         seed_results = []
-        
+
         for s in SEEDS:
             print(f"\n  -- Seed {s} --")
             r = train_variant(
-                train_with_target, test_feat, all_features, variant_name,
-                baseline_score, None, seed=s,
-                config=target_config_override, state=state,
-                cv_strategy=cv_strategy, target_col=target_name,
-                task_type=target_task, gate_margin=effective_gate_margin
+                train_with_target,
+                test_feat,
+                all_features,
+                variant_name,
+                baseline_score,
+                None,
+                seed=s,
+                config=target_config_override,
+                state=state,
+                cv_strategy=cv_strategy,
+                target_col=target_name,
+                task_type=target_task,
+                gate_margin=effective_gate_margin,
             )
             seed_results.append(r)
-        
+
         # Aggregate results
         mean_oof = np.mean([r["oof_probs"] for r in seed_results], axis=0)
         all_oof[target_name] = mean_oof
-        
+
         if target_task == "regression":
             metric_val = float(np.mean([r.get("oof_rmse", 0) for r in seed_results]))
             all_metrics[target_name] = {"oof_rmse": metric_val}
         else:
             all_metrics[target_name] = {
                 "oof_f1": float(np.mean([r.get("oof_f1", 0) for r in seed_results])),
-                "oof_auc": float(np.mean([r.get("oof_auc", 0) for r in seed_results]))
+                "oof_auc": float(np.mean([r.get("oof_auc", 0) for r in seed_results])),
             }
-        
+
         # Write OOF record (A12 policy: use _augmented suffix during retraining)
         store = SkillStateStore(paths.state_path)
         retraining_active = bool(
@@ -991,21 +1019,38 @@ def _run_multi_target_variant(
             scores=oof_1d.tolist(),
             cv_strategy_id=state.get("anchor_cv_strategy_id", "stratified_5fold"),
             seed=42,
-            model_config={"target_name": target_name, "variant": variant_name}
+            model_config={"target_name": target_name, "variant": variant_name},
         )
-    
+
     # Compute composite score
     rmse = all_metrics.get("total_goals", {}).get("oof_rmse", 0)
     f1 = all_metrics.get("Target", {}).get("oof_f1", 0)
-    composite = (1 - rmse/10) * 0.5 + f1 * 0.5
-    
+
+    target_std = (
+        float(raw_train["total_goals"].std())
+        if "total_goals" in raw_train.columns
+        else 1.0
+    )
+    normalized_rmse = rmse / target_std if target_std > 0 else rmse
+    regression_score = max(0.0, 1.0 - normalized_rmse)
+
+    composite = 0.6 * f1 + 0.4 * regression_score
+
     # Log to DuckDB ledger
     from zindian.ledger import Ledger
-    feature_count = len([c for c in train_feat.columns if c not in {config.get("id_col", "ID"), "target"}])
+
+    feature_count = len(
+        [
+            c
+            for c in train_feat.columns
+            if c not in {config.get("id_col", "ID"), "target"}
+        ]
+    )
     with Ledger() as ledger:
         exp_id = ledger.log_experiment(
             branch_name=variant_name,
-            oof_rmse=rmse,
+            oof_score=composite,
+            metric="composite_f1_rmse",
             feature_count=feature_count,
             calibration_method="none",
             gate_result="PASS",
@@ -1013,14 +1058,16 @@ def _run_multi_target_variant(
             dag_phase="phase_3_variant_training",
             notes=f"composite={composite:.6f}; rmse={rmse:.4f}; f1={f1:.4f}; targets={[t['name'] for t in targets]}",
         )
-    
+
     print(f"\n{'=' * 60}")
     print(f"VARIANT {variant_name} COMPOSITE: {composite:.6f}")
     print(f"  RMSE: {rmse:.4f} | F1: {f1:.4f}")
-    print(f"  Baseline: {baseline_score:.6f} | Delta: {composite - baseline_score:+.6f}")
-    print(f"✅ Experiment logged → DuckDB exp_id={exp_id}")
+    print(
+        f"  Baseline: {baseline_score:.6f} | Delta: {composite - baseline_score:+.6f}"
+    )
+    print(f"[OK] Experiment logged → DuckDB exp_id={exp_id}")
     print(f"{'=' * 60}")
-    
+
     return {"status": "OK", "composite_score": composite, "metrics": all_metrics}
 
 
@@ -1062,14 +1109,16 @@ def run(
         target_std_raw = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
         if target_std_raw == 0.0:
             effective_gate_margin = gate_margin_cfg
-            effective_variance_threshold = variance_cfg
+            _effective_variance_threshold = variance_cfg
         else:
             effective_gate_margin = gate_margin_cfg * target_std_raw
-            effective_variance_threshold = variance_cfg * (target_std_raw**2)
+            _effective_variance_threshold = variance_cfg * (target_std_raw**2)
     else:
         # RMSLE (scale-invariant) or classification (bounded): use raw thresholds.
         effective_gate_margin = gate_margin_cfg
-        effective_variance_threshold = variance_cfg
+        _effective_variance_threshold = (
+            variance_cfg  # stored for symmetry, not used here
+        )
 
     target_col = config.get("target_column") or config.get("target_col") or "target"
     use_probabilities = config.get("use_probabilities", True)
@@ -1101,10 +1150,9 @@ def run(
 
     anchor_auc = float(state.get("anchor_oof_score") or 0.0)
 
+    baseline_missing = False
     if variant_name is not None and baseline_score == 0.0:
-        raise RuntimeError(
-            "Baseline score not set in SKILL_STATE.json — run Skill 08 first."
-        )
+        baseline_missing = True
 
     # Resolve active CV strategy
     override_active = bool(state.get("cv_strategy_override", {}).get("active", False))
@@ -1125,7 +1173,7 @@ def run(
     print(f"DAG phase   : {state.get('dag_phase')}")
     print(f"Baseline ({baseline_key}): {baseline_score}")
 
-    # ── Phase A: Plugin dispatch ──────────────────────────────
+    # -- Phase A: Plugin dispatch ------------------------------
     print("\n[A] Feature extraction (plugin)")
     plugin_path = config.get("feature_extraction_plugin")
 
@@ -1134,12 +1182,12 @@ def run(
         try:
             extractor = importlib.import_module(plugin_path)
         except Exception as e:
-            print(f"  ⚠️  Failed to import plugin '{plugin_path}': {e}")
+            print(f"  [WARN]  Failed to import plugin '{plugin_path}': {e}")
 
     if extractor is None:
         raise RuntimeError(
-            f"No feature extraction plugin configured or plugin failed to import. "
-            f"Set 'feature_extraction_plugin' in challenge_config.json."
+            "No feature extraction plugin configured or plugin failed to import. "
+            "Set 'feature_extraction_plugin' in challenge_config.json."
         )
 
     # Provide a dummy path for plugins that require a tiff_path parameter but
@@ -1149,7 +1197,7 @@ def run(
     if not tiff_path.exists() and fetch and hasattr(extractor, "fetch"):
         tiff_path = extractor.fetch(paths, config, allow_network=True)
 
-    # ── Phase B: Extract features ─────────────────────────────
+    # -- Phase B: Extract features -----------------------------
     print("\n[B] Feature Extraction")
     if hasattr(extractor, "extract"):
         train_feat, test_feat = extractor.extract(paths, tiff_path, config)
@@ -1159,7 +1207,7 @@ def run(
             f"Implement extract(paths, tiff_path, config) -> (train_df, test_df)."
         )
 
-    # ── Phase B2: Build hypothesis-derived features ───────────
+    # -- Phase B2: Build hypothesis-derived features -----------
     print("\n[B2] Building hypothesis-derived features")
     target_col_cfg = config.get("target_column") or config.get("target_col") or "target"
     if variant_name is None:
@@ -1184,21 +1232,33 @@ def run(
             target_array=None,
             variant_name=variant_name,
         )
-    print("  ✓ Hypothesis-derived features built from config")
+    print("  [OK] Hypothesis-derived features built from config")
 
-    if variant_name is None:
-        print("\n✅ Extraction complete. Pass --variant <name> to run a variant.")
+    if variant_name is None or baseline_missing:
+        if baseline_missing:
+            print(
+                "\n  [WARN]  Baseline score not set in SKILL_STATE.json — running extraction only."
+            )
+        else:
+            print("\n[OK] Extraction complete. Pass --variant <name> to run a variant.")
         return {"status": "extracted"}
 
-    # ── Multi-target detection ────────────────────────────────
+    # -- Multi-target detection --------------------------------
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
         return _run_multi_target_variant(
-            variant_name, config, state, paths, baseline_score, 
-            effective_gate_margin, cv_strategy, train_feat, test_feat
+            variant_name,
+            config,
+            state,
+            paths,
+            baseline_score,
+            effective_gate_margin,
+            cv_strategy,
+            train_feat,
+            test_feat,
         )
 
-    # ── Phase C: Build VARIANTS dict from config ──────────────
+    # -- Phase C: Build VARIANTS dict from config --------------
     # All column names come from config — no competition-specific strings here.
     cols_cfg = config.get("columns", {}) or {}
     id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
@@ -1273,7 +1333,7 @@ def run(
     if not feature_cols:
         raise ValueError(f"Feature column list for '{variant_name}' is empty.")
 
-    # ── Phase C: Train (multi-seed averaging) ─────────────────
+    # -- Phase C: Train (multi-seed averaging) -----------------
     SEEDS = [SEED, SEED + 1, SEED + 2]
     print(f"\n[C] Training {variant_name} over {len(SEEDS)} seeds: {SEEDS}")
     import random
@@ -1376,7 +1436,7 @@ def run(
     if task_type == "regression":
         result[primary_key] = mean_metric
 
-    # ── Phase D: Persist OOF / test arrays ───────────────────
+    # -- Phase D: Persist OOF / test arrays -------------------
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
@@ -1388,11 +1448,11 @@ def run(
             {id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])}
         )
         test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
-        print(f"  ✅ Saved OOF / test probs")
+        print("  [OK] Saved OOF / test probs")
     except Exception as e:
-        print(f"  ⚠️  Failed to save OOF/test probs: {e}")
+        print(f"  [WARN]  Failed to save OOF/test probs: {e}")
 
-    # ── Phase D: Save submission if PASS or force_save ────────
+    # -- Phase D: Save submission if PASS or force_save --------
     if result["gate"] == "PASS" or force_save:
         input_files = config.get("input_files", {}) or {}
         sample_file = input_files.get("sample", "SampleSubmission.csv")
@@ -1410,9 +1470,9 @@ def run(
         out = competition_dir / f"submissions/{variant_name}_submission.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         sub.to_csv(out, index=False)
-        print(f"  ✅ Submission saved → {out}")
+        print(f"  [OK] Submission saved → {out}")
 
-    # ── Phase D: Update state ─────────────────────────────────
+    # -- Phase D: Update state ---------------------------------
     variants_tested = int(state.get("variants_tested") or 0) + 1
     variants_passed = int(state.get("variants_passed") or 0) + (
         1 if result["gate"] == "PASS" else 0
@@ -1466,7 +1526,7 @@ def run(
             y_true = np.asarray(train_feat[target_col].values, dtype=np.float64)
             secondary_metrics = compute_secondary_metrics(y_true, result["oof_probs"])
         except Exception as exc:
-            print(f"  ⚠️  Failed to compute secondary metrics: {exc}")
+            print(f"  [WARN]  Failed to compute secondary metrics: {exc}")
 
     try:
         write_oof_record(
@@ -1490,10 +1550,10 @@ def run(
             secondary_metrics=secondary_metrics,
         )
     except Exception as exc:
-        print(f"  ⚠️  Failed to write OOF record: {exc}")
-    print("  ✅ SKILL_STATE.json updated")
+        print(f"  [WARN]  Failed to write OOF record: {exc}")
+    print("  [OK] SKILL_STATE.json updated")
 
-    # ── Phase D: Write report ─────────────────────────────────
+    # -- Phase D: Write report ---------------------------------
     round_num = int(state.get("feature_round") or 1)
     write_round_report(
         paths, [result], round_num, baseline_score, effective_gate_margin

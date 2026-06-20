@@ -7,9 +7,8 @@ from zindian.skills import skill_05_cv
 
 def test_run_falls_back_on_sparse_spatial(tmp_path, monkeypatch):
     # Create competition structure
-    # Create competition under repo root so resolver finds it via COMPETITION_SLUG
-    repo_root = os.getcwd()
-    comp = Path(repo_root) / "competitions" / "tmpcomp"
+    # Create competition under tmp_path so the test is isolated
+    comp = tmp_path / "competitions" / "tmpcomp"
     comp.mkdir(parents=True, exist_ok=True)
     # Use template to create a schema-valid SKILL_STATE.json for the test
     ss_template = Path(os.getcwd()) / "templates" / "SKILL_STATE_template.json"

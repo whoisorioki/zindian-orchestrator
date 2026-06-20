@@ -23,7 +23,7 @@ def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
     )
 
     # create state-driven candidate records and matching test probs
-    state_payload = {
+    state_payload: dict = {
         "competition": "cmp",
         "md5_target_hash": None,
         "anchor_oof_f1": 0.1,

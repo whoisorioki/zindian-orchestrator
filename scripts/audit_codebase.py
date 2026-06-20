@@ -310,7 +310,7 @@ def run_all() -> None:
         print("FAILURES / DISCREPANCIES")
         print(f"{'=' * 60}")
         for f in failed:
-            print(f"\n❌ {f['check']}")
+            print(f"\n[FAIL] {f['check']}")
             if f["detail"]:
                 print(f"   Detail: {f['detail']}")
 
@@ -319,13 +319,13 @@ def run_all() -> None:
         print("ALL PASSED")
         print(f"{'=' * 60}")
         for p in passed:
-            print(f"✅ {p['check']}")
+            print(f"[PASS] {p['check']}")
             if p["detail"]:
                 print(f"   {p['detail']}")
 
     print(f"\n{'=' * 60}")
     print(
-        f"Overall: {'ALL PASS ✅' if not failed else f'{len(failed)} DISCREPANCIES FOUND ❌'}"
+        f"Overall: {'ALL PASS [PASS]' if not failed else f'{len(failed)} DISCREPANCIES FOUND [FAIL]'}"
     )
     print(f"{'=' * 60}")
 

@@ -35,7 +35,7 @@ N_SPLITS = 5
 SPATIAL_CLUSTER_MULTIPLIER = 3
 
 
-# ── CV Strategy Builders ───────────────────────────────────────────────────────
+# -- CV Strategy Builders -------------------------------------------------------
 
 
 def _config_data(config: ChallengeConfig) -> dict[str, Any]:
@@ -250,7 +250,7 @@ def _resolve_decision(
     }
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# -- Main -----------------------------------------------------------------------
 
 
 def run(strategy: str = "compare") -> dict:
@@ -277,13 +277,21 @@ def run(strategy: str = "compare") -> dict:
     print(f"Competition : {config.slug}")
     print(f"Strategy    : {strategy}")
 
-    # ── Load features ──────────────────────────────────────────
+    # -- Load features ------------------------------------------
     ft_path = competition_dir / "data" / "processed" / "features_train.csv"
     if not ft_path.exists():
-        raise FileNotFoundError(
-            f"features_train.csv not found at {ft_path}. "
-            "Run Skill 07 feature extraction first."
-        )
+        train_file_name = config.get("input_files", {}).get("train") or "Train.csv"
+        raw_train_path = paths.data_raw_dir / train_file_name
+        if raw_train_path.exists():
+            ft_path = raw_train_path
+            print(
+                "  [WARN]  features_train.csv not found. Falling back to raw Train.csv for CV analysis."
+            )
+        else:
+            raise FileNotFoundError(
+                f"features_train.csv not found at {ft_path}. "
+                "Run Skill 07 feature extraction first."
+            )
 
     ft = pd.read_csv(ft_path)
     print(f"\nFeatures loaded: {ft.shape}")
@@ -317,12 +325,36 @@ def run(strategy: str = "compare") -> dict:
         excluded_cols.add(str(group_col))
 
     feature_cols = [c for c in ft.columns if c not in excluded_cols]
+    feature_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(ft[c])]
     coord_cols = [c for c in coord_names if c in ft.columns]
 
     # Use explicit np.asarray to provide concrete ndarray types for static checkers
     X = np.asarray(ft[feature_cols].values, dtype=np.float32)
+    if target_col in ft.columns:
+        target_series = ft[target_col]
+    else:
+        # Load from raw train
+        train_file_name = config.get("input_files", {}).get("train") or "Train.csv"
+        raw_train_path = paths.data_raw_dir / train_file_name
+        if raw_train_path.exists():
+            raw_train = pd.read_csv(raw_train_path)
+            if target_col in raw_train.columns:
+                target_series = raw_train[target_col]
+            else:
+                raise KeyError(
+                    f"Target column '{target_col}' not found in raw train or features."
+                )
+        else:
+            raise FileNotFoundError(f"Raw train file not found at {raw_train_path}")
+
+    # Factorize if categorical (string/object)
+    if not pd.api.types.is_numeric_dtype(target_series):
+        target_series = pd.Series(
+            pd.factorize(target_series)[0], index=target_series.index
+        )
+
     y_dtype = np.float32 if task_type == "regression" else np.int32
-    y = np.asarray(ft[target_col].values, dtype=y_dtype)
+    y = np.asarray(target_series.values, dtype=y_dtype)
     coords = (
         np.asarray(ft[coord_cols].values, dtype=np.float64)
         if len(coord_cols) == 2
@@ -372,11 +404,11 @@ def run(strategy: str = "compare") -> dict:
                     spatial_cluster_count=int(max(1, len(set(geo_groups)))),
                 )
                 print(
-                    "  ✅ spatial clusters generated; using GroupKFold on cluster groups"
+                    "  [OK] spatial clusters generated; using GroupKFold on cluster groups"
                 )
             except Exception as exc:
                 print(
-                    f"  ⚠️  Spatial clustering failed or insufficient samples: {exc} — falling back to safer CV"
+                    f"  [WARN]  Spatial clustering failed or insufficient samples: {exc} — falling back to safer CV"
                 )
                 if (
                     config.get("task_type") == "classification"
@@ -395,7 +427,7 @@ def run(strategy: str = "compare") -> dict:
                     )
         else:
             print(
-                "  ⚠️  No coordinate columns available or too few rows for spatial clustering — falling back to safer CV"
+                "  [WARN]  No coordinate columns available or too few rows for spatial clustering — falling back to safer CV"
             )
             if (
                 config.get("task_type") == "classification"
@@ -437,11 +469,17 @@ def run(strategy: str = "compare") -> dict:
     ):
         state_update["dag_phase"] = "phase_3_features"
     state_store.update(**state_update)
-    print(f"\n✅ SKILL_STATE.json updated: cv_strategy={selected_type}")
+    print(f"\n[OK] SKILL_STATE.json updated: cv_strategy={selected_type}")
 
-    # ── Per SoT: persist chosen cv_strategy into challenge_config.json during Phase 1 only
+    # -- Per SoT: persist chosen cv_strategy into challenge_config.json during Phase 1 only
     try:
-        allowed_write_phases = (None, "uninitialized", "phase_0_foundation", "phase_1")
+        allowed_write_phases = (
+            None,
+            "uninitialized",
+            "phase_0_foundation",
+            "phase_1",
+            "phase_1_integrity",
+        )
         if current_phase in allowed_write_phases:
             cfg_path = paths.config_path
             if cfg_path.exists():
@@ -464,13 +502,15 @@ def run(strategy: str = "compare") -> dict:
                     json.dumps(cfg_data, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8",
                 )
-                print(f"✅ challenge_config.json updated with cv_strategy: {cv_block}")
+                print(
+                    f"[OK] challenge_config.json updated with cv_strategy: {cv_block}"
+                )
         else:
             print(
-                f"ℹ️  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
+                f"[INFO]  Skipping challenge_config.json write — current phase '{current_phase}' prohibits config mutation."
             )
     except Exception as exc:  # pragma: no cover - defensive
-        print(f"⚠️  Failed to write cv_strategy to challenge_config.json: {exc}")
+        print(f"[WARN]  Failed to write cv_strategy to challenge_config.json: {exc}")
 
     return {
         "status": "OK",
@@ -490,7 +530,7 @@ if __name__ == "__main__":
 
     if strategy not in ("compare", "spatial", "stratified", "timeseries", "kfold"):
         print(
-            f"❌ Unknown strategy '{strategy}'. "
+            f"[FAIL] Unknown strategy '{strategy}'. "
             f"Use: compare, spatial, stratified, timeseries, kfold"
         )
         sys.exit(1)

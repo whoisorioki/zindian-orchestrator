@@ -4,7 +4,6 @@
 import json
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from zindian.config import ChallengeConfig
@@ -29,7 +28,8 @@ def get_git_branch() -> str:
 
 def sync_submission_board(client: ZindiClient, state: dict[str, Any]) -> dict[str, Any]:
     """Sync submission board data to state."""
-    import io, sys
+    import io
+    import sys
 
     buf = io.StringIO()
     old = sys.stdout
@@ -43,10 +43,35 @@ def sync_submission_board(client: ZindiClient, state: dict[str, Any]) -> dict[st
     state["selected_submissions"] = [s.get("filename") for s in selected]
     state["submissions_used_total"] = len(subs)
 
+    # Count submissions used today based on Zindi server UTC timestamps
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    used_today = 0
+    for s in subs:
+        created_at = s.get("created_at")
+        if isinstance(created_at, str) and created_at.startswith(today_str):
+            used_today += 1
+    state["submissions_used_today"] = used_today
+
     if subs:
         best_score = None
         config = ChallengeConfig.load()
-        maximize = config.get("metric_direction") == "maximize"
+
+        # Determine metric direction: use target_config metric_direction for target_col if available
+        target_col = config.get("target_col")
+        target_config = config.get("target_config", {})
+        maximize = True
+
+        if (
+            target_config
+            and isinstance(target_config, dict)
+            and "targets" in target_config
+        ):
+            for t in target_config["targets"]:
+                if t.get("name") == target_col:
+                    maximize = t.get("metric_direction") == "maximize"
+                    break
+        else:
+            maximize = config.get("metric_direction") == "maximize"
 
         for s in subs:
             score = s.get("public_score")
@@ -99,6 +124,9 @@ def sync_all() -> dict[str, Any]:
 
     store.write(state)
     return state
+
+
+run = sync_all
 
 
 if __name__ == "__main__":

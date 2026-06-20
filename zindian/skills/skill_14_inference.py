@@ -187,7 +187,7 @@ def _atomic_to_csv(df: pd.DataFrame, out_path: Path) -> None:
 
 
 def run(
-    submission_path: str = None,
+    submission_path: str | None = None,
     *,
     dry_run: bool = False,
     state: Optional[Dict[str, Any]] = None,
@@ -205,11 +205,11 @@ def run(
     Returns:
         Dict with `status` and the resolved output path.
     """
-    from zindian.paths import resolve_competition_paths
-    
+
     if submission_path is None:
         paths = resolve_competition_paths()
         import re
+
         pattern = re.compile(r"^sub_(\d{3})_.*\.csv$")
         highest = 0
         highest_file = None
@@ -233,7 +233,7 @@ def run(
     store = SkillStateStore(paths.state_path)
     skill_state = store.read() if state is None else state
 
-    # ── Human Gate 4 prerequisite (SoT §4 / §8) ────────────────────────────────
+    # -- Human Gate 4 prerequisite (SoT §4 / §8) --------------------------------
     gate_entry = skill_state.get("human_gate_4_approved")
     approved = False
     if gate_entry is True:
@@ -270,12 +270,12 @@ def run(
     sample = pd.read_csv(sample_path)
     sub = pd.read_csv(sub_path)
 
-    # ── Format enforcement ─────────────────────────────────────────────────────
+    # -- Format enforcement -----------------------------------------------------
     id_column = _resolve_id_column(config, sample)
     target_column = _resolve_target_column(config)
     corrected = _ensure_format(sub, sample, id_column)
 
-    # ── Task-aware value enforcement ───────────────────────────────────────────
+    # -- Task-aware value enforcement -------------------------------------------
     task_type = str(config.get("task_type", "classification"))
     use_probabilities = bool(config.get("use_probabilities", False))
     bounds_cfg = config.get("target_domain_bounds") or {}

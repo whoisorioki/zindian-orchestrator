@@ -70,6 +70,12 @@ def test_anchor_writes_oof(tmp_path, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.close()
+
         def log_experiment(self, *a, **k):
             return 1
 

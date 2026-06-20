@@ -42,7 +42,7 @@ def _resolve_target_col(config: ChallengeConfig, train: pd.DataFrame) -> str:
     for col in ("target", "label", "y", "occ"):
         if col in train.columns:
             return col
-    
+
     raise RuntimeError("target_col not initialized in challenge_config.json")
 
 
@@ -316,7 +316,17 @@ def run(
     # Multi-target detection (A11)
     target_config = config_obj.get("target_config")
     if target_config and target_config.get("targets"):
-        return _run_multi_target_fusion(config_obj, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, in_memory, dry_run)
+        return _run_multi_target_fusion(
+            config_obj,
+            state_obj,
+            paths,
+            proc_dir,
+            reports_dir,
+            subs_dir,
+            raw_dir,
+            in_memory,
+            dry_run,
+        )
 
     # Phase 1: Dynamic intake & strategy check (single-target path)
     train_path = proc_dir / "features_train.csv"
@@ -325,7 +335,19 @@ def run(
         return {"status": "FAILED", "reason": "Train file missing"}
 
     train = pd.read_csv(train_path)
-    return _run_single_target_fusion(config_obj, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, train, in_memory, dry_run, None)
+    return _run_single_target_fusion(
+        config_obj,
+        state_obj,
+        paths,
+        proc_dir,
+        reports_dir,
+        subs_dir,
+        raw_dir,
+        train,
+        in_memory,
+        dry_run,
+        None,
+    )
 
 
 def _run_multi_target_fusion(
@@ -349,7 +371,7 @@ def _run_multi_target_fusion(
     if not train_path.exists():
         return {"status": "FAILED", "reason": "Train file missing"}
     train = pd.read_csv(train_path)
-    
+
     # Load raw train for target columns (merge by index since features are encoded)
     raw_train_path = raw_dir / "Train.csv"
     if raw_train_path.exists():
@@ -359,11 +381,13 @@ def _run_multi_target_fusion(
             target_name = target_spec["name"]
             if target_name in raw_train.columns and target_name not in train.columns:
                 target_values = raw_train[target_name].values
-                # Encode categorical targets
-                if target_spec["task_type"] == "classification" and target_values.dtype == object:
-                    from sklearn.preprocessing import LabelEncoder
-                    le = LabelEncoder()
-                    target_values = le.fit_transform(target_values)
+                # Encode categorical targets using pd.factorize
+                # to match the encoding used by skill_07 and skill_08 multi-target paths.
+                if (
+                    target_spec["task_type"] == "classification"
+                    and target_values.dtype == object
+                ):
+                    target_values = pd.factorize(target_values)[0]
                 train[target_name] = target_values
 
     fusion_results = {}
@@ -384,14 +408,28 @@ def _run_multi_target_fusion(
                 "target_col": target_name,
                 "task_type": task_type,
                 "metric": target_spec.get("metric", config_obj.get("metric")),
-                "metric_direction": target_spec.get("metric_direction", config_obj.get("metric_direction")),
-                "use_probabilities": target_spec.get("use_probabilities", config_obj.get("use_probabilities")),
+                "metric_direction": target_spec.get(
+                    "metric_direction", config_obj.get("metric_direction")
+                ),
+                "use_probabilities": target_spec.get(
+                    "use_probabilities", config_obj.get("use_probabilities")
+                ),
             },
         )
 
         # Run single-target fusion logic
         result = _run_single_target_fusion(
-            target_config_override, state_obj, paths, proc_dir, reports_dir, subs_dir, raw_dir, train, in_memory, dry_run, target_name
+            target_config_override,
+            state_obj,
+            paths,
+            proc_dir,
+            reports_dir,
+            subs_dir,
+            raw_dir,
+            train,
+            in_memory,
+            dry_run,
+            target_name,
         )
         fusion_results[target_name] = result
 
@@ -422,9 +460,22 @@ def _run_multi_target_fusion(
                     last_updated=datetime.now(timezone.utc).isoformat(),
                 )
 
-            return {"status": "OK", "submission_path": str(out_path), "multi_target": True, "results": fusion_results}
+            return {
+                "status": "OK",
+                "submission_path": str(out_path),
+                "multi_target": True,
+                "results": fusion_results,
+            }
 
-    return {"status": "OK" if all(r.get("status") == "OK" for r in fusion_results.values()) else "PARTIAL", "multi_target": True, "results": fusion_results}
+    return {
+        "status": (
+            "OK"
+            if all(r.get("status") == "OK" for r in fusion_results.values())
+            else "PARTIAL"
+        ),
+        "multi_target": True,
+        "results": fusion_results,
+    }
 
 
 def _run_single_target_fusion(
@@ -453,7 +504,12 @@ def _run_single_target_fusion(
     )
 
     if task_type == "classification":
-        y_true = np.asarray(train[target_col].values, dtype=np.int32)
+        target_values = train[target_col].values
+        if target_values.dtype.kind in ("U", "S", "O"):
+            # Encode string labels with pd.factorize to match training pipeline
+            y_true = pd.factorize(target_values)[0].astype(np.int32)
+        else:
+            y_true = np.asarray(target_values, dtype=np.int32)
     else:
         y_true = np.asarray(train[target_col].values, dtype=np.float64)
 

@@ -33,14 +33,14 @@ def _load_json_object(path: Path) -> dict[str, Any]:
 def detect_target(paths: CompetitionPaths) -> str | list[str]:
     """Detect target column(s). Returns list for multi-target, string for single-target."""
     cfg = _load_json_object(paths.config_path)
-    
+
     # A11: Check for multi-target config first
     target_config = cfg.get("target_config")
     if target_config and isinstance(target_config, dict):
         targets = target_config.get("targets", [])
         if targets:
             return [t["name"] for t in targets]
-    
+
     # Fallback to legacy single-target keys
     for key in ("target_col", "target", "label", "target_column", "output_column"):
         value = cfg.get(key)
@@ -189,7 +189,7 @@ def mcar_mnar_assessment(df: pd.DataFrame, col: str, targets: list[str]) -> str:
     null_rate = series.isnull().mean()
     if null_rate == 0:
         return "none"
-    
+
     # Check correlation with each target
     null_ind = series.isnull().astype(float)
     for target in targets:
@@ -232,27 +232,29 @@ def run():
     # Detect target column(s)
     target = detect_target(paths)
     is_multi_target = isinstance(target, list)
-    targets = target if is_multi_target else [target]
-    
+    targets: list[str] = list(target) if is_multi_target else [str(target)]
+
     # Validate all targets exist
     for t in targets:
         if t not in df.columns:
             raise ValueError(f"Target column '{t}' not present in training data")
-    
+
     # Per-target standard deviation for regression targets
     target_std_dict = {}
     cfg = _load_json_object(paths.config_path)
     target_config = cfg.get("target_config", {})
-    
+
     if is_multi_target and target_config.get("targets"):
         for target_spec in target_config["targets"]:
             t_name = target_spec["name"]
             if target_spec["task_type"] == "regression":
-                target_std_dict[f"{t_name}_std"] = float(np.std(df[t_name].values, ddof=1))
+                target_std_dict[f"{t_name}_std"] = float(
+                    np.std(df[t_name].values, ddof=1)
+                )
     else:
         # Single-target: use legacy target_std
         target_std_dict["target_std"] = float(np.std(df[targets[0]].values, ddof=1))
-    
+
     # Exclude ID, coords, and all targets
     exclude_lower = {"id", "id_number", "latitude", "longitude"}
     exclude_lower.update(t.lower() for t in targets)
@@ -365,7 +367,9 @@ def run():
     md_lines.append(
         f"**Data shape**: {n_rows} rows, {n_cols} cols ({feature_count} features)"
     )
-    md_lines.append(f"**Target**: {targets if is_multi_target else targets[0]} — distribution: {target_balance}")
+    md_lines.append(
+        f"**Target**: {targets if is_multi_target else targets[0]} — distribution: {target_balance}"
+    )
     md_lines.append(f"**Total nulls**: {total_nulls}; null columns: {len(null_cols)}")
     md_lines.append(f"**Zero variance**: {zero_variance}")
     md_lines.append(f"**Near-zero variance**: {near_zero_variance}")
