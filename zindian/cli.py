@@ -246,7 +246,7 @@ def main():
         try:
             from zindian.sync_state import sync_all
             result = sync_all()
-            print("✅ State synchronized")
+            print("State synchronized")
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -303,7 +303,7 @@ def main():
     elif args.command == "init-ledger":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(["python", str(root / "scripts" / "init_ledger.py")], cwd=str(root))
+            result = subprocess.run([sys.executable, str(root / "scripts" / "init_ledger.py")], cwd=str(root))
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -313,7 +313,7 @@ def main():
     elif args.command == "preflight":
         try:
             root = Path(__file__).resolve().parent.parent
-            cmd = ["python", str(root / "scripts" / "preflight_enforce.py")]
+            cmd = [sys.executable, str(root / "scripts" / "preflight_enforce.py")]
             if args.competition:
                 cmd.extend(["--competition", args.competition])
             result = subprocess.run(cmd, cwd=str(root))
@@ -329,7 +329,7 @@ def main():
     elif args.command == "verify-state":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(["python", str(root / "scripts" / "verify_competition_state.py")], cwd=str(root))
+            result = subprocess.run([sys.executable, str(root / "scripts" / "verify_competition_state.py")], cwd=str(root))
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -339,7 +339,7 @@ def main():
     elif args.command == "verify-phase-b":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(["python", str(root / "scripts" / "verify_phase_b.py")], cwd=str(root))
+            result = subprocess.run([sys.executable, str(root / "scripts" / "verify_phase_b.py")], cwd=str(root))
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -349,7 +349,7 @@ def main():
     elif args.command == "write-oof-meta":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(["python", str(root / "scripts" / "write_oof_meta.py")], cwd=str(root))
+            result = subprocess.run([sys.executable, str(root / "scripts" / "write_oof_meta.py")], cwd=str(root))
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:

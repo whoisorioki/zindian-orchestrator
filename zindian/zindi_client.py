@@ -168,3 +168,8 @@ class ZindiClient:
         return self._user.download_dataset(
             destination=destination, make_destination=True
         )
+
+
+def _structured_comment(branch: str, oof_rmse: float, features: int, calib: str) -> str:
+    """Format structured comment for Zindi submissions."""
+    return f"branch:{branch}|oof_rmse:{oof_rmse:.6f}|features:{features}|calib:{calib}"
