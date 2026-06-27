@@ -186,46 +186,70 @@ def _atomic_to_csv(df: pd.DataFrame, out_path: Path) -> None:
     os.replace(tmp_path, out_path)
 
 
+def _next_submission_path(paths, suffix: str = "anchor") -> Path:
+    """Return the next numbered submission path for this competition."""
+    import re as _re
+    highest = 0
+    pattern = _re.compile(r"^sub_(\d{3})_.*\.csv$")
+    if paths.submissions_dir.exists():
+        for p in paths.submissions_dir.glob("sub_*.csv"):
+            m = pattern.match(p.name)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    next_num = highest + 1
+    return paths.submissions_dir / f"sub_{next_num:03d}_{suffix}.csv"
+
+
+def _resolve_test_probs_path(
+    paths, branch_name: str, target_name: str
+) -> Path:
+    """
+    Locate the test probability CSV written by skill_08 or skill_07 variant trainers.
+    Tries the multi-target pattern first, then the single-target fallback.
+    """
+    # Multi-target pattern (skill_08 _run_multi_target)
+    mt_path = paths.data_processed_dir / f"test_probs_{branch_name}_{target_name}.csv"
+    if mt_path.exists():
+        return mt_path
+    # Single-target variant pattern (skill_07 Phase D)
+    st_path = paths.data_processed_dir / f"test_probs_{branch_name}.csv"
+    if st_path.exists():
+        return st_path
+    raise FileNotFoundError(
+        f"Test probabilities not found for branch='{branch_name}', "
+        f"target='{target_name}'. Expected at:\n"
+        f"  {mt_path}\n  {st_path}\n"
+        "Run Phase 2B (skill_08) or the relevant variant first."
+    )
+
+
 def run(
-    submission_path: str | None = None,
+    branch_name: str | None = None,
     *,
     dry_run: bool = False,
     state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Skill 14 — Inference Formatting.
-    Run inference / post-processing on a submission file.
+    Skill 14 — Inference Formatting (Phase 4).
+
+    Reads pre-computed test probabilities from data/processed/ (written by
+    skill_08 or variant trainers in Phase 2B/3B), applies the optimal threshold
+    from SKILL_STATE.json, and produces the final submission CSV in submissions/.
+
+    This skill never loads features_test.csv or any model file — all inference
+    was already performed by the training skills. It is a pure formatting step.
 
     Args:
-        submission_path: Path to the candidate submission CSV.
-        dry_run: If True, validate and report without writing the post-processed file.
-        state: Optional state override (used in tests). When None, the active
-            competition's `SKILL_STATE.json` is read via `SkillStateStore`.
+        branch_name: Branch to format (e.g. 'anchor-baseline', 'variant-06').
+                     When None, uses state['anchor_git_branch'].
+        dry_run:     If True, validate and report without writing the output file.
+        state:       Optional state override (used in tests).
 
     Returns:
-        Dict with `status` and the resolved output path.
+        Dict with status and the resolved output path.
     """
-
-    if submission_path is None:
-        paths = resolve_competition_paths()
-        import re
-
-        pattern = re.compile(r"^sub_(\d{3})_.*\.csv$")
-        highest = 0
-        highest_file = None
-        if paths.submissions_dir.exists():
-            for p in paths.submissions_dir.glob("sub_*.csv"):
-                m = pattern.match(p.name)
-                if m:
-                    num = int(m.group(1))
-                    if num > highest:
-                        highest = num
-                        highest_file = p
-        if highest_file is None:
-            raise FileNotFoundError("No submission files found in submissions/")
-        submission_path = str(highest_file)
     print("\n" + "=" * 60)
-    print("SKILL 14 — Inference / Post-processing")
+    print("SKILL 14 — Inference Formatting")
     print("=" * 60 + "\n")
 
     paths = resolve_competition_paths(require_competition=True)
@@ -253,81 +277,155 @@ def run(
             "skill_state['human_gate_4_approved'] is approved."
         )
 
-    sub_path = Path(submission_path)
-    if not sub_path.exists():
-        raise FileNotFoundError(f"Submission file not found: {sub_path}")
+    # -- Resolve branch and target(s) -------------------------------------------
+    if branch_name is None:
+        branch_name = str(skill_state.get("anchor_git_branch") or "anchor-baseline")
 
-    sample_path = paths.data_raw_dir / (
-        config.get("sample_submission_filename") or "SampleSubmission.csv"
-    )
+    id_col = config.get("id_col") or config.get("id_column") or "ID"
+    task_type = str(config.get("task_type", "classification")).lower()
+
+    # Read target config — supports single and multi-target
+    target_config = config.get("target_config") or {}
+    targets = target_config.get("targets") or []
+    if not targets:
+        single_target = config.get("target_col") or config.get("target_column") or "label"
+        targets = [{"name": single_target, "task_type": task_type}]
+
+    # -- Load SampleSubmission for row-order guarantee --------------------------
+    input_files = config.get("input_files") or {}
+    sample_file = input_files.get("sample") or "SampleSubmission.csv"
+    sample_path = paths.data_raw_dir / sample_file
     if not sample_path.exists():
-        raise FileNotFoundError(
-            f"Sample submission file not found at {sample_path}. "
-            "Set 'sample_submission_filename' in challenge_config.json or place "
-            "SampleSubmission.csv in data/raw/."
-        )
-
+        raise FileNotFoundError(f"SampleSubmission.csv not found at {sample_path}")
     sample = pd.read_csv(sample_path)
-    sub = pd.read_csv(sub_path)
 
-    # -- Format enforcement -----------------------------------------------------
-    id_column = _resolve_id_column(config, sample)
-    target_column = _resolve_target_column(config)
-    corrected = _ensure_format(sub, sample, id_column)
+    # -- Determine submission columns from config --------------------------------
+    # Use explicit submission_columns list if present (e.g. GeoAI: [ID, TargetF1, TargetRAUC])
+    # Fall back to target-derived column names for single-target competitions.
+    submission_cols = (target_config.get("submission_columns") or [])
+    if not submission_cols:
+        submission_col = config.get("submission_target_col") or targets[0]["name"]
+        submission_cols = [id_col, submission_col]
 
-    # -- Task-aware value enforcement -------------------------------------------
-    task_type = str(config.get("task_type", "classification"))
-    use_probabilities = bool(config.get("use_probabilities", False))
-    bounds_cfg = config.get("target_domain_bounds") or {}
-    target_domain_bounds = bounds_cfg if isinstance(bounds_cfg, dict) else {}
-    submission_log1p = bool(config.get("submission_log1p", False))
+    print(f"Branch      : {branch_name}")
+    print(f"Targets     : {[t['name'] for t in targets]}")
+    print(f"Sub columns : {submission_cols}")
 
-    if task_type == "regression":
-        corrected = _enforce_submission_values(
-            corrected,
-            target_column,
-            task_type,
-            use_probabilities,
-            target_domain_bounds,
-            submission_log1p,
+    # -- Build output DataFrame -------------------------------------------------
+    # Reindex against sample to guarantee exact row order before any column work.
+    out_df = pd.DataFrame({id_col: sample[id_col]})
+
+    for target_spec in targets:
+        target_name = target_spec["name"]
+        target_task = str(target_spec.get("task_type", task_type)).lower()
+
+        # Load test probabilities written by Phase 2B
+        prob_path = _resolve_test_probs_path(paths, branch_name, target_name)
+        prob_df = pd.read_csv(prob_path)
+        print(f"\n[OK] Loaded test probs: {prob_path.name} ({len(prob_df)} rows)")
+
+        # Identify the probability column (first non-ID numeric column)
+        prob_col = next(
+            (c for c in prob_df.columns if c != id_col and prob_df[c].dtype.kind == "f"),
+            None,
         )
-    elif task_type == "classification":
-        corrected = _enforce_submission_values(
-            corrected,
-            target_column,
-            task_type,
-            use_probabilities,
-            target_domain_bounds,
-            submission_log1p,
+        if prob_col is None:
+            # Try columns with 'prob' in name
+            prob_col = next((c for c in prob_df.columns if "prob" in c.lower()), None)
+        if prob_col is None:
+            raise ValueError(
+                f"Cannot find probability column in {prob_path}. "
+                f"Columns: {list(prob_df.columns)}"
+            )
+
+        # Reindex probs to sample row order by ID if available, else positionally
+        if id_col in prob_df.columns:
+            prob_df = prob_df.set_index(id_col).reindex(sample[id_col]).reset_index()
+        raw_probs = np.asarray(prob_df[prob_col].values, dtype=np.float64)
+
+        # -- Resolve optimal threshold from state --------------------------------
+        # Check for per-target threshold first, fall back to single-target key
+        threshold = None
+        oof_key = f"branch_{branch_name}_{target_name}_oof"
+        oof_entry = skill_state.get(oof_key) or {}
+        if isinstance(oof_entry, dict) and oof_entry.get("model_config"):
+            threshold = oof_entry["model_config"].get("threshold")
+        if threshold is None:
+            threshold = skill_state.get("best_variant_threshold") or 0.5
+        threshold = float(threshold)
+        print(f"Threshold   : {threshold:.4f} (target={target_name})")
+
+        # -- Map to submission columns ------------------------------------------
+        # Column semantics are inferred from SampleSubmission — no hardcoded
+        # competition-specific column names.
+        #
+        # For binary classification with use_probabilities=True:
+        #   - If exactly 2 non-ID submission columns exist, the first is treated
+        #     as the hard-label column (threshold applied) and the second as the
+        #     probability column (raw values clipped to (0,1)).
+        #   - If exactly 1 non-ID submission column exists, it receives the raw
+        #     probability (use_probabilities=True) or binary label.
+        # For regression: the single non-ID column receives the clipped prediction.
+        value_cols = [c for c in submission_cols if c != id_col]
+        if target_task == "classification" and bool(config.get("use_probabilities", True)):
+            if len(value_cols) >= 2:
+                # First value column = hard labels, second = raw probabilities
+                out_df[value_cols[0]] = (raw_probs >= threshold).astype(int)
+                out_df[value_cols[1]] = np.clip(raw_probs, 1e-7, 1 - 1e-7)
+            elif len(value_cols) == 1:
+                out_df[value_cols[0]] = np.clip(raw_probs, 1e-7, 1 - 1e-7)
+        elif target_task == "classification":
+            # use_probabilities=False: only hard labels
+            submission_col_name = value_cols[0] if value_cols else target_name
+            out_df[submission_col_name] = (raw_probs >= threshold).astype(int)
+        elif target_task == "regression":
+            submission_col_name = value_cols[0] if value_cols else target_name
+            bounds = config.get("target_domain_bounds") or {}
+            lo = float(bounds.get("min", -np.inf))
+            hi = float(bounds.get("max", np.inf))
+            clipped = np.clip(raw_probs, lo, hi)
+            if bool(config.get("submission_log1p", False)):
+                clipped = np.log1p(clipped)
+            out_df[submission_col_name] = clipped
+
+    # -- Enforce final column order to match SampleSubmission -------------------
+    final_cols = [c for c in submission_cols if c in out_df.columns]
+    missing = [c for c in submission_cols if c not in out_df.columns]
+    if missing:
+        raise ValueError(
+            f"Could not produce submission columns: {missing}. "
+            f"Available: {list(out_df.columns)}"
         )
-    elif task_type == "multi_target":
-        pass
+    out_df = out_df[final_cols]
 
-    # Placeholder: future group-level smoothing or prevalence-correction hooks
-    # must be implemented as a separate, competition-agnostic plugin and gated
-    # by an explicit `inference_mode` registry entry in challenge_config.json.
+    # -- Validate shape ---------------------------------------------------------
+    if len(out_df) != len(sample):
+        raise ValueError(
+            f"Output row count ({len(out_df)}) != sample row count ({len(sample)}). "
+            "Row alignment error."
+        )
 
-    out_path = sub_path.parent / f"post_{sub_path.name}"
+    # -- Write output -----------------------------------------------------------
+    out_path = _next_submission_path(paths, suffix=branch_name.replace("/", "-"))
     if not dry_run:
-        _atomic_to_csv(corrected, out_path)
+        _atomic_to_csv(out_df, out_path)
         if state is None:
             store.update(
                 last_inference_path=str(out_path),
                 last_inference_at=datetime.now(timezone.utc).isoformat(),
                 last_updated=datetime.now(timezone.utc).isoformat(),
             )
+        print(f"\n[OK] Submission written → {out_path}")
+        print(f"     Rows: {len(out_df)} | Columns: {list(out_df.columns)}")
 
-    return {"status": "OK", "out_path": str(out_path), "task_type": task_type}
+    return {"status": "OK", "out_path": str(out_path), "branch": branch_name}
 
 
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 2:
-        print(
-            "Usage: python -m zindian.skills.skill_14_inference <submission.csv> [--dry-run]"
-        )
-        raise SystemExit(1)
     dry = "--dry-run" in sys.argv
-    arg = next(a for a in sys.argv[1:] if not a.startswith("--"))
-    print(json.dumps(run(arg, dry_run=dry), indent=2))
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    branch = args[0] if args else None
+    print(json.dumps(run(branch, dry_run=dry), indent=2))
+

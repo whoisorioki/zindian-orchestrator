@@ -938,10 +938,31 @@ policy_gate():
     "target_skew": 0.0,
     "target_std": 0.0,
     "group_structure_confirmed": false,
-    "temporal_index_confirmed": false
+    "temporal_index_confirmed": false,
+    "band_summary_stats": {},
+    "seasonal_amplitude": {},
+    "temporal_trends": {},
+    "target_correlation_per_feature": {},
+    "class_separability_index": {}
   }
 }
 ```
+
+The five band-aware diagnostics are computed dynamically from column
+naming patterns (e.g., `VH_01`, `blue_12`) — no hardcoded band names
+or competition-specific strings. When a dataset has no monthly composite
+columns (no `BAND_MM` pattern), all five fields are empty dicts — no
+pipeline halt.
+
+- `band_summary_stats`: per-band mean, std, min, max across all months
+- `seasonal_amplitude`: max(monthly_mean) − min(monthly_mean) per band
+- `temporal_trends`: monthly means and month-over-month deltas per band.
+  Structural feature (computed from feature columns, not targets) —
+  no two-mode fold-restriction applies.
+- `target_correlation_per_feature`: Pearson correlation of each numeric
+  feature with the primary target — class-separation ranking
+- `class_separability_index`: per-feature F1 score from a single-feature
+  decision stump (diagnostic only — not model selection, not AutoML)
 
 `target_std` is the standard deviation of the target column
 computed on the full training set. It is used by `skill_11`
@@ -2342,6 +2363,16 @@ optimisation.
     temporal_index_confirmed evaluated
 [ ] Writes to SKILL_STATE.json only —
     never to challenge_config.json
+[ ] band_summary_stats: per-band mean/std/min/max
+    computed from column naming patterns — empty dict
+    when no BAND_MM columns present (no crash)
+[ ] seasonal_amplitude: max-min monthly mean per band
+[ ] temporal_trends: monthly means and MoM deltas per
+    band — structural computation, no two-mode needed
+[ ] target_correlation_per_feature: Pearson r per
+    numeric feature against primary target
+[ ] class_separability_index: per-feature F1 from
+    decision stump — diagnostic only, not model selection
 ```
 
 **`skill_05`**

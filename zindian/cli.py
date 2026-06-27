@@ -11,11 +11,20 @@ import subprocess
 from pathlib import Path
 
 
+def _to_unix_path(windows_path: str) -> str:
+    """Convert a Windows path to forward-slashed format for Git Bash/MSYS2.
+
+    Converts 'C:\\Users\\...' to 'C:/Users/...' using forward slashes.
+    Git Bash accepts this format natively when received as a subprocess argument.
+    """
+    return windows_path.replace("\\", "/")
+
+
 def _run_shell_script(script_path: str, args: list[str] | None = None) -> None:
     """Execute a .sh script via bash/sh on Unix, or print error/instructions on Windows."""
     root = Path(__file__).resolve().parent.parent
     full_path = root / script_path
-    
+
     if not full_path.exists():
         print(f"Error: Script not found at {full_path}")
         sys.exit(1)
@@ -23,20 +32,26 @@ def _run_shell_script(script_path: str, args: list[str] | None = None) -> None:
     cmd_args = args or []
 
     if sys.platform == "win32":
+        # Convert script path to Unix format for Git Bash / MSYS2 (they need forward-slashed paths).
+        # cwd must stay as a native Windows path because subprocess.CreateProcess on Windows
+        # does not understand Unix-style paths.
+        unix_script_path = _to_unix_path(str(full_path))
         shells = ["bash", "sh"]
         for shell in shells:
             try:
                 subprocess.run([shell, "--version"], capture_output=True, check=True)
-                cmd = [shell, str(full_path)] + cmd_args
+                cmd = [shell, unix_script_path] + cmd_args
                 result = subprocess.run(cmd, cwd=str(root))
                 if result.returncode != 0:
                     sys.exit(result.returncode)
                 return
             except (subprocess.SubprocessError, FileNotFoundError):
                 continue
-        
-        print(f"\nError: A shell environment (bash/sh) is required to run this script.")
-        print(f"To run this command on Windows, please execute it within Git Bash, WSL, or MSYS:")
+
+        print("\nError: A shell environment (bash/sh) is required to run this script.")
+        print(
+            "To run this command on Windows, please execute it within Git Bash, WSL, or MSYS:"
+        )
         print(f"  bash {script_path} " + " ".join(cmd_args))
         sys.exit(1)
     else:
@@ -101,27 +116,60 @@ def main():
     # ---------------------------------------------------------
     # Utility Commands
     # ---------------------------------------------------------
-    bootstrap_parser = subparsers.add_parser("bootstrap", help="Bootstrap a new competition folder")
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap", help="Bootstrap a new competition folder"
+    )
     bootstrap_parser.add_argument("slug", help="Competition slug (e.g. ey-frogs)")
-    bootstrap_parser.add_argument("--move-files", action="store_true", help="Move detected root files to data/raw/")
-    bootstrap_parser.add_argument("--yes", "-y", action="store_true", help="Assume yes for confirmations")
+    bootstrap_parser.add_argument(
+        "--move-files",
+        action="store_true",
+        help="Move detected root files to data/raw/",
+    )
+    bootstrap_parser.add_argument(
+        "--yes", "-y", action="store_true", help="Assume yes for confirmations"
+    )
 
-    subparsers.add_parser("init-ledger", help="Initialize the experiments ledger database")
+    subparsers.add_parser(
+        "init-ledger", help="Initialize the experiments ledger database"
+    )
 
-    preflight_parser = subparsers.add_parser("preflight", help="Run preflight compliance verification checks")
-    preflight_parser.add_argument("--competition", help="Competition folder path (e.g., competitions/ey-frogs)")
+    preflight_parser = subparsers.add_parser(
+        "preflight", help="Run preflight compliance verification checks"
+    )
+    preflight_parser.add_argument(
+        "--competition", help="Competition folder path (e.g., competitions/ey-frogs)"
+    )
 
-    subparsers.add_parser("preflight-sim", help="Run preflight simulation checks (tmpcomp and ey-frogs)")
-    subparsers.add_parser("verify-state", help="Verify the competition state files and datasets")
-    subparsers.add_parser("verify-phase-b", help="Verify Phase B package hardening assertions")
-    subparsers.add_parser("write-oof-meta", help="Write per-OOF metadata JSON files alongside OOF CSVs")
-    subparsers.add_parser("compile-requirements", help="Compile pinned requirements.txt from requirements.in")
+    subparsers.add_parser(
+        "preflight-sim", help="Run preflight simulation checks (tmpcomp and ey-frogs)"
+    )
+    subparsers.add_parser(
+        "verify-state", help="Verify the competition state files and datasets"
+    )
+    subparsers.add_parser(
+        "verify-phase-b", help="Verify Phase B package hardening assertions"
+    )
+    subparsers.add_parser(
+        "write-oof-meta", help="Write per-OOF metadata JSON files alongside OOF CSVs"
+    )
+    subparsers.add_parser(
+        "compile-requirements",
+        help="Compile pinned requirements.txt from requirements.in",
+    )
 
-    archive_parser = subparsers.add_parser("archive", help="Archive a completed competition folder (excludes CSVs)")
+    archive_parser = subparsers.add_parser(
+        "archive", help="Archive a completed competition folder (excludes CSVs)"
+    )
     archive_parser.add_argument("slug", help="Competition slug (e.g. ey-frogs)")
 
-    subparsers.add_parser("audit-framework", help="Perform full framework audit of workspace, stubs, and venv")
-    subparsers.add_parser("check-deployment", help="Check SKILL_STATE storage optimization and migration status")
+    subparsers.add_parser(
+        "audit-framework",
+        help="Perform full framework audit of workspace, stubs, and venv",
+    )
+    subparsers.add_parser(
+        "check-deployment",
+        help="Check SKILL_STATE storage optimization and migration status",
+    )
 
     args = parser.parse_args()
 
@@ -131,6 +179,7 @@ def main():
     if args.command == "submit":
         try:
             from zindian.skills.skill_16_submit import run as _submit_run
+
             result = _submit_run(args.file)
             print(f"\nResult: {result}")
         except Exception as e:
@@ -140,6 +189,7 @@ def main():
     elif args.command == "submissions":
         try:
             from zindian.skills.skill_16_submit import show_submission_board
+
             show_submission_board()
         except Exception as e:
             print(f"Error: {e}")
@@ -148,6 +198,7 @@ def main():
     elif args.command == "leaderboard":
         try:
             from zindian.skills.skill_16_submit import pull_leaderboard
+
             pull_leaderboard(per_page=args.per_page)
         except Exception as e:
             print(f"Error: {e}")
@@ -156,6 +207,7 @@ def main():
     elif args.command == "ledger":
         try:
             from zindian.ledger import Ledger
+
             with Ledger() as ledger:
                 if args.ledger_command == "experiments":
                     exps = ledger.query(
@@ -201,6 +253,7 @@ def main():
     elif args.command == "report":
         try:
             from zindian.skills.skill_15_reporter import run as _report_run
+
             result = _report_run()
             print(json.dumps(result, indent=2, default=str))
         except Exception as e:
@@ -210,6 +263,7 @@ def main():
     elif args.command == "audit":
         try:
             from zindian.skills.skill_22_reproducibility_audit import run as _audit_run
+
             result = _audit_run(slug=args.slug if hasattr(args, "slug") else None)
             if not result.get("success"):
                 sys.exit(1)
@@ -245,6 +299,7 @@ def main():
     elif args.command == "sync":
         try:
             from zindian.sync_state import sync_all
+
             result = sync_all()
             print("State synchronized")
         except Exception as e:
@@ -259,7 +314,9 @@ def main():
             print(f"EXECUTING PHASE {args.phase_id}")
             print(f"{'=' * 60}\n")
 
-            results = run_phase(args.phase_id, variant_name=getattr(args, "variant", None))
+            results = run_phase(
+                args.phase_id, variant_name=getattr(args, "variant", None)
+            )
 
             print(f"\n{'=' * 60}")
             print(f"PHASE {args.phase_id} RESULTS")
@@ -290,6 +347,7 @@ def main():
     elif args.command == "bootstrap":
         try:
             from scripts.bootstrap_competition import main as _bootstrap_main
+
             argv = [args.slug]
             if args.move_files:
                 argv.append("--move-files")
@@ -303,7 +361,10 @@ def main():
     elif args.command == "init-ledger":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run([sys.executable, str(root / "scripts" / "init_ledger.py")], cwd=str(root))
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "init_ledger.py")],
+                cwd=str(root),
+            )
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -329,7 +390,10 @@ def main():
     elif args.command == "verify-state":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run([sys.executable, str(root / "scripts" / "verify_competition_state.py")], cwd=str(root))
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "verify_competition_state.py")],
+                cwd=str(root),
+            )
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -339,7 +403,10 @@ def main():
     elif args.command == "verify-phase-b":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run([sys.executable, str(root / "scripts" / "verify_phase_b.py")], cwd=str(root))
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "verify_phase_b.py")],
+                cwd=str(root),
+            )
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -349,7 +416,10 @@ def main():
     elif args.command == "write-oof-meta":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run([sys.executable, str(root / "scripts" / "write_oof_meta.py")], cwd=str(root))
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "write_oof_meta.py")],
+                cwd=str(root),
+            )
             if result.returncode != 0:
                 sys.exit(result.returncode)
         except Exception as e:
@@ -360,7 +430,42 @@ def main():
         _run_shell_script("scripts/compile_requirements.sh")
 
     elif args.command == "archive":
-        _run_shell_script("scripts/archive_competition.sh", [args.slug])
+        import tarfile
+        from datetime import datetime
+
+        root = Path(__file__).resolve().parent.parent
+        comp_dir = root / "competitions" / args.slug
+        if not comp_dir.exists():
+            print(f"Error: Competition directory not found: {comp_dir}")
+            sys.exit(1)
+
+        archives_dir = root / "archives"
+        archives_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        archive_name = f"{args.slug}-archive-{timestamp}.tar.gz"
+        archive_path = archives_dir / archive_name
+
+        print(f"Archiving {args.slug}...")
+        with tarfile.open(archive_path, "w:gz") as tar:
+            tar.add(comp_dir, arcname=comp_dir.name)
+
+        archive_size_bytes = archive_path.stat().st_size
+        if archive_size_bytes >= 1024 * 1024:
+            size_str = f"{archive_size_bytes / (1024 * 1024):.1f} MB"
+        elif archive_size_bytes >= 1024:
+            size_str = f"{archive_size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{archive_size_bytes} B"
+
+        print(f"✓ Archived to: {archive_path}")
+        print(f"✓ Size: {size_str}")
+
+        # Remove the competition directory after successful archive
+        import shutil
+
+        shutil.rmtree(comp_dir)
+        print(f"✓ Removed: {comp_dir}")
 
     elif args.command == "audit-framework":
         _run_shell_script("scripts/zindian_audit.sh")

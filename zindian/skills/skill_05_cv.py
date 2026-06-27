@@ -299,7 +299,20 @@ def run(strategy: str = "compare") -> dict:
     target_col = _resolve_target_col(config)
     state_store = SkillStateStore(paths.state_path)
     state = state_store.read()
-    decision = _resolve_decision(config, state, ft)
+
+    # Respect config's cv_strategy when already set (e.g. by skill_02 intake),
+    # only fall back to data-driven detection when config is empty.
+    config_cv_type = (config.get("cv_strategy") or {}).get("type")
+    if config_cv_type and config_cv_type not in ("auto", "compare", None):
+        decision = {
+            "type": config_cv_type,
+            "n_splits": config.get("cv_strategy", {}).get("n_splits", N_SPLITS),
+            "shuffle": config.get("cv_strategy", {}).get("shuffle", True),
+            "random_state": config.get("cv_strategy", {}).get("random_state", get_seed()),
+            "selection_reason": "configured_in_challenge_config",
+        }
+    else:
+        decision = _resolve_decision(config, state, ft)
 
     forced_strategy = (
         strategy

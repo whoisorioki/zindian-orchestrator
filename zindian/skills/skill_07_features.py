@@ -81,6 +81,92 @@ DEFAULT_FEATURE_ENGINEERING: dict[str, Any] = {
 }
 
 
+# -- Auto-detection + operator-override synthesis -----------------------------
+
+
+def synthesize_default_feature_engineering(config: dict, state: dict) -> dict:
+    """
+    Reads detection signals from SKILL_STATE["eda"] and config signal blocks,
+    produces a DEFAULT feature_engineering specification.
+
+    This does NOT execute anything — it only builds the spec dict that
+    build_hypothesis_features() will consume, exactly as if an operator
+    had written it by hand.
+
+    Reads:  state["eda"], config["temporal_signal"], config["spatial_signal"],
+            config["group_signal"], config["missingness_level"]
+    Returns: dict matching feature_engineering schema (empty keys = no-ops)
+    """
+    eda = (state.get("eda") or {})
+    defaults: dict[str, Any] = {}
+
+    # -- Temporal signal: month-over-month deltas and seasonal amplitude ------
+    # Directly reuses band/month detection already computed by skill_04's
+    # EDA enhancements (band_summary_stats, seasonal_amplitude, temporal_trends).
+    detected_bands = eda.get("detected_bands") or []
+    if detected_bands:
+        defaults["temporal_deltas"] = {
+            "bands": detected_bands,
+            "source": "auto_detected_monthly_composite_structure",
+        }
+
+    # -- High redundancy: PCA default -----------------------------------------
+    # Triggered when >30% of feature pairs are in high-correlation pairs.
+    # GeoAI Aquaculture (97/144 ≈ 0.67) clears this easily; a low-redundancy
+    # competition would not trigger this default at all.
+    high_corr_pairs = int(eda.get("high_corr_pairs_count") or 0)
+    n_features = int((eda.get("shape") or {}).get("feature_count") or 0)
+    # Fallback: estimate from detected_bands * 12 months
+    if n_features == 0 and detected_bands:
+        n_features = len(detected_bands) * 12
+    redundancy_ratio = high_corr_pairs / max(n_features, 1)
+    if redundancy_ratio > 0.3:
+        n_components = int(eda.get("pca_n_components_for_95pct") or 15)
+        # Strong single-feature predictors ride alongside PCA components —
+        # these are the re3_08/swir2-style columns with high separability
+        # detected during the leakage investigation (single-feature F1 > 0.70).
+        strong_cols: list[str] = list(eda.get("strong_single_feature_cols") or [])
+        defaults["pca"] = {
+            "n_components": max(n_components, 5),  # floor at 5 for safety
+            "fit_on": "train_only",
+            "include_raw_alongside": strong_cols,
+        }
+
+    # -- Missingness-driven interaction terms ---------------------------------
+    if config.get("missingness_level") == "high":
+        mnar_cols = eda.get("mnar_columns") or []
+        if mnar_cols:
+            defaults["missingness_interactions"] = {
+                "mnar_columns": mnar_cols,
+            }
+
+    # -- Spatial / group signal -> structural aggregation defaults ------------
+    group_signal = config.get("group_signal") or {}
+    if group_signal.get("present") and group_signal.get("col"):
+        defaults["group_aggregations"] = {
+            "group_col": group_signal["col"],
+            "structural_only": True,
+        }
+
+    return defaults
+
+
+def merge_feature_engineering_config(
+    auto_defaults: dict, operator_config: dict
+) -> dict:
+    """
+    Merge auto-detected defaults with operator-declared config.
+    Operator-declared keys ALWAYS win on conflicts.
+    Auto-detected defaults fill in only keys the operator did not specify.
+
+    If auto_defaults is empty (no detection signals), returns operator_config
+    unchanged — byte-for-byte today's existing behavior.
+    """
+    merged = dict(auto_defaults)
+    merged.update(operator_config)  # operator keys overwrite defaults
+    return merged
+
+
 def build_hypothesis_features(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -88,20 +174,27 @@ def build_hypothesis_features(
     target_array: np.ndarray | None = None,
     train_idx: np.ndarray | None = None,
     variant_name: str | None = None,
+    merged_fe_cfg: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Build derived features dynamically using generic mathematical operations.
     Reads feature engineering instructions from challenge_config.json, with
     an empty fallback when no feature_engineering block is present.
 
+    If merged_fe_cfg is provided (pre-merged auto-detected + operator config),
+    it is used directly and the config-file lookup is skipped.
+
     All column names are read from config — never hardcoded in this function.
 
     Args:
-        train_df:     Training feature DataFrame.
-        test_df:      Test feature DataFrame.
-        mode:         "cv" (fold-restricted) or "inference" (full training set).
-        target_array: Target values array. Required for target-dependent features.
-        train_idx:    Training fold indices. Required in mode="cv".
+        train_df:      Training feature DataFrame.
+        test_df:       Test feature DataFrame.
+        mode:          "cv" (fold-restricted) or "inference" (full training set).
+        target_array:  Target values array. Required for target-dependent features.
+        train_idx:     Training fold indices. Required in mode="cv".
+        variant_name:  Optional variant name for sidecar override lookup.
+        merged_fe_cfg: Pre-merged feature engineering config from run(). If None,
+                       the function falls back to loading from config file.
     """
     if mode not in ("cv", "inference"):
         raise ValueError("mode must be 'cv' or 'inference'")
@@ -116,10 +209,14 @@ def build_hypothesis_features(
     except Exception:
         cfg = {}
 
-    fe_cfg = (
-        cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING)
-        or DEFAULT_FEATURE_ENGINEERING
-    )
+    # Use pre-merged config when provided (from run()), otherwise load from file.
+    if merged_fe_cfg is not None:
+        fe_cfg = merged_fe_cfg or DEFAULT_FEATURE_ENGINEERING
+    else:
+        fe_cfg = (
+            cfg.get("feature_engineering", DEFAULT_FEATURE_ENGINEERING)
+            or DEFAULT_FEATURE_ENGINEERING
+        )
 
     # Per-variant sidecar override mechanism
     if variant_name is not None:
@@ -307,6 +404,67 @@ def build_hypothesis_features(
             test.rename(columns={old_name: new_name}, inplace=True)
             new_cols = [new_name if c == old_name else c for c in new_cols]
 
+    # 6. PCA components (structural feature — no fold-restriction needed;
+    #    fit on train only, transform both to avoid leakage)
+    pca_spec = fe_cfg.get("pca")
+    if pca_spec and isinstance(pca_spec, dict):
+        try:
+            from sklearn.decomposition import PCA as _PCA
+            from sklearn.preprocessing import StandardScaler as _SS
+
+            try:
+                _cfg_inner = ChallengeConfig.load()._data
+            except Exception:
+                _cfg_inner = cfg
+
+            _id_col = (
+                _cfg_inner.get("id_col")
+                or _cfg_inner.get("id_column")
+                or "ID"
+            )
+            _target_lower = str(
+                _cfg_inner.get("target_col")
+                or _cfg_inner.get("target_column")
+                or "target"
+            ).lower()
+            _excluded = {_id_col.lower(), _target_lower}
+
+            pca_feature_cols = [
+                c for c in train.columns
+                if c.lower() not in _excluded
+                and pd.api.types.is_numeric_dtype(train[c])
+            ]
+            if len(pca_feature_cols) >= 2:
+                n_components = int(pca_spec.get("n_components") or 15)
+                n_components = min(n_components, len(pca_feature_cols))
+
+                _scaler = _SS()
+                X_tr = _scaler.fit_transform(
+                    train[pca_feature_cols].fillna(
+                        train[pca_feature_cols].median()
+                    )
+                )
+                X_te = _scaler.transform(
+                    test[pca_feature_cols].fillna(
+                        train[pca_feature_cols].median()
+                    )
+                )
+
+                _pca = _PCA(n_components=n_components)
+                _pca.fit(X_tr)  # fit on train ONLY — no leakage
+                tr_pca = _pca.transform(X_tr)
+                te_pca = _pca.transform(X_te)
+
+                pca_cols = [f"pca_{i + 1}" for i in range(n_components)]
+                for i, col_name in enumerate(pca_cols):
+                    train[col_name] = tr_pca[:, i]
+                    if col_name not in test.columns:
+                        test[col_name] = te_pca[:, i]
+                new_cols.extend(pca_cols)
+
+        except Exception as _pca_err:
+            print(f"  [WARN] PCA feature generation failed: {_pca_err}")
+
     # Guarantee dtype stability
     for df in (train, test):
         for c in new_cols:
@@ -320,142 +478,200 @@ def build_hypothesis_features(
     return train[final_cols], test[test_final_cols]
 
 
-# -- Variant Training ----------------------------------------------------------
+# -- Variant Model Config Helpers ----------------------------------------------
 
 
-def train_variant(
-    train: pd.DataFrame,
-    test: pd.DataFrame,
-    feature_cols: list[str],
-    variant_name: str,
-    baseline_score: float = 0.0,
-    anchor_auc: float | None = None,
-    seed: int = SEED,
-    *,
-    anchor_f1: float | None = None,
-    config: ChallengeConfig | None = None,
-    state: dict | None = None,
-    cv_strategy: dict | None = None,
-    target_col: str | None = None,
-    task_type: str = "classification",
-    gate_margin: float = 0.005,
+def _resolve_variant_model_config(
+    variant_name: str, paths, cfg: dict
 ) -> dict:
     """
-    Train one LightGBM variant and evaluate against the anchor gate.
-    Returns result dict with status, primary metric, and delta.
+    Resolve model configuration for a variant.
+
+    Priority (highest first):
+    1. Sidecar file: competitions/<slug>/variants/<variant_name>.json → "model" key
+    2. Default: shared LGB with standard params
+
+    Returns a model config dict with keys:
+        family          str        "lgb" | "rf" | "xgb" | "dart" | "ensemble"
+        hyperparams     dict       passed to the model constructor
+        num_boost_round int        for LGB/XGB tree-based models
+        early_stopping  int        early stopping rounds
+        ensemble        list|None  for family="ensemble": list of member dicts
     """
-    if anchor_f1 is not None:
-        baseline_score = anchor_f1
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-
-    if target_col is None:
-        if config is not None:
-            TARGET = config.get("target_column") or config.get("target_col") or "target"
-        else:
-            TARGET = "target"
-        if TARGET not in train.columns:
-            for candidate in (
-                "target",
-                "Occurrence Status",
-                "label",
-                "target_col",
-                "y",
-            ):
-                if candidate in train.columns:
-                    TARGET = candidate
-                    break
-    else:
-        TARGET = target_col
-
-    X = np.asarray(train[feature_cols].values, dtype=np.float64)
-    if task_type == "regression":
-        y = np.asarray(train[TARGET].values, dtype=np.float64)
-    else:
-        _y_raw_07 = train[TARGET].values
-        if _y_raw_07.dtype.kind in ("U", "S", "O"):
-            _le_07 = LabelEncoder()
-            y = _le_07.fit_transform(_y_raw_07.astype(str)).astype(np.int32)
-        else:
-            y = np.asarray(_y_raw_07, dtype=np.int32)
-    X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
-
-    shared_lgb_variants = {
-        "variant-00",
-        "variant-06",
-        "variant-07",
-        "variant-08",
-        "variant-09",
-        "variant-10",
-        "variant-11",
-        "variant-12",
-        "variant-15",
-        "variant-16",
-        "variant-17",
-        "variant-20",
-        "variant-30",
-        "variant-36",
-        "variant-31",
-        "variant-32",
-        "variant-33",
-        "variant-35",
-        "variant-37",
-        "strength",
-        "recency_strength",
-        "squad_manager_experience",
-    }
-    tuned_lgb_variants = {
-        "variant-13": {
-            "learning_rate": 0.02,
-            "num_leaves": 63,
-            "min_child_samples": 20,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_alpha": 0.1,
-            "reg_lambda": 0.1,
-        },
-        "variant-19": {
-            "learning_rate": 0.02,
-            "num_leaves": 127,
-            "max_depth": 8,
-            "min_child_samples": 10,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_alpha": 0.05,
-            "reg_lambda": 0.05,
-        },
-        "variant-27": {
-            "learning_rate": 0.02,
-            "num_leaves": 63,
-            "min_child_samples": 20,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_alpha": 0.1,
-            "reg_lambda": 0.1,
-        },
+    _DEFAULT_MODEL_CFG: dict = {
+        "family": "lgb",
+        "hyperparams": {},
+        "num_boost_round": 500,
+        "early_stopping": 50,
+        "ensemble": None,
     }
 
-    if variant_name in shared_lgb_variants | tuned_lgb_variants.keys():
-        print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
+    sidecar_model: dict | None = None
+    comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
+    if comp_slug and paths is not None:
+        try:
+            sidecar_path = (
+                Path(__file__).parent.parent.parent
+                / "competitions"
+                / comp_slug
+                / "variants"
+                / f"{variant_name}.json"
+            )
+            if sidecar_path.exists():
+                sidecar_data = json.loads(sidecar_path.read_text())
+                if "model" in sidecar_data:
+                    sidecar_model = sidecar_data["model"]
+        except Exception:
+            pass
+
+    if sidecar_model:
+        # Merge: sidecar overrides defaults key-by-key
+        merged = dict(_DEFAULT_MODEL_CFG)
+        merged.update(sidecar_model)
+        return merged
+
+    return dict(_DEFAULT_MODEL_CFG)
+
+
+def _register_variant(variant_name: str, model_cfg: dict, paths, store) -> None:
+    """
+    Write variant_name into SKILL_STATE["registered_variants"] so it
+    persists across runs and is queryable without editing Python source.
+    Also auto-creates a sidecar stub if none exists, so future runs
+    can configure the variant without code changes.
+    """
+    try:
+        state_now = store.read()
+        existing: list[str] = list(state_now.get("registered_variants") or [])
+        if variant_name not in existing:
+            existing.append(variant_name)
+            store.update(registered_variants=existing)
+    except Exception:
+        pass
+
+    # Auto-create sidecar stub if it doesn't exist yet
+    try:
+        from zindian.config import ChallengeConfig
+        cfg = ChallengeConfig.load()._data
+        comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
+        if comp_slug:
+            variants_dir = (
+                Path(__file__).parent.parent.parent
+                / "competitions" / comp_slug / "variants"
+            )
+            variants_dir.mkdir(parents=True, exist_ok=True)
+            sidecar_path = variants_dir / f"{variant_name}.json"
+            if not sidecar_path.exists():
+                stub = {
+                    "feature_engineering": {},
+                    "model": model_cfg,
+                    "_note": (
+                        "Auto-generated stub. Edit 'model' to customise hyperparams. "
+                        "Edit 'feature_engineering' to override auto-detected defaults."
+                    ),
+                }
+                sidecar_path.write_text(json.dumps(stub, indent=2))
+    except Exception:
+        pass
+
+
+def _build_single_model(family: str, hyperparams: dict, seed: int):
+    """Instantiate a single model from family name and hyperparams."""
+    hp = dict(hyperparams)
+    if family == "lgb":
+        return lgb.LGBMClassifier(
+            n_estimators=hp.pop("n_estimators", 500),
+            learning_rate=hp.pop("learning_rate", 0.05),
+            num_leaves=hp.pop("num_leaves", 31),
+            random_state=seed,
+            verbose=-1,
+            **hp,
+        )
+    elif family == "dart":
+        return lgb.LGBMClassifier(
+            boosting_type="dart",
+            n_estimators=hp.pop("n_estimators", 500),
+            learning_rate=hp.pop("learning_rate", 0.05),
+            num_leaves=hp.pop("num_leaves", 31),
+            random_state=seed,
+            verbose=-1,
+            **hp,
+        )
+    elif family == "rf":
+        from sklearn.ensemble import RandomForestClassifier
+        return RandomForestClassifier(
+            n_estimators=hp.pop("n_estimators", 500),
+            max_depth=hp.pop("max_depth", None),
+            min_samples_leaf=hp.pop("min_samples_leaf", 2),
+            max_features=hp.pop("max_features", "sqrt"),
+            random_state=seed,
+            n_jobs=-1,
+            **hp,
+        )
+    elif family == "xgb":
+        from xgboost import XGBClassifier
+        return XGBClassifier(
+            n_estimators=hp.pop("n_estimators", 500),
+            learning_rate=hp.pop("learning_rate", 0.05),
+            max_depth=hp.pop("max_depth", 6),
+            subsample=hp.pop("subsample", 0.8),
+            colsample_bytree=hp.pop("colsample_bytree", 0.8),
+            random_state=seed,
+            verbosity=0,
+            eval_metric="logloss",
+            n_jobs=-1,
+            **hp,
+        )
+    raise ValueError(f"Unknown model family: {family!r}")
+
+
+def _dispatch_variant_training(
+    model_cfg: dict,
+    X: np.ndarray,
+    y: np.ndarray,
+    X_test: np.ndarray,
+    splitter,
+    n_splits: int,
+    seed: int,
+    variant_name: str,
+    use_lgb_shared_path: bool,
+    # kwargs forwarded to shared path only
+    train_df: "pd.DataFrame | None" = None,
+    test_df: "pd.DataFrame | None" = None,
+    feature_cols: "list[str] | None" = None,
+    target_col: str = "target",
+    task_type: str = "classification",
+    config=None,
+    gate_margin: float = 0.005,
+    baseline_score: float = 0.0,
+) -> dict:
+    """
+    Route training to the correct model family without checking variant_name.
+    All behaviour comes from model_cfg.
+    """
+    family = model_cfg.get("family", "lgb")
+    hyperparams = dict(model_cfg.get("hyperparams") or {})
+    num_boost_round = int(model_cfg.get("num_boost_round") or 500)
+    early_stopping = int(model_cfg.get("early_stopping") or 50)
+    ensemble_spec = model_cfg.get("ensemble")  # list of member dicts or None
+
+    # -- Shared LGB path (fastest, uses train_lightgbm_cv) --
+    if use_lgb_shared_path and family in ("lgb", "dart") and not ensemble_spec:
         params = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
-        if variant_name in tuned_lgb_variants:
-            params.update(tuned_lgb_variants[variant_name])
-
-        splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-        n_splits = getattr(splitter, "n_splits", 5)
+        params.update(hyperparams)
+        if family == "dart":
+            params["boosting_type"] = "dart"
         lgb_result = train_lightgbm_cv(
-            train=train,
-            test=test,
+            train=train_df,
+            test=test_df,
             feature_cols=feature_cols,
-            target_col=TARGET,
+            target_col=target_col,
             n_splits=n_splits,
             random_seed=seed,
             cv=splitter,
             params=params,
-            num_boost_round=1000 if variant_name in tuned_lgb_variants else 500,
-            early_stopping_rounds=100 if variant_name in tuned_lgb_variants else 50,
+            num_boost_round=num_boost_round,
+            early_stopping_rounds=early_stopping,
             scale=True,
             per_fold_feature_fn=lambda t_df, te_df, fcols, tr_idx, targ_arr: (
                 np.asarray(
@@ -483,43 +699,23 @@ def train_variant(
         if task_type == "regression":
             primary_key = f"oof_{metric_name}"
             oof_score = float(lgb_result.oof_rmse)
-            metric_direction = (
+            direction = (
                 config.get("metric_direction", "minimize")
-                if config is not None
-                else "minimize"
+                if config is not None else "minimize"
             )
             delta = (
                 baseline_score - oof_score
-                if metric_direction == "minimize"
+                if direction == "minimize"
                 else oof_score - baseline_score
             )
-            gate = "PASS" if delta >= gate_margin else "PRUNE"
-
-            print(f"\n  {'=' * 50}")
-            print(f"  {variant_name}")
-            print(
-                f"  OOF {metric_name.upper()} : {oof_score:.5f}  (baseline: {baseline_score:.5f})"
-            )
-            print(f"  Delta    : {delta:+.5f}  → {gate}")
         else:
             primary_key = "oof_f1" if metric_name == "f1_score" else "oof_auc"
             oof_score = lgb_result.oof_f1
             delta = oof_score - baseline_score
-            gate = "PASS" if delta >= gate_margin else "PRUNE"
-
-            print(f"\n  {'=' * 50}")
-            print(f"  {variant_name}")
-            print(
-                f"  OOF F1   : {lgb_result.oof_f1:.5f}  (baseline: {baseline_score:.5f})"
-            )
-            print(f"  Delta    : {delta:+.5f}  → {gate}")
-            print(
-                f"  ROC-AUC  : {lgb_result.oof_auc:.5f}  (threshold: {lgb_result.threshold:.2f})"
-            )
-
+        gate = "PASS" if delta >= gate_margin else "PRUNE"
         ret = {
             "variant": variant_name,
-            "features": len(feature_cols),
+            "features": len(feature_cols) if feature_cols else 0,
             "oof_auc": float(lgb_result.oof_auc),
             "oof_f1": float(lgb_result.oof_f1),
             "threshold": float(lgb_result.threshold),
@@ -533,222 +729,37 @@ def train_variant(
             ret[primary_key] = oof_score
         return ret
 
-    # -- Non-shared variants: per-fold manual loop -----------------------------
-    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-    n_splits = getattr(splitter, "n_splits", 5)
+    # -- Per-fold manual loop (ensemble or non-LGB families) --
     oof_probs = np.zeros(len(y))
-    test_probs = np.zeros(len(test))
+    test_probs_acc = np.zeros(len(X_test))
     fold_scores_list: list[float] = []
 
-    print(f"\n  Training {variant_name} ({len(feature_cols)} features)...")
     for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
-        model = None
+        if ensemble_spec:
+            # Weighted ensemble of heterogeneous models
+            val_preds = np.zeros(len(val_idx))
+            test_preds = np.zeros(len(X_test))
+            total_weight = 0.0
+            for member in ensemble_spec:
+                m_family = member.get("family", "lgb")
+                m_hp = dict(member.get("hyperparams") or {})
+                m_weight = float(member.get("weight", 1.0))
+                m_model = _build_single_model(m_family, m_hp, seed)
+                _fit_model(m_model, m_family, X, y, tr_idx, val_idx, seed, early_stopping)
+                val_preds += m_weight * np.asarray(m_model.predict_proba(X[val_idx]))[:, 1]
+                test_preds += m_weight * np.asarray(m_model.predict_proba(X_test))[:, 1]
+                total_weight += m_weight
+            if total_weight > 0:
+                val_preds /= total_weight
+                test_preds /= total_weight
+            oof_probs[val_idx] = val_preds
+            test_probs_acc += test_preds / n_splits
+        else:
+            model = _build_single_model(family, dict(hyperparams), seed)
+            _fit_model(model, family, X, y, tr_idx, val_idx, seed, early_stopping)
+            oof_probs[val_idx] = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
+            test_probs_acc += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
 
-        try:
-            train_fold, test_fold = build_hypothesis_features(
-                train, test, mode="cv", target_array=y, train_idx=tr_idx
-            )
-            X = np.asarray(train_fold[feature_cols].values, dtype=np.float64)
-            X_test = np.asarray(test_fold[feature_cols].values, dtype=np.float64)
-            from sklearn.preprocessing import StandardScaler
-
-            scaler = StandardScaler()
-            X = scaler.fit_transform(X)
-            X_test = scaler.transform(X_test)
-        except Exception:
-            X = np.asarray(train[feature_cols].values, dtype=np.float64)
-            X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
-
-        if variant_name in ("variant-13", "variant-27"):
-            model = lgb.LGBMClassifier(
-                n_estimators=1000,
-                learning_rate=0.02,
-                num_leaves=63,
-                min_child_samples=20,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
-                random_state=SEED,
-                verbose=-1,
-            )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
-            )
-
-        elif variant_name in ("variant-14", "variant-28"):
-            from sklearn.ensemble import RandomForestClassifier
-
-            model = RandomForestClassifier(
-                n_estimators=500,
-                max_depth=None,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=SEED,
-                n_jobs=-1,
-            )
-            model.fit(X[tr_idx], y[tr_idx])
-
-        elif variant_name in ("variant-18", "variant-29"):
-            from xgboost import XGBClassifier
-
-            model = XGBClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                max_depth=6,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                use_label_encoder=False,
-                eval_metric="logloss",
-                random_state=seed,
-                verbosity=0,
-                n_jobs=-1,
-            )
-            model.fit(
-                X[tr_idx], y[tr_idx], eval_set=[(X[val_idx], y[val_idx])], verbose=False
-            )
-
-        elif variant_name == "variant-19":
-            model = lgb.LGBMClassifier(
-                n_estimators=1000,
-                learning_rate=0.02,
-                num_leaves=127,
-                max_depth=8,
-                min_child_samples=10,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.05,
-                reg_lambda=0.05,
-                random_state=seed,
-                verbose=-1,
-            )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(100), lgb.log_evaluation(-1)],
-            )
-
-        elif variant_name in ("variant-25", "variant-34"):
-            from sklearn.ensemble import RandomForestClassifier
-
-            lgb_model = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=seed,
-                verbose=-1,
-            )
-            lgb_model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
-            )
-            rf_model = RandomForestClassifier(
-                n_estimators=500,
-                max_depth=None,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=seed,
-                n_jobs=-1,
-            )
-            rf_model.fit(X[tr_idx], y[tr_idx])
-            lgb_val = np.asarray(lgb_model.predict_proba(X[val_idx]))[:, 1]
-            rf_val = np.asarray(rf_model.predict_proba(X[val_idx]))[:, 1]
-            lgb_test = np.asarray(lgb_model.predict_proba(X_test))[:, 1]
-            rf_test = np.asarray(rf_model.predict_proba(X_test))[:, 1]
-            oof_probs[val_idx] = 0.5 * lgb_val + 0.5 * rf_val
-            test_probs += (0.5 * lgb_test + 0.5 * rf_test) / n_splits
-            fold_scores_list.append(
-                float(roc_auc_score(y[val_idx], oof_probs[val_idx]))
-            )
-            print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
-            continue
-
-        elif variant_name == "variant-26":
-            model = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=seed,
-                verbose=-1,
-            )
-            model.fit(
-                X[tr_idx],
-                y[tr_idx],
-                eval_set=[(X[val_idx], y[val_idx])],
-                callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
-            )
-
-        elif variant_name in (
-            "variant-39",
-            "variant-40",
-            "variant-41",
-            "variant-42",
-            "variant-43",
-        ):
-            model = lgb.LGBMClassifier(
-                boosting_type="dart",
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=SEED,
-                verbose=-1,
-            )
-            model.fit(X[tr_idx], y[tr_idx])
-
-        elif variant_name == "variant-38":
-            from sklearn.ensemble import RandomForestClassifier
-            from xgboost import XGBClassifier
-
-            _lgb = lgb.LGBMClassifier(
-                n_estimators=500,
-                learning_rate=0.05,
-                num_leaves=31,
-                random_state=SEED,
-                verbose=-1,
-            )
-            _rf = RandomForestClassifier(
-                n_estimators=300,
-                min_samples_leaf=2,
-                max_features="sqrt",
-                random_state=SEED,
-                n_jobs=-1,
-            )
-            _xgb = XGBClassifier(
-                n_estimators=300,
-                learning_rate=0.05,
-                max_depth=6,
-                random_state=SEED,
-                verbosity=0,
-                eval_metric="logloss",
-            )
-            _lgb.fit(X[tr_idx], y[tr_idx])
-            _rf.fit(X[tr_idx], y[tr_idx])
-            _xgb.fit(X[tr_idx], y[tr_idx])
-            lgb_val = np.asarray(_lgb.predict_proba(X[val_idx]))[:, 1]
-            rf_val = np.asarray(_rf.predict_proba(X[val_idx]))[:, 1]
-            xgb_val = np.asarray(_xgb.predict_proba(X[val_idx]))[:, 1]
-            lgb_test = np.asarray(_lgb.predict_proba(X_test))[:, 1]
-            rf_test = np.asarray(_rf.predict_proba(X_test))[:, 1]
-            xgb_test = np.asarray(_xgb.predict_proba(X_test))[:, 1]
-            oof_probs[val_idx] = (lgb_val + rf_val + xgb_val) / 3.0
-            test_probs += (lgb_test + rf_test + xgb_test) / 3.0 / n_splits
-            fold_scores_list.append(
-                float(roc_auc_score(y[val_idx], oof_probs[val_idx]))
-            )
-            print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
-            continue
-
-        if model is None:
-            raise RuntimeError(f"Model was not initialized for {variant_name}")
-
-        oof_probs[val_idx] = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
-        test_probs += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
         fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
         print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
 
@@ -758,27 +769,149 @@ def train_variant(
     oof_f1 = f1_score(y, (oof_probs >= best_t).astype(int))
     delta = oof_f1 - baseline_score
     gate = "PASS" if delta >= gate_margin else "PRUNE"
-
-    print(f"\n  {'=' * 50}")
-    print(f"  {variant_name}")
-    print(f"  OOF F1   : {oof_f1:.5f}  (baseline: {baseline_score:.5f})")
-    print(f"  Delta    : {delta:+.5f}  → {gate}")
-    print(f"  ROC-AUC  : {oof_auc:.5f}  (threshold: {best_t:.2f})")
-
     return {
         "variant": variant_name,
-        "features": len(feature_cols),
+        "features": len(feature_cols) if feature_cols else X.shape[1],
         "oof_auc": float(oof_auc),
         "oof_f1": float(oof_f1),
         "threshold": float(best_t),
         "delta": float(delta),
         "gate": gate,
         "oof_probs": oof_probs,
-        "test_probs": test_probs,
+        "test_probs": test_probs_acc,
         "fold_scores": fold_scores_list,
     }
 
 
+def _fit_model(model, family: str, X, y, tr_idx, val_idx, seed: int, early_stopping: int):
+    """Fit a single model with family-appropriate early stopping."""
+    if family in ("lgb", "dart"):
+        model.fit(
+            X[tr_idx], y[tr_idx],
+            eval_set=[(X[val_idx], y[val_idx])],
+            callbacks=[lgb.early_stopping(early_stopping), lgb.log_evaluation(-1)],
+        )
+    elif family == "xgb":
+        model.fit(
+            X[tr_idx], y[tr_idx],
+            eval_set=[(X[val_idx], y[val_idx])],
+            verbose=False,
+        )
+    else:
+        # rf and others — no early stopping
+        model.fit(X[tr_idx], y[tr_idx])
+
+
+# -- Variant Training ----------------------------------------------------------
+
+
+def train_variant(
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    feature_cols: list[str],
+    variant_name: str,
+    baseline_score: float = 0.0,
+    anchor_auc: float | None = None,
+    seed: int = SEED,
+    *,
+    anchor_f1: float | None = None,
+    config: ChallengeConfig | None = None,
+    state: dict | None = None,
+    cv_strategy: dict | None = None,
+    target_col: str | None = None,
+    task_type: str = "classification",
+    gate_margin: float = 0.005,
+    paths=None,
+    store=None,
+) -> dict:
+    """
+    Train one variant and evaluate against the anchor gate.
+
+    Model configuration is resolved from the variant sidecar file
+    (competitions/<slug>/variants/<variant_name>.json → "model" key).
+    Any unknown variant name is auto-registered and a sidecar stub is
+    created — no Python source edits required to add new variants.
+
+    Returns result dict with status, primary metric, and delta.
+    """
+    if anchor_f1 is not None:
+        baseline_score = anchor_f1
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+
+    if target_col is None:
+        if config is not None:
+            TARGET = config.get("target_column") or config.get("target_col") or "target"
+        else:
+            TARGET = "target"
+        if TARGET not in train.columns:
+            for candidate in ("target", "Occurrence Status", "label", "target_col", "y"):
+                if candidate in train.columns:
+                    TARGET = candidate
+                    break
+    else:
+        TARGET = target_col
+
+    X = np.asarray(train[feature_cols].values, dtype=np.float64)
+    if task_type == "regression":
+        y = np.asarray(train[TARGET].values, dtype=np.float64)
+    else:
+        _y_raw = train[TARGET].values
+        if _y_raw.dtype.kind in ("U", "S", "O"):
+            _le = LabelEncoder()
+            y = _le.fit_transform(_y_raw.astype(str)).astype(np.int32)
+        else:
+            y = np.asarray(_y_raw, dtype=np.int32)
+    X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
+
+    # Resolve model config from sidecar (no hardcoded variant name checks)
+    _cfg_data = config._data if config is not None else {}
+    model_cfg = _resolve_variant_model_config(variant_name, paths, _cfg_data)
+
+    # Auto-register variant in state + create sidecar stub if missing
+    if store is not None:
+        _register_variant(variant_name, model_cfg, paths, store)
+
+    # Shared LGB path is faster — use it for single-model LGB/DART families
+    family = model_cfg.get("family", "lgb")
+    ensemble_spec = model_cfg.get("ensemble")
+    use_shared = (family in ("lgb", "dart")) and not ensemble_spec
+
+    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    n_splits = getattr(splitter, "n_splits", 5)
+
+    print(f"\n  Training {variant_name} ({len(feature_cols)} features, family={family})...")
+
+    result = _dispatch_variant_training(
+        model_cfg=model_cfg,
+        X=X,
+        y=y,
+        X_test=X_test,
+        splitter=splitter,
+        n_splits=n_splits,
+        seed=seed,
+        variant_name=variant_name,
+        use_lgb_shared_path=use_shared,
+        train_df=train,
+        test_df=test,
+        feature_cols=feature_cols,
+        target_col=TARGET,
+        task_type=task_type,
+        config=config,
+        gate_margin=gate_margin,
+        baseline_score=baseline_score,
+    )
+
+    # Print summary
+    print(f"\n  {'=' * 50}")
+    print(f"  {variant_name}")
+    print(f"  OOF F1   : {result['oof_f1']:.5f}  (baseline: {baseline_score:.5f})")
+    print(f"  Delta    : {result['delta']:+.5f}  → {result['gate']}")
+    if result.get("oof_auc"):
+        print(f"  ROC-AUC  : {result['oof_auc']:.5f}")
+
+    return result
 # -- Round Report Writer -------------------------------------------------------
 
 
@@ -1224,6 +1357,26 @@ def run(
     # -- Phase B2: Build hypothesis-derived features -----------
     print("\n[B2] Building hypothesis-derived features")
     target_col_cfg = config.get("target_column") or config.get("target_col") or "target"
+
+    # Auto-detect defaults from EDA signals, merge with operator config.
+    # Operator-declared keys always win on conflicts.
+    # If no signals detected, merged_fe_cfg == operator block == today's behavior.
+    _auto_defaults = synthesize_default_feature_engineering(config._data, state)
+    _operator_block = config.get("feature_engineering") or {}
+    _merged_fe_cfg = merge_feature_engineering_config(_auto_defaults, _operator_block)
+
+    # Auditability: write resolved config so Gate 1 reviewers can see what ran.
+    try:
+        store.update(
+            feature_engineering_resolved={
+                "auto_detected": _auto_defaults,
+                "operator_declared": _operator_block,
+                "merged": _merged_fe_cfg,
+            }
+        )
+    except Exception:
+        pass  # non-fatal — auditability write should never block feature generation
+
     if variant_name is None:
         targ_arr = (
             train_feat[target_col_cfg].to_numpy()
@@ -1236,6 +1389,7 @@ def run(
             mode="inference",
             target_array=targ_arr,
             variant_name=variant_name,
+            merged_fe_cfg=_merged_fe_cfg,
         )
     else:
         # Structural features only — no target array to avoid leakage
@@ -1245,6 +1399,7 @@ def run(
             mode="inference",
             target_array=None,
             variant_name=variant_name,
+            merged_fe_cfg=_merged_fe_cfg,
         )
     print("  [OK] Hypothesis-derived features built from config")
 
@@ -1371,6 +1526,8 @@ def run(
             target_col=target_col,
             task_type=task_type,
             gate_margin=effective_gate_margin,
+            paths=paths,
+            store=store,
         )
         seed_results.append(r)
 
@@ -1466,25 +1623,9 @@ def run(
     except Exception as e:
         print(f"  [WARN]  Failed to save OOF/test probs: {e}")
 
-    # -- Phase D: Save submission if PASS or force_save --------
-    if result["gate"] == "PASS" or force_save:
-        input_files = config.get("input_files", {}) or {}
-        sample_file = input_files.get("sample", "SampleSubmission.csv")
-        sample = pd.read_csv(paths.data_raw_dir / sample_file)
-        sub_col = [c for c in sample.columns if c != id_col][0]
-        test_probs_arr = result["test_probs"]
-        if task_type == "regression":
-            sub_values = test_probs_arr
-        elif use_probabilities:
-            sub_values = test_probs_arr
-        else:
-            sub_values = (test_probs_arr >= result["threshold"]).astype(int)
-        sub = pd.DataFrame({id_col: test_feat[id_col], sub_col: sub_values})
-        sub = sub.set_index(id_col).reindex(sample[id_col]).reset_index()
-        out = competition_dir / f"submissions/{variant_name}_submission.csv"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        sub.to_csv(out, index=False)
-        print(f"  [OK] Submission saved → {out}")
+    # Submission write removed — Phase 2B writes probabilities only.
+    # skill_14 (Phase 4) reads test_probs from data/processed/ and
+    # produces the final submission CSV.
 
     # -- Phase D: Update state ---------------------------------
     variants_tested = int(state.get("variants_tested") or 0) + 1

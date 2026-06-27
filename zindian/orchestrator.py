@@ -273,7 +273,9 @@ def run_skill(
                 "traceback": traceback.format_exc(),
             }
     else:
-        # Standard skill execution
+        # Standard skill execution — skill_02 needs merge mode to preserve pre-set config
+        if skill_name == "skill_02":
+            kwargs.setdefault("merge", True)
         if skill_name not in SKILL_REGISTRY:
             return {
                 "status": "ERROR",
@@ -555,6 +557,17 @@ def run_phase(
                 f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
             )
             store.update(**{phase_key: True})
+    except Exception:
+        pass
+
+    # Generate phase summary report
+    try:
+        from .skills.skill_15_reporter import run_phase_summary, _write_json_summary
+
+        _phase = phase.lower().strip()
+        if _phase in ("2b", "3b"):
+            run_phase_summary(_phase)
+        _write_json_summary(_phase, paths, state, ["anchor_oof_score", "anchor_oof_f1", "best_variant_features", "submissions_used_total", "cv_strategy_type"])
     except Exception:
         pass
 

@@ -23,8 +23,6 @@ mkdir -p "$ARCHIVE_DIR"
 
 echo "Archiving $SLUG..."
 tar -czf "$ARCHIVE_DIR/$ARCHIVE_NAME" \
-    --exclude="$COMP_DIR/data/raw/*.csv" \
-    --exclude="$COMP_DIR/data/processed/*.csv" \
     "$COMP_DIR"
 
 echo "✓ Archived to: $ARCHIVE_DIR/$ARCHIVE_NAME"
@@ -33,9 +31,7 @@ echo ""
 echo "Archive contains:"
 echo "  - challenge_config.json"
 echo "  - SKILL_STATE.json"
+echo "  - data/raw/"
+echo "  - data/processed/"
 echo "  - reports/"
 echo "  - submissions/"
-echo ""
-echo "Excluded (per storage policy):"
-echo "  - data/raw/*.csv"
-echo "  - data/processed/*.csv"

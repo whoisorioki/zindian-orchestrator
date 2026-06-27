@@ -18,28 +18,44 @@ def _iso_now() -> str:
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Externalize large score arrays if this is SKILL_STATE.json
+    # Externalize large payloads if this is SKILL_STATE.json
     if "SKILL_STATE.json" in str(path):
         scores_dir = path.parent / "scores"
         scores_dir.mkdir(exist_ok=True)
 
+        _EDA_KEYS = frozenset(
+            {
+                "band_summary_stats",
+                "temporal_trends",
+                "target_correlation_per_feature",
+                "class_separability_index",
+            }
+        )
+
         data_copy = {}
         for key, value in data.items():
+            # Externalize large OOF score lists (>100 entries)
             if isinstance(value, dict) and "scores" in value:
                 scores = value["scores"]
                 if isinstance(scores, list) and len(scores) > 100:
-                    # Externalize
                     score_file = scores_dir / f"{key}.json"
                     with open(score_file, "w") as sf:
                         json.dump(scores, sf)
 
-                    # Create new dict without scores, add reference
                     new_value = {k: v for k, v in value.items() if k != "scores"}
                     new_value["scores_file"] = f"scores/{key}.json"
                     new_value["count"] = len(scores)
                     data_copy[key] = new_value
                 else:
                     data_copy[key] = value
+            # Externalize large EDA metric dicts (>10 keys)
+            elif key in _EDA_KEYS and isinstance(value, dict) and len(value) > 10:
+                eda_file = scores_dir / f"eda_{key}.json"
+                with open(eda_file, "w") as sf:
+                    json.dump(value, sf)
+
+                new_value = {"eda_file": f"scores/eda_{key}.json", "count": len(value)}
+                data_copy[key] = new_value
             else:
                 data_copy[key] = value
         data = data_copy
@@ -65,13 +81,21 @@ class SkillStateStore:
             return state
         obj = json.loads(self.path.read_text(encoding="utf-8"))
 
-        # Hydrate externalized scores
+        # Hydrate externalized scores and EDA metrics
         for key, value in obj.items():
-            if isinstance(value, dict) and "scores_file" in value:
+            if not isinstance(value, dict):
+                continue
+            if "scores_file" in value:
                 score_path = self.path.parent / value["scores_file"]
                 if score_path.exists():
                     with open(score_path, "r") as sf:
                         value["scores"] = json.load(sf)
+            elif "eda_file" in value:
+                eda_path = self.path.parent / value["eda_file"]
+                if eda_path.exists():
+                    with open(eda_path, "r") as sf:
+                        loaded = json.load(sf)
+                        value.update(loaded)
 
         return validate_skill_state(obj)
 

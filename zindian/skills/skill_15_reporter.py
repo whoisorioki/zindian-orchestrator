@@ -487,6 +487,29 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
     }
 
 
+def _write_json_summary(
+    phase: str,
+    paths: Any,
+    state: dict,
+    include_keys: list[str],
+) -> Dict[str, Any]:
+    """Write a lightweight JSON summary for any phase."""
+    report: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "phase": phase,
+        "competition": state.get("competition", "unknown"),
+        "dag_phase": state.get("dag_phase"),
+    }
+    for key in include_keys:
+        if key in state:
+            report[key] = state[key]
+
+    report_path = paths.reports_dir / f"{phase}_summary.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return {"status": "OK", "path": str(report_path)}
+
+
 if __name__ == "__main__":
     result = run()
     print(json.dumps(result, indent=2))

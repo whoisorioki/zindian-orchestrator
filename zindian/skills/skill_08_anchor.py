@@ -273,45 +273,8 @@ def create_git_branch(branch_name: str = "anchor-baseline") -> None:
 # -- Save Submission CSV --------------------------------------------------------
 
 
-def next_submission_path(paths, suffix: str = "anchor") -> Path:
-    """Return the next numbered submission path for this competition."""
-    state = SkillStateStore(paths.state_path).read()
-    highest_state_count = max(
-        int(state.get("submissions_used_today") or 0),
-        int(state.get("submissions_used_total") or 0),
-    )
-
-    highest_file_count = 0
-    pattern = re.compile(r"^sub_(\d{3})_.*\.csv$")
-    if paths.submissions_dir.exists():
-        for path in paths.submissions_dir.glob("sub_*.csv"):
-            match = pattern.match(path.name)
-            if match:
-                highest_file_count = max(highest_file_count, int(match.group(1)))
-
-    next_num = max(highest_state_count, highest_file_count) + 1
-    return paths.submissions_dir / f"sub_{next_num:03d}_{suffix}.csv"
-
-
-def save_submission(
-    id_col: str,
-    test_ids: np.ndarray,
-    predictions: np.ndarray,
-    submission_col: str,
-    output_path: Path,
-) -> None:
-    """Save predictions in Zindi submission format (probabilities or hard labels per config)."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    sub_df = pd.DataFrame(
-        {
-            id_col: np.asarray(test_ids),
-            submission_col: np.asarray(predictions),
-        }
-    )
-    sub_df.to_csv(output_path, index=False)
-    print(f"[OK] Submission CSV saved → {output_path}")
-
+# next_submission_path() and save_submission() removed — Phase 2B must not write
+# to submissions/. All submission formatting belongs exclusively in Phase 4 (skill_14).
 
 # -- Entry Point ----------------------------------------------------------------
 
@@ -512,37 +475,9 @@ def run(
         ).to_csv(oof_path, index=False)
     print(f"[OK] OOF predictions saved → {oof_path}")
 
-    # -- Save submission CSV ------------------------------------
-    sub_path = next_submission_path(paths)
-    input_files = config.get("input_files", {}) or {}
-    input_files.get("sample", "SampleSubmission.csv")
-    # Probability-aware output format from config
-    task_type = str(config.get("task_type", "classification")).lower()
-
-    # Handle multiclass predictions
-    if test_preds.ndim > 1:
-        predictions_to_save = np.argmax(test_preds, axis=1).astype(int)
-    elif task_type == "regression" or config.get("use_probabilities", True):
-        predictions_to_save = np.asarray(test_preds, dtype=np.float64)
-    else:
-        print(f"\nApplying optimal F1 threshold: {best_t:.2f}")
-        predictions_to_save = (
-            np.asarray(test_preds, dtype=np.float64) >= best_t
-        ).astype(int)
-
-    if config.get("submission_log1p", False):
-        print(
-            "Applying log1p transformation to submission predictions per platform config"
-        )
-        predictions_to_save = np.log1p(predictions_to_save)
-
-    save_submission(
-        id_col,
-        np.asarray(test[id_col].values),
-        predictions_to_save,
-        submission_col,
-        sub_path,
-    )
+    # Submission formatting removed — Phase 2B writes probabilities only.
+    # skill_14 (Phase 4) reads test_probs from data/processed/ and produces
+    # the final submission CSV.
 
     # -- Compute anchor_oof_score before logging ----------------
     retraining_active = bool(
@@ -639,6 +574,26 @@ def run(
         f"[OK] SKILL_STATE.json updated: score={anchor_oof_score:.6f}  f1={oof_f1:.6f}  auc={oof_auc:.6f}  threshold={best_t:.2f}"
     )
 
+    # -- Surface cv_limitations.known_risk into metadata_warnings ----------
+    # This makes the temporal CV gap visible to skill_11, skill_17, and
+    # three_lens without requiring any consumer to parse config prose.
+    cv_lim = config.get("cv_limitations") or {}
+    known_risk = cv_lim.get("known_risk")
+    if known_risk and cv_lim.get("temporal_holdout_required") and not cv_lim.get("temporal_cv_feasible"):
+        state_now = state_store.read()
+        existing_warnings = state_now.get("metadata_warnings") or []
+        if not isinstance(existing_warnings, list):
+            existing_warnings = []
+        temporal_warning = (
+            f"⚠️  Temporal CV not feasible — no date column in data. "
+            f"Anchor OOF ({anchor_oof_score:.4f}) was validated via "
+            f"{cv_lim.get('fallback_strategy', 'stratified')} CV only. "
+            f"{known_risk}"
+        )
+        if not any("Temporal CV not feasible" in w for w in existing_warnings):
+            state_store.update(metadata_warnings=existing_warnings + [temporal_warning])
+            print(f"[WARN] {temporal_warning}")
+
     # -- Create git branch --------------------------------------
     create_git_branch("anchor-baseline")
 
@@ -665,7 +620,7 @@ To submit when ready (via orchestrator flow):
         "status": "OK",
         "oof_logloss": oof_logloss,
         "oof_auc": oof_auc,
-        "submission_path": str(sub_path),
+        "submission_path": None,
         "git_branch": state_store.read().get("current_git_branch", "anchor-baseline"),
         "n_features": feature_count,
         "submitted": submission_result is not None,
@@ -849,50 +804,30 @@ def _run_multi_target(
 
     # Save test probabilities for calibration
     for target_name, preds in all_test_preds.items():
+        target_specs = [t for t in targets if t["name"] == target_name]
+        target_task = target_specs[0]["task_type"] if target_specs else "classification"
+        test_prob_df = pd.DataFrame({id_col: raw_test[id_col]})
         if preds.ndim > 1:
-            test_prob_df = pd.DataFrame({id_col: raw_test[id_col]})
+            # Multiclass: one column per class
             for i in range(preds.shape[1]):
                 test_prob_df[f"{target_name}_prob_class_{i}"] = preds[:, i]
-            test_prob_path = (
-                paths.data_processed_dir
-                / f"test_probs_anchor-baseline_{target_name}.csv"
-            )
-            test_prob_df.to_csv(test_prob_path, index=False)
-            print(f"[OK] Test probabilities saved → {test_prob_path}")
-
-    sub_df = pd.DataFrame({id_col: raw_test[id_col]})
-
-    for target_name, preds in all_test_preds.items():
-        if preds.ndim > 1:
-            numeric_pred = np.argmax(preds, axis=1)
         else:
-            numeric_pred = preds
-
-        # Map Target to stage names, round total_goals
-        if target_name == "Target":
-            uniques = target_uniques.get(target_name)
-            if uniques:
-                stage_map = dict(enumerate(uniques))
+            # Binary classification: store positive-class probability
+            if target_task == "classification":
+                test_prob_df[f"{target_name}_prob_class_1"] = np.asarray(preds, dtype=np.float64)
             else:
-                stage_map = {
-                    0: "group",
-                    1: "group",
-                    2: "roundof16",
-                    3: "qf",
-                    4: "sf",
-                    5: "runnerup",
-                    6: "champion",
-                    7: "roundof32",
-                }
-            sub_df[target_name] = pd.Series(numeric_pred).map(stage_map).fillna("group")
-        elif target_name == "total_goals":
-            sub_df[target_name] = np.round(numeric_pred).astype(int).clip(0, 20)
-        else:
-            sub_df[target_name] = numeric_pred
+                # Regression: no probability columns to save
+                continue
+        test_prob_path = (
+            paths.data_processed_dir
+            / f"test_probs_anchor-baseline_{target_name}.csv"
+        )
+        test_prob_df.to_csv(test_prob_path, index=False)
+        print(f"[OK] Test probabilities saved → {test_prob_path}")
 
-    sub_path = next_submission_path(paths, suffix="anchor_multi")
-    sub_df.to_csv(sub_path, index=False)
-    print(f"[OK] Multi-target submission saved → {sub_path}")
+    # Submission formatting removed from Phase 2B — skill_14 (Phase 4) reads
+    # test_probs_anchor-baseline_<target>.csv from data/processed/ and produces
+    # the final submission CSV with competition-specific column formatting.
 
     # Compute weighted composite score per SoT v2.2.1 A11
     # For mixed-task competitions: 0.6 × classification_f1 + 0.4 × normalized_regression
@@ -1031,7 +966,7 @@ def _run_multi_target(
         "targets": list(all_metrics.keys()),
         "metrics": all_metrics,
         "avg_score": avg_score,
-        "submission_path": str(sub_path),
+        "submission_path": None,
         "oof_path": str(oof_path),
     }
 
