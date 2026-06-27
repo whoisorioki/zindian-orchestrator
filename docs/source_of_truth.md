@@ -1,6 +1,6 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** 2.2.1-Multi-Target
+**Version:** 2.3
 **Status:** SIGNED OFF
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
 
@@ -10,8 +10,8 @@ a few minor gaps remain (such as the pseudo-labeling retraining loop in skill_21
 composite fold score variance in skill_12).
 See `/docs/sot_audit_report.md` for the complete audit report.
 
-**Last updated:** June 2026
-**Patched from v2.1-Canonical:** 2 changes —
+**Last updated:** June 2026 (v2.3: added R5 carbon tracking, known gaps registry)
+**Patched from v2.2.1-Multi-Target:** 3 changes —
   Section 2: Replaced "RMSLE vs RMSE Target Transformation and Evaluation"
   with "Regression Target Transformation Lifecycle" — generalized mapping
   matrix covering RMSLE, RMSE (root_mean_squared_error), and MAE
@@ -938,10 +938,31 @@ policy_gate():
     "target_skew": 0.0,
     "target_std": 0.0,
     "group_structure_confirmed": false,
-    "temporal_index_confirmed": false
+    "temporal_index_confirmed": false,
+    "band_summary_stats": {},
+    "seasonal_amplitude": {},
+    "temporal_trends": {},
+    "target_correlation_per_feature": {},
+    "class_separability_index": {}
   }
 }
 ```
+
+The five band-aware diagnostics are computed dynamically from column
+naming patterns (e.g., `VH_01`, `blue_12`) — no hardcoded band names
+or competition-specific strings. When a dataset has no monthly composite
+columns (no `BAND_MM` pattern), all five fields are empty dicts — no
+pipeline halt.
+
+- `band_summary_stats`: per-band mean, std, min, max across all months
+- `seasonal_amplitude`: max(monthly_mean) − min(monthly_mean) per band
+- `temporal_trends`: monthly means and month-over-month deltas per band.
+  Structural feature (computed from feature columns, not targets) —
+  no two-mode fold-restriction applies.
+- `target_correlation_per_feature`: Pearson correlation of each numeric
+  feature with the primary target — class-separation ranking
+- `class_separability_index`: per-feature F1 score from a single-feature
+  decision stump (diagnostic only — not model selection, not AutoML)
 
 `target_std` is the standard deviation of the target column
 computed on the full training set. It is used by `skill_11`
@@ -2159,6 +2180,103 @@ governance sign-off. This is the standard Zindi code
 review requires.
 ```
 
+**R5 — Carbon and compute impact is measured and reported.**
+
+```
+Every skill that performs model training, feature
+engineering, SHAP computation, calibration, or
+inference must instrument its compute duration and
+estimated carbon output.
+
+Storage extends the existing telemetry pattern:
+    SKILL_STATE["telemetry.{skill_name}"] already contains:
+        duration_sec       : wall-clock seconds (measured by
+                             orchestrator run_skill() wrapper)
+        peak_memory_mb     : peak RSS (measured via tracemalloc
+                             by orchestrator)
+    New fields added to the same key:
+        carbon_kg_estimate : kg CO2 estimated for this skill run
+        tracker_method     : "codecarbon" | "mlco2_formula"
+                             | "not_instrumented"
+        hardware_type      : "cpu" | "gpu" | "tpu"
+        region             : cloud/local region code
+
+Telemetry is measured by the orchestrator's run_skill()
+wrapper for every skill automatically. Carbon estimation
+is added by a post-skill hook: the orchestrator passes the
+already-measured duration_sec and peak_memory_mb to a carbon
+calculator, which computes carbon_kg_estimate using:
+
+    Primary method: CodeCarbon (optional dependency)
+    Fallback:       ML CO2 Impact formula
+
+ML CO2 Impact formula fallback:
+    TDP_watts = config["infrastructure"].get("tdp_watts", 15.0)
+    PUE = config["infrastructure"].get("pue", 1.0)
+    carbon_intensity = config["infrastructure"].get(
+        "carbon_intensity_gco2_per_kwh", 494.0)
+    energy_kwh = (TDP_watts * PUE * duration_seconds)
+                 / 3_600_000
+    carbon_kg_estimate = (energy_kwh * carbon_intensity) / 1000
+
+config["infrastructure"] block (written by skill_02
+during Phase 1 mutable window):
+{
+  "hardware_type": "cpu | gpu | tpu",
+  "region": "ke | us-east-1 | eu-central-1 ...",
+  "tdp_watts": 15.0,
+  "pue": 1.0,
+  "carbon_intensity_gco2_per_kwh": 494.0
+}
+
+⚠️ KNOWN BUG: config["infrastructure"] writes by skill_02
+silently fail on fresh bootstrap (see C1 in Section 9).
+The fallback path (not_instrumented with warning) will
+trigger on every fresh run until the bootstrap phase string
+is added to allowed_write_phases across all Phase 1 skills.
+
+Aggregation is performed by the orchestrator's post-phase
+hook (not by skill_15). After every phase completes, the
+orchestrator aggregates per-skill telemetry into:
+    SKILL_STATE["telemetry.aggregate"] = {
+        "total_duration_seconds": 0.0,
+        "total_carbon_kg_estimate": null,
+        "skills_not_instrumented": []
+    }
+
+skill_22 verifies at sign-off:
+    telemetry.aggregate present and non-null
+    total_carbon_kg_estimate or explicit
+        not_instrumented with reason
+    config["infrastructure"] block present
+    carbon_kg_estimate reported in governance report
+        with tracker_method cited
+
+Competition history log additions:
+    "total_training_duration_seconds": 0.0,
+    "total_carbon_kg_estimate": null,
+    "tracker_method": "mlco2_formula | codecarbon
+                       | not_instrumented"
+```
+
+Mandatory skills (must instrument carbon):
+    _lightgbm_shared.py  (training loop — highest compute)
+    skill_07_features.py (feature engineering)
+    skill_08_anchor.py   (anchor model training)
+    skill_09_calibration.py
+    skill_10_shap.py     (SHAP — highest confirmed: 24.5s)
+    skill_13_oracle_fusion.py
+    skill_14_inference.py
+
+Exempt skills (config/state reads, negligible compute):
+    skill_01, 02, 03, 05, 06, 11, 12, 15, 16, 17, 22
+    skill_00, 18, 19, 20, 21 (sidecar/research)
+
+Hardware constraint: All carbon estimation assumes
+local CPU (no GPU) by default. GPU carbon tracking
+requires explicit hardware_type = "gpu" in config.
+
+
 ---
 
 ## 7. Is This Reinforcement Learning?
@@ -2342,6 +2460,16 @@ optimisation.
     temporal_index_confirmed evaluated
 [ ] Writes to SKILL_STATE.json only —
     never to challenge_config.json
+[ ] band_summary_stats: per-band mean/std/min/max
+    computed from column naming patterns — empty dict
+    when no BAND_MM columns present (no crash)
+[ ] seasonal_amplitude: max-min monthly mean per band
+[ ] temporal_trends: monthly means and MoM deltas per
+    band — structural computation, no two-mode needed
+[ ] target_correlation_per_feature: Pearson r per
+    numeric feature against primary target
+[ ] class_separability_index: per-feature F1 from
+    decision stump — diagnostic only, not model selection
 ```
 
 **`skill_05`**
@@ -2949,6 +3077,33 @@ has more than one entry)
 
 ---
 
-*End of Source of Truth Document v2.2.1-Multi-Target*
-*Patched from v2.2-Generalized-Regression: 15 changes extending single-target architecture to multi-target competitions (e.g., FIFA World Cup with both regression and classification targets) while preserving complete backward compatibility for single-target competitions.*
-*Status: Fully signed off — all blocking issues resolved (A1 pseudo-label recombination policy, A2 composite variance threshold, A3 preflight OOF validation).*
+---
+
+## 9. Known Gaps Registry
+
+This section documents every confirmed discrepancy between the SoT
+contract and the current codebase. Items are tracked by severity.
+
+---
+
+### 🔴 CRITICAL — Pipeline-blocking or Contract-violating
+
+**C1 — Bootstrap dag_phase prevents config writes**
+
+```
+SoT Contract:   Phase 1 skills write to challenge_config.json
+                during the mutable window.
+Code Reality:   bootstrap_competition.py sets dag_phase =
+                "phase_1_integrity_locked". This value is NOT
+                in any skill's allowed_write_phases list (which
+                has "phase_1_integrity" without "_locked").
+                EVERY config write after bootstrap silently fails.
+Impact:         cv_strategy, target_config, and all Phase 1
+                config writes silently lost. Config stays at
+                template defaults.
+Fix:            Add "phase_1_integrity_locked" to every skill's
+                allowed_write_phases tuple, OR change bootstrap
+                to use "phase_1_integrity".
+```
+*Patched from v2.2.1-Multi-Target: 3 changes — R5 carbon tracking (Section 6), known gaps registry (Section 9), skill_22 R5 checklist (Section 8).*
+*Status: Signed off — known gaps tracked in Section 9.*

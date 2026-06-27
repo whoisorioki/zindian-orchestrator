@@ -384,7 +384,8 @@ def best_f1_threshold(
     y_true_array: np.ndarray
     if _y_true_raw.dtype.kind in ("U", "S", "O"):
         _le_true = LabelEncoder()
-        y_true_array = _le_true.fit_transform(_y_true_raw.astype(str)).astype(np.int32)
+        transformed = _le_true.fit_transform(_y_true_raw.astype(str))
+        y_true_array = np.asarray(transformed, dtype=np.int32)
     else:
         y_true_array = np.asarray(_y_true_raw, dtype=np.int32)
     probs_array: np.ndarray = np.asarray(probs, dtype=np.float64)
@@ -427,7 +428,10 @@ def _build_guard_condition_flags(
 
 
 def _resolve_initial_test_probs(
-    state: dict[str, Any], paths: Any, config: ChallengeConfig
+    state: dict[str, Any],
+    paths: Any,
+    config: ChallengeConfig,
+    target_name: str | None = None,
 ) -> np.ndarray | None:
     """Find and load test probabilities of the active branch before running the loop."""
     branch = (
@@ -448,12 +452,24 @@ def _resolve_initial_test_probs(
     proc_dir = paths.data_processed_dir
     reports_dir = paths.reports_dir
 
-    candidates = [
-        f"calib_test_probs_{branch}.csv",
-        f"calib_test_probs_{branch}_augmented.csv",
-        f"test_probs_{branch}.csv",
-        f"test_probs_{branch}_augmented.csv",
-    ]
+    candidates = []
+    if target_name:
+        candidates.extend(
+            [
+                f"calib_test_probs_{branch}_{target_name}.csv",
+                f"calib_test_probs_{branch}_{target_name}_augmented.csv",
+                f"test_probs_{branch}_{target_name}.csv",
+                f"test_probs_{branch}_{target_name}_augmented.csv",
+            ]
+        )
+    candidates.extend(
+        [
+            f"calib_test_probs_{branch}.csv",
+            f"calib_test_probs_{branch}_augmented.csv",
+            f"test_probs_{branch}.csv",
+            f"test_probs_{branch}_augmented.csv",
+        ]
+    )
 
     cols_cfg = config.get("columns") or {}
     id_col = config.get("id_column") or config.get("id_col") or cols_cfg.get("id")
@@ -477,7 +493,11 @@ def _resolve_initial_test_probs(
 # -- Run loop ------------------------------------------------------------------
 
 
-def run(dry_run: bool = False) -> dict:
+def run(
+    dry_run: bool = False,
+    target_name_override: str | None = None,
+    is_multi_target: bool = False,
+) -> dict:
     """Run the pseudo-labeling loop.
 
     Returns a dict with `status`. The canonical record under
@@ -511,24 +531,28 @@ def run(dry_run: bool = False) -> dict:
     config_data = getattr(config, "_data", {}) or {}
 
     # Multi-target detection (A12)
-    target_config = config.get("target_config")
-    if target_config and target_config.get("targets"):
-        # A12 Assertion: Verify recombination policy exists for mixed-task competitions
-        targets = target_config.get("targets", [])
-        task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
-        if (
-            len(task_types) > 1
-            and "classification" in task_types
-            and "regression" in task_types
-        ):
-            assert "pseudo_label_recombination_policy" in target_config, (
-                "A12 Violation: Mixed-task multi-target competitions require a "
-                "recombination policy in challenge_config.json! Add "
-                "'pseudo_label_recombination_policy' to target_config."
-            )
-        return _run_multi_target_pseudo_label(paths, config, store, state, dry_run)
+    if target_name_override is None:
+        target_config = config.get("target_config")
+        if target_config and target_config.get("targets"):
+            # A12 Assertion: Verify recombination policy exists for mixed-task competitions
+            targets = target_config.get("targets", [])
+            task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
+            if (
+                len(task_types) > 1
+                and "classification" in task_types
+                and "regression" in task_types
+            ):
+                assert "pseudo_label_recombination_policy" in target_config, (
+                    "A12 Violation: Mixed-task multi-target competitions require a "
+                    "recombination policy in challenge_config.json! Add "
+                    "'pseudo_label_recombination_policy' to target_config."
+                )
+            return _run_multi_target_pseudo_label(paths, config, store, state, dry_run)
 
     # -- Guard Condition 1: classification only -------------------------------
+    target_col = (
+        target_name_override or config.get("target_col") or config.get("target_column")
+    )
     task_type = str(config.get("task_type", "classification"))
     if task_type != "classification":
         msg = f"Pseudo-labeling is strictly prohibited for task_type '{task_type}'. Classification only."
@@ -564,7 +588,7 @@ def run(dry_run: bool = False) -> dict:
     )
 
     conf_pos, conf_neg, threshold = _resolve_threshold(config)
-    initial_test_probs = _resolve_initial_test_probs(state, paths, config)
+    initial_test_probs = _resolve_initial_test_probs(state, paths, config, target_col)
     confidence_threshold_met = bool(
         initial_test_probs is not None and float(initial_test_probs.max()) >= conf_pos
     )
@@ -625,6 +649,13 @@ def run(dry_run: bool = False) -> dict:
     pd.read_csv(sample_sub_file)
 
     drop_cols, target_col, id_column = _resolve_drop_columns(config, train.columns)
+    if target_name_override:
+        target_col = target_name_override
+        target_config = config.get("target_config")
+        if target_config and target_config.get("targets"):
+            for t in target_config["targets"]:
+                drop_cols.add(t["name"])
+
     if not target_col or target_col not in train.columns:
         return {
             "status": "BLOCKED",
@@ -657,9 +688,10 @@ def run(dry_run: bool = False) -> dict:
     _y_lab_raw = train[target_col].to_numpy()
     if _y_lab_raw.dtype.kind in ("U", "S", "O"):
         _le_lab = LabelEncoder()
-        y_labelled = _le_lab.fit_transform(_y_lab_raw.astype(str)).astype(np.int32)
+        transformed = _le_lab.fit_transform(_y_lab_raw.astype(str))
+        y_labelled = np.asarray(transformed, dtype=np.int32)
     else:
-        y_labelled = _y_lab_raw.astype(np.int32)
+        y_labelled = np.asarray(_y_lab_raw, dtype=np.int32)
     X_test = test[feature_cols].to_numpy(dtype=np.float32)
     test_ids = test[id_column].to_numpy()
 
@@ -870,9 +902,16 @@ def run(dry_run: bool = False) -> dict:
 
     # -- Persist the OOF record via write_oof_record -------------------------
     cv_strategy_id = resolve_active_cv_strategy_id(state, config_data)
-    oof_branch_name = (
-        "pseudo_label_augmented" if retraining_required else "pseudo_label"
-    )
+    if is_multi_target:
+        oof_branch_name = (
+            f"anchor-baseline_{target_col}_augmented"
+            if retraining_required
+            else f"anchor-baseline_{target_col}"
+        )
+    else:
+        oof_branch_name = (
+            "pseudo_label_augmented" if retraining_required else "pseudo_label"
+        )
     oof_array = np.asarray(oof_probs[: len(X_labelled)], dtype=np.float64)
     write_oof_record(
         store,
@@ -888,22 +927,22 @@ def run(dry_run: bool = False) -> dict:
             "seeds": [int(s) for s in SEEDS],
             "sample_weight": float(sample_weight_pseudo),
             "cv_strategy": cv_strategy,
-            "task_type": task_type,
+            "task_type": "classification",
             "feature_count": int(len(feature_cols)),
             "n_pseudo_labels_added": int(n_pseudo_added_total),
         },
     )
 
     # -- Update SKILL_STATE with the canonical pseudo_label_result + summary -
-    (state.get("current_active_branch") or state.get("anchor_git_branch") or "unknown")
-    store.update(
-        pseudo_label_result=pseudo_label_result,
-        pseudo_label_best_iteration=int(best_iteration),
-        pseudo_label_best_oof_f1=float(best_oof_f1),
-        pseudo_label_oof_cv_strategy_id=cv_strategy_id,
-        pseudo_label_cv_strategy_id=cv_strategy_id,
-        last_updated=datetime.now(timezone.utc).isoformat(),
-    )
+    if not is_multi_target:
+        store.update(
+            pseudo_label_result=pseudo_label_result,
+            pseudo_label_best_iteration=int(best_iteration),
+            pseudo_label_best_oof_f1=float(best_oof_f1),
+            pseudo_label_oof_cv_strategy_id=cv_strategy_id,
+            pseudo_label_cv_strategy_id=cv_strategy_id,
+            last_updated=datetime.now(timezone.utc).isoformat(),
+        )
 
     # -- Gate report print ----------------------------------------------------
     print(
@@ -995,35 +1034,60 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
 
     # Run pseudo-labeling only on classification targets
     augmented_results = {}
+    classification_retraining_required = False
+
     for target_spec in classification_targets:
         target_name = target_spec["name"]
         print(f"\n{'-' * 70}")
         print(f"Pseudo-label: {target_name} (classification)")
         print(f"{'-' * 70}")
 
-        # Override config for this target — build inline without assigning to a variable
-        _target_override_data = {
-            **config._data,
-            "target_col": target_name,
-            "task_type": "classification",
-        }
-        _ = ChallengeConfig(path=config.path, _data=_target_override_data)
+        # Run single-target pseudo-labeling
+        res = run(
+            dry_run=dry_run,
+            target_name_override=target_name,
+            is_multi_target=True,
+        )
 
-        # Run single-target pseudo-labeling (call main run logic)
-        # For now, mark as augmented (full implementation would call the main loop)
-        augmented_results[target_name] = {
-            "augmented": True,
-            "n_pseudo_labels": 0,  # Placeholder
-            "best_oof_f1": 0.0,  # Placeholder
-        }
+        if res.get("status") in ("OK", "GATE_PASSED_DRY_RUN"):
+            augmented_results[target_name] = {
+                "augmented": True,
+                "n_pseudo_labels": res.get("best_iteration", 0) * 10,
+                "best_oof_f1": res.get("best_oof_f1", 0.0),
+            }
+            if res.get("retraining_required"):
+                classification_retraining_required = True
+        else:
+            augmented_results[target_name] = {
+                "augmented": False,
+                "reason": res.get("reason"),
+            }
 
     # A12 Recombination Logic
+    retraining_required = False
     if policy == "freeze_unaugmented_targets_at_original":
         print(
             f"\n[OK] A12 Policy: Freezing {len(regression_targets)} regression targets at original OOF"
         )
         print(f"   Augmented {len(classification_targets)} classification targets")
-        retraining_required = len(classification_targets) > 0
+        retraining_required = classification_retraining_required
+
+        if retraining_required:
+            # Copy baseline OOF for regression/unaugmented targets to augmented keys
+            state = store.read()
+            for t in targets:
+                t_name = t["name"]
+                if t_name not in augmented_results or not augmented_results[t_name].get(
+                    "augmented"
+                ):
+                    original_key = f"branch_anchor-baseline_{t_name}_oof"
+                    augmented_key = f"branch_anchor-baseline_{t_name}_augmented_oof"
+                    if original_key in state:
+                        store.update(**{augmented_key: state.get(original_key)})
+                        print(
+                            f"      [FREEZE] Copied {original_key} -> {augmented_key}"
+                        )
+
     elif policy == "block_composite_until_all_targets_augmented_or_none":
         if regression_targets:
             print(
@@ -1034,14 +1098,16 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
             print(
                 f"\n[OK] A12 Policy: All {len(classification_targets)} targets augmented"
             )
-            retraining_required = True
+            retraining_required = classification_retraining_required
 
     store.update(
         pseudo_label_multi_target_results=augmented_results,
         pseudo_label_result={
             "ran": True,
             "n_pseudo_labels_added": sum(
-                r.get("n_pseudo_labels", 0) for r in augmented_results.values()
+                r.get("n_pseudo_labels", 0)
+                for r in augmented_results.values()
+                if r.get("augmented")
             ),
             "retraining_required": retraining_required,
             "guard_conditions_met": True,

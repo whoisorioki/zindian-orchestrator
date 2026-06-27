@@ -4,8 +4,8 @@
 import sys
 from pathlib import Path
 
-# Add project to path
-project_root = Path(__file__).parent
+# Add project root to path
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 print("=" * 70)
@@ -16,15 +16,17 @@ print("=" * 70)
 print("\n[1/5] Testing config.py...")
 try:
     from zindian.config import ChallengeConfig
+    from zindian.paths import resolve_competition_paths
 
-    cfg = ChallengeConfig.load("challenge_config.json")
-    print(f"  ✓ ChallengeConfig loaded: {cfg}")
+    paths = resolve_competition_paths()
+    cfg = ChallengeConfig.load(str(paths.config_path))
+    print(f"  [OK] ChallengeConfig loaded: {cfg}")
     print(f"    - metric: {cfg.metric}")
     print(f"    - domain: {cfg.domain}")
     print(f"    - use_probabilities: {cfg.use_probabilities}")
     print(f"    - automl_permitted: {cfg.automl_permitted}")
 except Exception as e:
-    print(f"  ✗ FAILED: {e}")
+    print(f"  [FAIL] FAILED: {e}")
     sys.exit(1)
 
 # Test 2: state.py increment() and append_selected()
@@ -32,23 +34,23 @@ print("\n[2/5] Testing state.py (increment & append_selected)...")
 try:
     from zindian.state import SkillStateStore
 
-    store = SkillStateStore(path=Path("SKILL_STATE.json"))
+    store = SkillStateStore(path=paths.state_path)
     state = store.read()
-    print(f"  ✓ State loaded: phase={state['dag_phase']}")
+    print(f"  [OK] State loaded: phase={state['dag_phase']}")
 
     # Test increment
     initial = state["submissions_used_today"]
     store.increment("submissions_used_today", 1)
     new_state = store.read()
     print(
-        f"    - increment() test: {initial} → {new_state['submissions_used_today']} ✓"
+        f"    - increment() test: {initial} -> {new_state['submissions_used_today']} [OK]"
     )
 
     # Reset
     store.update(submissions_used_today=initial)
-    print(f"    - Reset submissions_used_today to {initial} ✓")
+    print(f"    - Reset submissions_used_today to {initial} [OK]")
 except Exception as e:
-    print(f"  ✗ FAILED: {e}")
+    print(f"  [FAIL] FAILED: {e}")
     sys.exit(1)
 
 # Test 3: ledger.py
@@ -56,7 +58,7 @@ print("\n[3/5] Testing ledger.py (DuckDB wrapper)...")
 try:
     from zindian.ledger import Ledger
 
-    ledger = Ledger("reports/experiments.db")
+    ledger = Ledger(str(paths.reports_dir / "experiments.db"))
 
     # Log an experiment
     exp_id = ledger.log_experiment(
@@ -67,7 +69,7 @@ try:
         gate_result="PASS",
         gate_reason="Test experiment",
     )
-    print(f"  ✓ Logged experiment: id={exp_id}")
+    print(f"  [OK] Logged experiment: id={exp_id}")
 
     # Retrieve it
     exp = ledger.get_experiment(exp_id)
@@ -82,11 +84,11 @@ try:
         submission_rank=1,
         comment="branch:test_branch|oof_rmse:0.250000|features:10|calib:none",
     )
-    print(f"  ✓ Logged submission: id={sub_id}")
+    print(f"  [OK] Logged submission: id={sub_id}")
 
     ledger.close()
 except Exception as e:
-    print(f"  ✗ FAILED: {e}")
+    print(f"  [FAIL] FAILED: {e}")
     import traceback
 
     traceback.print_exc()
@@ -103,15 +105,15 @@ try:
     )
     expected = "branch:anchor|oof_rmse:0.252000|features:8|calib:none"
 
-    print(f"  ✓ Comment formatted: {comment}")
+    print(f"  [OK] Comment formatted: {comment}")
     if comment == expected or "branch:anchor" in comment and "oof_rmse:" in comment:
-        print("    - Format matches spec ✓")
+        print("    - Format matches spec [OK]")
     else:
         print("    - WARNING: Format may not match spec exactly")
         print(f"      Expected: {expected}")
         print(f"      Got:      {comment}")
 except Exception as e:
-    print(f"  ✗ FAILED: {e}")
+    print(f"  [FAIL] FAILED: {e}")
     sys.exit(1)
 
 # Test 5: DuckDB schema verification
@@ -119,7 +121,7 @@ print("\n[5/5] Verifying DuckDB schema...")
 try:
     import duckdb
 
-    conn = duckdb.connect("reports/experiments.db")
+    conn = duckdb.connect(str(paths.reports_dir / "experiments.db"))
 
     # List tables
     tables = conn.execute(
@@ -129,7 +131,7 @@ try:
         "SELECT name FROM sqlite_master WHERE type='table'"
     ).fetchall()
 
-    print("  ✓ Database file exists: reports/experiments.db")
+    print(f"  [OK] Database file exists: {paths.reports_dir / 'experiments.db'}")
     if tables_user:
         print(f"    - Tables found: {[t[0] for t in tables_user]}")
 
@@ -137,19 +139,19 @@ try:
     try:
         result = conn.execute("SELECT * FROM experiments LIMIT 0").description
         cols = [col[0] for col in result]
-        print(f"    - experiments table columns: {cols[:5]}... ✓")
+        print(f"    - experiments table columns: {cols[:5]}... [OK]")
     except Exception:
         print("    - experiments table not found (may not be initialized yet)")
 
     conn.close()
 except Exception as e:
-    print(f"  ✗ FAILED: {e}")
+    print(f"  [FAIL] FAILED: {e}")
     import traceback
 
     traceback.print_exc()
 
 print("\n" + "=" * 70)
-print("✓ PHASE B VERIFICATION COMPLETE")
+print("[OK] PHASE B VERIFICATION COMPLETE")
 print("=" * 70)
 print("\nAll core modules are functioning correctly!")
 print("\nNext steps:")

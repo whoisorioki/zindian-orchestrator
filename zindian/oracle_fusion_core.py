@@ -441,7 +441,7 @@ def _run_multi_target_fusion(
         sample_path = raw_dir / "SampleSubmission.csv"
         if sample_path.exists():
             sample = pd.read_csv(sample_path)
-            id_col = sample.columns[0]
+            id_col = str(sample.columns[0])
             combined_sub = pd.DataFrame({id_col: sample[id_col]})
             for target_name, values in submission_columns.items():
                 combined_sub[target_name] = values
@@ -667,8 +667,8 @@ def _run_single_target_fusion(
         }
 
     # Save submission (single-target path)
-    target_out_col = sample.columns[-1]
-    id_col_name = sample.columns[0]
+    target_out_col = str(sample.columns[-1])
+    id_col_name = str(sample.columns[0])
 
     if config_obj.get("submission_log1p", False):
         print(

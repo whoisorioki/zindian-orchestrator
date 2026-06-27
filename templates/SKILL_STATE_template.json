@@ -63,6 +63,7 @@
         "mcar_columns": []
     },
     "metric_analysis": {
+        "generated_at": null,
         "fold_scores": [],
         "fold_score_variance": null,
         "recommended_threshold": 0.5,
@@ -80,5 +81,35 @@
         "success": null,
         "timestamp": null
     },
-    "metadata_warnings": []
+    "metadata_warnings": [],
+    "phase_1_complete": false,
+    "phase_2a_complete": false,
+    "phase_2b_complete": false,
+    "phase_3a_complete": false,
+    "phase_3b_complete": false,
+    "phase_4_complete": false,
+    "last_reported": null,
+    "community_signals": [],
+    "last_inference_path": null,
+    "last_inference_at": null,
+    "calibration_method": null,
+    "calibration_written_at": null,
+    "calibration_candidate_branch": null,
+    "calibration_skipped_targets": [],
+    "calibration_oof_cv_strategy_id": null,
+    "pseudo_label_multi_target_results": null,
+    "pseudo_label_result": {
+        "ran": false,
+        "n_pseudo_labels_added": 0,
+        "retraining_required": false,
+        "guard_conditions_met": false,
+        "guard_failure_reason": null,
+        "execution_failure_reason": null,
+        "guard_condition_flags": {}
+    },
+    "shap_multi_target_results": null,
+    "anchor_oof_f1": null,
+    "anchor_oof_rmse": null,
+    "anchor_multi_target_metrics": null,
+    "phase_3_gate_diagnosis": null
 }

@@ -1,9 +1,19 @@
+import sys
+from pathlib import Path
+
+# Add parent directory to path so we can import zindian
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from zindian.paths import resolve_competition_paths
+
+# Resolve the competition-specific ledger path (falls back to root reports/ if no competition active)
+paths = resolve_competition_paths()
+ledger_path = paths.reports_dir / "experiments.db"
+ledger_path.parent.mkdir(parents=True, exist_ok=True)
+
 import duckdb
-import os
 
-os.makedirs("reports", exist_ok=True)
-
-con = duckdb.connect("reports/experiments.db")
+con = duckdb.connect(str(ledger_path))
 con.execute("CREATE SEQUENCE IF NOT EXISTS experiments_id_seq")
 con.execute("CREATE SEQUENCE IF NOT EXISTS submissions_id_seq")
 
@@ -41,6 +51,6 @@ con.execute("""
     )
 """)
 
-print("DuckDB ledger initialized at reports/experiments.db")
+print(f"DuckDB ledger initialized at {ledger_path}")
 print("Tables: experiments, submissions")
 con.close()

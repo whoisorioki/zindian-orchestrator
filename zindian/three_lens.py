@@ -398,6 +398,17 @@ def _eval_phase2b_generalisation(config: dict, state: dict) -> LensResult:
             "preflight_confirmed is not true — static checks may not have passed"
         )
 
+    # Temporal CV limitation — surface known_risk so Gate 1 reviewers see it
+    cv_lim = config.get("cv_limitations") or {}
+    if cv_lim.get("temporal_holdout_required") and not cv_lim.get("temporal_cv_feasible"):
+        known_risk = cv_lim.get("known_risk") or (
+            "OOF scores may be optimistic — temporal CV not feasible with this data."
+        )
+        findings.append(
+            f"⚠️  Temporal holdout required but CV cannot replicate it: {known_risk} "
+            f"Treat LB score as primary signal of generalisation."
+        )
+
     # CV strategy override safe access
     override_active = state.get("cv_strategy_override", {}).get("active", False)
     if override_active:

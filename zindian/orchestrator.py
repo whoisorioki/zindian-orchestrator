@@ -127,56 +127,72 @@ def run_deep_research(
     dry_run: bool = False,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Run Skills 18, 19, and 20 in the intended research order."""
+    """Run Skills 18, 19, and 20 asynchronously as a non-blocking background daemon."""
+    import threading
+
+    def _bg_run() -> None:
+        try:
+            paths = resolve_competition_paths(require_competition=True)
+            reports_dir = paths.reports_dir
+            reports_dir.mkdir(parents=True, exist_ok=True)
+
+            # Lookup deep research skills from registry
+            lib_desc, lib_mod = SKILL_REGISTRY.get("skill_18", (None, None))
+            miner_desc, miner_mod = SKILL_REGISTRY.get("skill_19", (None, None))
+            sci_desc, sci_mod = SKILL_REGISTRY.get("skill_20", (None, None))
+
+            if lib_mod is None or miner_mod is None or sci_mod is None:
+                print("[deep_research] Error: sidecar skills are not loaded")
+                return
+
+            literature_cache_path = reports_dir / "literature_cache.json"
+            domain_hypotheses_path = reports_dir / "domain_hypotheses.json"
+            priorart_path = reports_dir / "ml_priorart.json"
+            validated_hypotheses_path = reports_dir / "validated_hypotheses.json"
+            failed_hypotheses_path = reports_dir / "failed_hypotheses.json"
+
+            print("[deep_research] Starting background Librarian (Skill 18)...")
+            lib_mod.run_librarian(
+                config_path=str(paths.config_path),
+                cache_path=str(literature_cache_path),
+            )
+
+            print("[deep_research] Starting background Code Miner (Skill 19)...")
+            miner_mod.run_code_miner(
+                domain=domain,
+                dry_run=dry_run,
+            )
+
+            print("[deep_research] Starting background Scientist (Skill 20)...")
+            sci_mod.run_scientist(
+                hypotheses_path=str(domain_hypotheses_path),
+                priorart_path=str(priorart_path),
+                hypothesis_path=str(validated_hypotheses_path),
+                failed_hypotheses_path=str(failed_hypotheses_path),
+            )
+            print("[deep_research] Background deep research flow complete.")
+        except Exception as bg_exc:
+            print(
+                f"[deep_research] Background execution encountered exception: {bg_exc}"
+            )
+
+    # Start the daemon thread so it runs in background and doesn't block the main thread
+    bg_thread = threading.Thread(
+        target=_bg_run, daemon=True, name="ZindianDeepResearchDaemon"
+    )
+    bg_thread.start()
+
     paths = resolve_competition_paths(require_competition=True)
     reports_dir = paths.reports_dir
-    reports_dir.mkdir(parents=True, exist_ok=True)
-
-    # Lookup deep research skills from registry
-    lib_desc, lib_mod = SKILL_REGISTRY.get("skill_18", (None, None))
-    miner_desc, miner_mod = SKILL_REGISTRY.get("skill_19", (None, None))
-    sci_desc, sci_mod = SKILL_REGISTRY.get("skill_20", (None, None))
-
-    if lib_mod is None or miner_mod is None or sci_mod is None:
-        return {
-            "status": "ERROR",
-            "message": "Deep research skills are not loaded",
-        }
-
-    literature_cache_path = reports_dir / "literature_cache.json"
-    domain_hypotheses_path = reports_dir / "domain_hypotheses.json"
-    priorart_path = reports_dir / "ml_priorart.json"
-    validated_hypotheses_path = reports_dir / "validated_hypotheses.json"
-    failed_hypotheses_path = reports_dir / "failed_hypotheses.json"
-
-    librarian_result = lib_mod.run_librarian(
-        config_path=str(paths.config_path),
-        cache_path=str(literature_cache_path),
-    )
-
-    code_miner_result = miner_mod.run_code_miner(
-        domain=domain,
-        dry_run=dry_run,
-    )
-
-    scientist_result = sci_mod.run_scientist(
-        hypotheses_path=str(domain_hypotheses_path),
-        priorart_path=str(priorart_path),
-        hypothesis_path=str(validated_hypotheses_path),
-        failed_hypotheses_path=str(failed_hypotheses_path),
-    )
-
     return {
-        "status": "OK",
-        "librarian": librarian_result,
-        "code_miner": code_miner_result,
-        "scientist": scientist_result,
+        "status": "LAUNCHED",
+        "message": "Deep research sidecar launched in non-blocking background daemon thread.",
         "paths": {
-            "literature_cache": str(literature_cache_path),
-            "domain_hypotheses": str(domain_hypotheses_path),
-            "priorart": str(priorart_path),
-            "validated_hypotheses": str(validated_hypotheses_path),
-            "failed_hypotheses": str(failed_hypotheses_path),
+            "literature_cache": str(reports_dir / "literature_cache.json"),
+            "domain_hypotheses": str(reports_dir / "domain_hypotheses.json"),
+            "priorart": str(reports_dir / "ml_priorart.json"),
+            "validated_hypotheses": str(reports_dir / "validated_hypotheses.json"),
+            "failed_hypotheses": str(reports_dir / "failed_hypotheses.json"),
         },
         **kwargs,
     }
@@ -257,7 +273,9 @@ def run_skill(
                 "traceback": traceback.format_exc(),
             }
     else:
-        # Standard skill execution
+        # Standard skill execution — skill_02 needs merge mode to preserve pre-set config
+        if skill_name == "skill_02":
+            kwargs.setdefault("merge", True)
         if skill_name not in SKILL_REGISTRY:
             return {
                 "status": "ERROR",
@@ -539,6 +557,17 @@ def run_phase(
                 f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
             )
             store.update(**{phase_key: True})
+    except Exception:
+        pass
+
+    # Generate phase summary report
+    try:
+        from .skills.skill_15_reporter import run_phase_summary, _write_json_summary
+
+        _phase = phase.lower().strip()
+        if _phase in ("2b", "3b"):
+            run_phase_summary(_phase)
+        _write_json_summary(_phase, paths, state, ["anchor_oof_score", "anchor_oof_f1", "best_variant_features", "submissions_used_total", "cv_strategy_type"])
     except Exception:
         pass
 

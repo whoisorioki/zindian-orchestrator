@@ -108,9 +108,21 @@ def run(re_verify: bool = False) -> dict:
 
     try:
         cfg = ChallengeConfig.load()
-        tc = cfg.get("target_column") or cfg.get("target_col")
-        sc = cfg.get("submission_target_column") or cfg.get("submission_target_col")
+        target_config = cfg.get("target_config") or {}
+        targets = target_config.get("targets") or []
+        tc = None
+        sc = None
         ic = cfg.get("id_column") or cfg.get("id_col")
+        if targets:
+            tc = targets[0].get("name")
+            submission_cols = target_config.get("submission_columns") or []
+            if submission_cols:
+                sc = submission_cols[1] if len(submission_cols) > 1 else submission_cols[0]
+            else:
+                sc = tc
+        else:
+            tc = cfg.get("target_column") or cfg.get("target_col")
+            sc = cfg.get("submission_target_column") or cfg.get("submission_target_col")
         if tc:
             target_col = tc
         if sc:

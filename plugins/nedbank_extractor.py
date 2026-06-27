@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Tuple
 import pandas as pd
 
 try:
@@ -31,6 +32,11 @@ from plugins.base_extractor import FeatureExtractor
 
 class NedbankExtractor(FeatureExtractor):
     """Nedbank-specific feature extractor implementing FeatureExtractor ABC."""
+
+    def extract(
+        self, paths: Any, tiff_path: Path, config: Any
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        return self.extract_features(paths.data_raw_dir, config)
 
     def extract_features(
         self, raw_data_dir: Path, config: dict
@@ -162,3 +168,17 @@ def extract(
     print("  ✅ Feature CSVs successfully extracted and saved to processed folder")
 
     return train_feat, test_feat
+
+
+from typing import Any, Tuple
+from plugins.base_extractor import FeatureExtractor
+
+
+class Extractor(FeatureExtractor):
+    """Nedbank Extractor implementing the formal FeatureExtractor ABC."""
+
+    def extract(
+        self, paths: Any, tiff_path: Path, config: Any
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        return extract(paths, tiff_path, config)
+

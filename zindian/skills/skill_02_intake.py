@@ -399,6 +399,48 @@ def extract_config(data: dict, slug: str) -> dict:
     )
     config["compliance_notes"] = cn
 
+    # -- Structured CV limitations (queryable by skill_11, skill_17, three_lens) --
+    # Detect whether the competition requires temporal holdout evaluation.
+    # This cannot be inferred from data alone — it must come from either a
+    # structured config field ("temporal_holdout") set by the operator, or
+    # from the compliance notes text.  Never infer it from feature column names,
+    # which would produce false positives on competitions with monthly features
+    # but a random train/test split.
+    temporal_holdout_required: bool = bool(config.get("temporal_holdout", False))
+    if not temporal_holdout_required:
+        for note in cn:
+            if "held-out time period" in note.lower() or "temporal generalization" in note.lower():
+                temporal_holdout_required = True
+                break
+
+    # Detect whether a row-level temporal column exists for TimeSeriesSplit.
+    # This is set by the operator via "temporal_col" in config; skill_04 does
+    # NOT write this because column-name pattern detection is not reliable.
+    temporal_cv_feasible: bool = bool(config.get("temporal_col"))
+
+    if temporal_holdout_required:
+        reason = (
+            "No row-level date/period column in training data — temporal structure "
+            "exists only in feature column name suffixes, not as a splittable row "
+            "attribute."
+            if not temporal_cv_feasible
+            else "Row-level temporal column present; TimeSeriesSplit feasible."
+        )
+        config["cv_limitations"] = {
+            "temporal_holdout_required": True,
+            "temporal_cv_feasible": temporal_cv_feasible,
+            "reason": reason,
+            "fallback_strategy": config.get("cv_strategy", {}).get("type", "stratified"),
+            "known_risk": (
+                "OOF scores likely optimistic relative to true held-out time period "
+                "performance — local CV cannot replicate the actual evaluation split."
+                if not temporal_cv_feasible
+                else None
+            ),
+        }
+    else:
+        config.setdefault("cv_limitations", None)
+
     return config
 
 
@@ -433,14 +475,36 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
     """Detect if competition has multiple targets from submission format.
 
     Returns target_config dict if multi-target, None otherwise.
+    A multi-column submission (e.g. TargetF1 + TargetRAUC) for a single
+    target is NOT multi-target — it's a dual-column classification format.
     """
     import pandas as pd
+
+    # If config already has a target_config with submission_columns, skip detection
+    existing_tc = config.get("target_config") or {}
+    if existing_tc.get("submission_columns"):
+        print("  [INFO] submission_columns explicit — skipping multi-target detection")
+        return None
 
     df = pd.read_csv(sample_submission_path)
     cols = [c for c in df.columns if c.lower() not in ("id", "team_id", "uniqueid")]
 
     if len(cols) <= 1:
         return None  # Single-target
+
+    # Check if this is a single-target dual-column format (binary + probability)
+    # Pattern: 2 columns where one ends in "F1" and the other in "RAUC" or "Prob"
+    if len(cols) == 2:
+        col_set = {c.lower() for c in cols}
+        is_dual_format = any(
+            c.endswith("f1") or c.endswith("_f1") for c in col_set
+        ) and any("rauc" in c or "prob" in c or "auc" in c for c in col_set)
+        if is_dual_format:
+            print(
+                f"  [INFO] Dual-column classification format ({', '.join(cols)})"
+                " — single target with binary + probability output"
+            )
+            return None  # Not multi-target
 
     # Multi-target detected
     targets = []
@@ -517,10 +581,12 @@ def run(
     # Lazy import headers only if needed
     if headers is None:
         try:
-            from zindian.zindi_monitor_core import _get_headers
+            from zindian.zindi_client import ZindiClient
 
-            headers = _get_headers()
-        except Exception:
+            client = ZindiClient()
+            headers = client._headers
+        except Exception as e:
+            print(f"[WARN] Failed to load Zindi Client for headers: {e}")
             # Network isolation - will use monitor fallback
             headers = {"Accept": "application/json"}
 

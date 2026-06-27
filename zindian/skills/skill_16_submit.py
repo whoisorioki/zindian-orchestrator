@@ -205,13 +205,27 @@ def validate(
             config.get("target_col") or config.get("target_column") or id_column
         )
         target_col = str(target_col)
+        value_cols = [
+            c for c in sample.columns if c != id_column and c in sub.columns
+        ]
+        if not value_cols and target_col in sub.columns:
+            value_cols = [target_col]
         task_type = str(config.get("task_type", "classification"))
         use_probs = bool(config.get("use_probabilities", False))
         bounds_cfg = config.get("target_domain_bounds") or {}
         bounds = bounds_cfg if isinstance(bounds_cfg, dict) else {}
-        errors.extend(
-            _value_validation_errors(sub, target_col, task_type, use_probs, bounds)
-        )
+        for idx, vcol in enumerate(value_cols):
+            if len(value_cols) > 1 and task_type == "classification" and use_probs:
+                # Multi-column probability submission: binary for non-last columns,
+                # probability interval for the last value column.
+                if idx < len(value_cols) - 1:
+                    errors.extend(_validate_binary(sub[vcol].to_numpy().astype(np.float64)))
+                else:
+                    errors.extend(_validate_probability_interval(sub[vcol].to_numpy().astype(np.float64)))
+            else:
+                errors.extend(
+                    _value_validation_errors(sub, vcol, task_type, use_probs, bounds)
+                )
     return errors
 
 

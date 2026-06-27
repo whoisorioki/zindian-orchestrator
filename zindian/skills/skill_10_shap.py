@@ -135,9 +135,11 @@ def _compute_shap_audit(
         y = np.asarray(frame[target].values, dtype=np.float64)
     else:
         _y_raw = frame[target].values
+        assert _y_raw is not None
         if _y_raw.dtype.kind in ("U", "S", "O"):
             _le = LabelEncoder()
-            y = _le.fit_transform(_y_raw.astype(str)).astype(np.int32)
+            transformed = _le.fit_transform(_y_raw.astype(str))
+            y = np.asarray(transformed, dtype=np.int32)
         else:
             y = np.asarray(_y_raw, dtype=np.int32)
 
@@ -247,6 +249,23 @@ def _compute_shap_audit(
     )
     tail_share = float(1.0 - top15_share) if shap_total > 0 else 0.0
 
+    # -- Leak detection: top-feature dominance ratio --------------------------
+    # A feature is flagged as a suspected leak when its mean absolute SHAP is
+    # more than shap_leak_threshold × the mean of all OTHER features' SHAP.
+    # This catches the "one column explains everything" signature without
+    # requiring a hardcoded SHAP magnitude — the ratio is scale-invariant.
+    leaked_feature_names: list[str] = []
+    if len(ranking) >= 2:
+        try:
+            _cfg_shap = ChallengeConfig.load()
+            _leak_threshold = float(_cfg_shap.get("shap_leak_threshold") or 3.0)
+        except Exception:
+            _leak_threshold = 3.0
+        top_shap = float(ranking.iloc[0]["mean_abs_shap"])
+        rest_mean = float(ranking.iloc[1:]["mean_abs_shap"].mean())
+        if rest_mean > 0 and (top_shap / rest_mean) > _leak_threshold:
+            leaked_feature_names.append(str(ranking.iloc[0]["feature"]))
+
     if task_type == "regression":
         from sklearn.metrics import root_mean_squared_error
 
@@ -261,6 +280,7 @@ def _compute_shap_audit(
             "ranking": ranking,
             "top15_share": top15_share,
             "tail_share": tail_share,
+            "leaked_features": leaked_feature_names,
         }
     else:
         if oof_probs.ndim == 1:
@@ -293,6 +313,7 @@ def _compute_shap_audit(
             "ranking": ranking,
             "top15_share": top15_share,
             "tail_share": tail_share,
+            "leaked_features": leaked_feature_names,
         }
 
 
@@ -383,9 +404,11 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
             y = np.asarray(frame[target].values, dtype=np.float64)
         else:
             _y_raw_sf = frame[target].values
+            assert _y_raw_sf is not None
             if _y_raw_sf.dtype.kind in ("U", "S", "O"):
                 _le_sf = LabelEncoder()
-                y = _le_sf.fit_transform(_y_raw_sf.astype(str)).astype(np.int32)
+                transformed_sf = _le_sf.fit_transform(_y_raw_sf.astype(str))
+                y = np.asarray(transformed_sf, dtype=np.int32)
             else:
                 y = np.asarray(_y_raw_sf, dtype=np.int32)
         scaler = StandardScaler()
@@ -727,16 +750,119 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
             "pruning_pass": pruning_pass,
             "pruning_delta": pruning_delta,
             "top_feature": ranking.iloc[0]["feature"] if not ranking.empty else None,
+            "top_features": ranking.head(20).to_dict(orient="records"),
+            "full_oof_f1": (
+                full_cv.oof_rmse if target_task == "regression" else full_cv.oof_f1
+            ),
+            "pruned_oof_f1": (
+                pruned_cv.oof_rmse if target_task == "regression" else pruned_cv.oof_f1
+            ),
+            "high_corr_pairs_count": len(pruning["correlated_pairs"]),
+            "dropped_features": pruning["drop_features"],
+            "pruned_feature_count": len(pruning["pruned_features"]),
+            "top15_share": full_audit.get("top15_share"),
+            "tail_share": full_audit.get("tail_share"),
+            "oof_auc": full_audit.get("oof_auc"),
+            "oof_f1": full_audit.get("oof_f1"),
+            "oof_rmse": full_audit.get("oof_rmse"),
+            "fold_scores": full_audit.get("fold_scores"),
+            "leaked_features": full_audit.get("leaked_features", []),
         }
         all_pass = all_pass and pruning_pass
 
+        # Log any leaked features immediately
+        target_leaked = full_audit.get("leaked_features") or []
+        if target_leaked:
+            print(
+                f"  [LEAK DETECTED] {target_name}: features exceeding "
+                f"shap_leak_threshold — {target_leaked}"
+            )
+
+    # -- Write combined shap_analysis.json + shap_summary.md ---------------
+    # Mirror the single-target _write_outputs path so both modes produce the
+    # same report artefacts regardless of target count.
+    from datetime import datetime, timezone as _tz
+
+    generated_at = datetime.now(_tz.utc).isoformat()
+    combined_report = {
+        "generated_at": generated_at,
+        "multi_target": True,
+        "overall_pass": all_pass,
+        "targets": {
+            tname: {
+                "top_feature": r.get("top_feature"),
+                "top_features": r.get("top_features", []),
+                "oof_auc": r.get("oof_auc"),
+                "oof_f1": r.get("oof_f1"),
+                "oof_rmse": r.get("oof_rmse"),
+                "fold_scores": r.get("fold_scores"),
+                "top15_share": r.get("top15_share"),
+                "tail_share": r.get("tail_share"),
+                "correlation_pruning": {
+                    "high_corr_pairs_count": r.get("high_corr_pairs_count"),
+                    "dropped_features": r.get("dropped_features", []),
+                    "pruned_feature_count": r.get("pruned_feature_count"),
+                    "full_oof_f1": r.get("full_oof_f1"),
+                    "pruned_oof_f1": r.get("pruned_oof_f1"),
+                    "delta_f1": r.get("pruning_delta"),
+                    "gate_pass": r.get("pruning_pass"),
+                },
+            }
+            for tname, r in all_results.items()
+        },
+    }
+
+    summary_lines = [
+        f"# SHAP Audit Summary (Multi-Target) — {generated_at}",
+        f"**Overall pruning gate**: {'PASS' if all_pass else 'PRUNE'}",
+        "",
+    ]
+    for tname, r in all_results.items():
+        task_label = "AUC" if r.get("oof_auc") is not None else "RMSE"
+        score_val = r.get("oof_auc") if task_label == "AUC" else r.get("oof_rmse")
+        score_str = f"{score_val:.6f}" if score_val is not None else "N/A"
+        summary_lines += [
+            f"## Target: {tname}",
+            f"**Top feature**: {r.get('top_feature')}",
+            f"**OOF {task_label}**: {score_str}",
+            f"**OOF F1**: {r.get('oof_f1'):.6f}" if r.get("oof_f1") is not None else "**OOF F1**: N/A",
+            f"**Top-15 SHAP share**: {r.get('top15_share', 0):.3%}" if r.get("top15_share") is not None else "**Top-15 SHAP share**: N/A",
+            f"**High-corr pairs**: {r.get('high_corr_pairs_count', 0)}",
+            f"**Dropped features**: {len(r.get('dropped_features', []))}",
+            f"**Pruned feature count**: {r.get('pruned_feature_count', 'N/A')}",
+            f"**Delta F1**: {r.get('pruning_delta', 0):+.6f}",
+            f"**Pruning gate**: {'PASS' if r.get('pruning_pass') else 'PRUNE'}",
+            "",
+            "### Top 10 SHAP Features",
+        ]
+        for idx, feat in enumerate(r.get("top_features", [])[:10], start=1):
+            summary_lines.append(
+                f"{idx}. {feat.get('feature', '?')} — {feat.get('mean_abs_shap', 0):.8f}"
+            )
+        summary_lines.append("")
+
+    _write_outputs(paths, combined_report, summary_lines)
+
     state_store = SkillStateStore(paths.state_path)
     state_store.update(
-        shap_completed_at=datetime.now(timezone.utc).isoformat(),
+        shap_completed_at=generated_at,
         shap_multi_target_results=all_results,
         pruning_pass=all_pass,
-        last_updated=datetime.now(timezone.utc).isoformat(),
+        last_updated=generated_at,
     )
+
+    # Write leaked_features in the flat dict format skill_11/three_lens expect:
+    # {"anchor-baseline": ["feat_a"], "variant-xx": [...]}
+    # Key is "anchor-baseline" since SHAP runs against the anchor feature set.
+    leaked_by_target = {
+        t: r.get("leaked_features", [])
+        for t, r in all_results.items()
+    }
+    # Flatten: any feature leaked in ANY target blocks the anchor branch
+    all_leaked = sorted(set(
+        f for leaked in leaked_by_target.values() for f in leaked
+    ))
+    state_store.update(leaked_features={"anchor-baseline": all_leaked})
     print(f"\n[OK] Multi-target SHAP complete. Overall pass: {all_pass}")
     return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}
 

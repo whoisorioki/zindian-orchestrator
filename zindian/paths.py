@@ -30,38 +30,70 @@ def resolve_competition_paths(
 
     Resolution order:
     1) Explicit slug argument
-    2) COMPETITION_SLUG environment variable
-    3) Auto-detect when exactly one competitions/*/SKILL_STATE.json exists
-    4) Legacy root fallback (unless require_competition=True)
+    2) Current working directory (if inside competitions/<slug>/)
+    3) ZINDIAN_COMPETITION or COMPETITION_SLUG env var
+    4) .env file ZINDIAN_COMPETITION or COMPETITION_SLUG
+    5) Auto-detect when exactly one competitions/*/SKILL_STATE.json exists
+    6) Legacy root fallback
     """
-    # Use this file's location to find repo root, not cwd()
     root = Path(__file__).resolve().parent.parent
-    # Accept both COMPETITION_SLUG (canonical) and ZINDIAN_COMPETITION_SLUG (alias).
-    # The alias is widely used in run commands and diagnostic scripts throughout
-    # this repository. Both resolve identically — COMPETITION_SLUG takes precedence.
-    selected_slug = (
-        slug
-        or os.environ.get("COMPETITION_SLUG")
-        or os.environ.get("ZINDIAN_COMPETITION_SLUG")
-    )
+    comp_root = root / "competitions"
+    cwd = Path.cwd().resolve()
+    
+    selected_slug = slug
+
+    # 1) Current Working Directory Check
+    if not selected_slug:
+        if comp_root.exists() and cwd.is_relative_to(comp_root) and cwd != comp_root:
+            relative = cwd.relative_to(comp_root)
+            selected_slug = relative.parts[0]
+
+    # 2) Environment Variable Check
+    if not selected_slug:
+        selected_slug = (
+            os.environ.get("ZINDIAN_COMPETITION")
+            or os.environ.get("COMPETITION_SLUG")
+            or os.environ.get("ZINDIAN_COMPETITION_SLUG")
+        )
+
+    # 3) .env File Check
+    if not selected_slug:
+        dotenv_path = root / ".env"
+        if dotenv_path.exists():
+            try:
+                with dotenv_path.open(encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip("'").strip('"')
+                            if k in ("ZINDIAN_COMPETITION", "COMPETITION_SLUG", "ZINDIAN_COMPETITION_SLUG"):
+                               selected_slug = v
+                               break
+            except Exception:
+                pass
+
     comp_dir: Optional[Path] = None
 
     if selected_slug:
-        candidate = root / "competitions" / selected_slug
+        candidate = comp_root / selected_slug
         if candidate.exists():
             comp_dir = candidate
         else:
             raise FileNotFoundError(
                 f"Competition '{selected_slug}' not found at {candidate}. "
-                f"Available: {[p.name for p in (root / 'competitions').glob('*') if p.is_dir()]}"
+                f"Available: {[p.name for p in comp_root.glob('*') if p.is_dir()]}"
             )
 
-    if comp_dir is None:
-        matches = list((root / "competitions").glob("*/SKILL_STATE.json"))
+    # 4) Auto-detect Fallback
+    if comp_dir is None and comp_root.exists():
+        matches = list(comp_root.glob("*/SKILL_STATE.json"))
         if len(matches) == 1:
             comp_dir = matches[0].parent
         elif len(matches) > 1:
-            # Prefer the most recently updated state file when auto-selecting.
             def _state_sort_key(path: Path) -> tuple[int, float]:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
@@ -76,10 +108,11 @@ def resolve_competition_paths(
             best = max(matches, key=_state_sort_key)
             comp_dir = best.parent
 
+    # 5) Fallback error or legacy root fallback
     if comp_dir is None:
         if require_competition:
             raise FileNotFoundError(
-                "No active competition found. Run bootstrap or set COMPETITION_SLUG."
+                "No active competition context resolved. Please set ZINDIAN_COMPETITION, run inside a competition subdirectory, or define ZINDIAN_COMPETITION in .env."
             )
         return CompetitionPaths(
             root=root,

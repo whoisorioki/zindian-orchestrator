@@ -37,7 +37,7 @@ as authoritative. Do not assume from file names or conventions.
 |---|---|
 | `resolve_active_cv_strategy_id()` | `zindian/state.py` — NOT `zindian/cv.py` |
 | `write_oof_record()` | `zindian/state.py` — NOT `zindian/cv.py` |
-| `SkillStateStore` class | `zindian/state.py` line 29 |
+| `SkillStateStore` class | `zindian/state.py` line 73 |
 | Atomic state write mechanism | `_atomic_write_json()` in `zindian/state.py` via tempfile + os.replace |
 | Shared competition-agnostic constants | `zindian/constants.py` |
 | Competition-specific spatial/temporal values | Read from `challenge_config.json` only — never from `constants.py` |
@@ -497,17 +497,30 @@ The full ENFORCE mode check list is in SoT Section 3.
 ## Skill File Conventions
 
 Each skill is a single Python module in `zindian/skills/`.
-File naming: `skill_{NN}_{name}.py`. The module exposes one
-entry-point function:
+File naming: `skill_{NN}_{name}.py`. The primary entry-point
+is `run()`, but some skills expose additional callables
+for split-phase execution (e.g. `skill_03.policy_writer`,
+`skill_03.policy_gate`). The orchestrator resolves these
+via dotted notation and handles varied signatures by
+filtering `**kwargs` to match each function's parameters.
+
+Standard convention (observed in the majority of skills):
 
 ```python
-def run(config: dict, state_store: SkillStateStore) -> None:
+def run(config: dict, state: dict) -> dict:
     """
-    Reads context from config and state_store.
-    Writes outputs to state_store using state_store.update().
-    Returns nothing — all output goes through the state store.
+    One-line description of what the skill does.
+
+    Reads: config["..."], state["..."]
+    Writes: state["..."]
+    Returns: updated state dict
     """
+    return state
 ```
+
+Legacy wrappers (`skill_18`, `skill_20`) accept
+`state_store: SkillStateStore` and return `None`;
+these do not modify the current OrchDSL contract.
 
 No skill holds internal state between calls. No skill defines its
 own CV split object. No skill writes to `challenge_config.json`

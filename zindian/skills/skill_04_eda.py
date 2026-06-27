@@ -219,6 +219,29 @@ def run():
 
     if proc_train.exists():
         df = pd.read_csv(proc_train)
+        # features_train.csv intentionally excludes targets (dropped by the
+        # extractor plugin).  Re-attach target column(s) from the raw file so
+        # EDA can compute balance, std, and correlation metrics.
+        if raw_train.exists():
+            raw_df = pd.read_csv(raw_train)
+            cfg_tmp = _load_json_object(paths.config_path)
+            _target_cfg = cfg_tmp.get("target_config", {}) or {}
+            _targets_to_attach = [
+                t["name"] for t in _target_cfg.get("targets", [])
+            ]
+            if not _targets_to_attach:
+                # Fallback: single-target from top-level key
+                _single = cfg_tmp.get("target_col")
+                if _single:
+                    _targets_to_attach = [_single]
+            for _t in _targets_to_attach:
+                if _t in raw_df.columns and _t not in df.columns:
+                    if len(raw_df) == len(df):
+                        df[_t] = raw_df[_t].values
+                    else:
+                        # Row counts differ — cannot align; fall back to raw
+                        df = raw_df
+                        break
     else:
         if not raw_train.exists():
             raise FileNotFoundError(
@@ -249,11 +272,12 @@ def run():
             t_name = target_spec["name"]
             if target_spec["task_type"] == "regression":
                 target_std_dict[f"{t_name}_std"] = float(
-                    np.std(df[t_name].values, ddof=1)
+                    np.std(np.asarray(df[t_name].values, dtype=float), ddof=1)
                 )
     else:
         # Single-target: use legacy target_std
-        target_std_dict["target_std"] = float(np.std(df[targets[0]].values, ddof=1))
+        target_vals = np.asarray(df[targets[0]].values, dtype=float)
+        target_std_dict["target_std"] = float(np.std(target_vals, ddof=1))
 
     # Exclude ID, coords, and all targets
     exclude_lower = {"id", "id_number", "latitude", "longitude"}
@@ -329,6 +353,114 @@ def run():
         "linear_nn_need_scaling": len(scaling_needed) > 0,
         "recommendation": "Use tree ensembles with minimal scaling; apply scaling if training linear/NN models.",
     }
+
+    # ── EDA Enhancements: band-aware diagnostics ─────────────────────
+    # Discover spectral/temporal bands from column naming pattern.
+    # Pattern: BAND_MM where MM is a 2-digit month (01–12).
+    # Example: VH_01, VV_03, blue_12 → bands: VH, VV, blue
+    detected_bands: list[str] = []
+    _seen: set[str] = set()
+    for c in feature_cols:
+        if "_" in c:
+            parts = c.split("_")
+            candidate = parts[0]
+            month = parts[-1]
+            if month.isdigit() and candidate not in _seen:
+                detected_bands.append(candidate)
+                _seen.add(candidate)
+
+    # ── 2a: Per-band summary statistics ──────────────────────────────
+    band_summary_stats: dict[str, dict[str, float]] = {}
+    for band in detected_bands:
+        band_cols = [c for c in feature_cols if c.startswith(band + "_")]
+        if not band_cols:
+            continue
+        vals = df[band_cols].values.astype(float)
+        band_summary_stats[band] = {
+            "mean": float(np.nanmean(vals)),
+            "std": float(np.nanstd(vals, ddof=1)),
+            "min": float(np.nanmin(vals)),
+            "max": float(np.nanmax(vals)),
+        }
+
+    # ── 2b: Seasonal amplitude per band ──────────────────────────────
+    seasonal_amplitude: dict[str, float] = {}
+    for band in detected_bands:
+        band_cols = sorted(
+            [c for c in feature_cols if c.startswith(band + "_")],
+            key=lambda c: int(c.split("_")[-1]),
+        )
+        if len(band_cols) < 2:
+            continue
+        monthly_vals: np.ndarray = np.asarray(
+            df[band_cols].mean(axis=0).values, dtype=float
+        )
+        seasonal_amplitude[band] = float(np.max(monthly_vals) - np.min(monthly_vals))
+
+    # ── 2c: Temporal trend analysis ──────────────────────────────────
+    # Structural feature — computed from feature columns, not targets.
+    # Per the two-mode contract, structural features may be computed on
+    # the full dataset at any time (no fold-restriction needed).
+    temporal_trends: dict[str, dict[str, list[float]]] = {}
+    for band in detected_bands:
+        band_cols = sorted(
+            [c for c in feature_cols if c.startswith(band + "_")],
+            key=lambda c: int(c.split("_")[-1]),
+        )
+        if len(band_cols) < 2:
+            continue
+        trend_vals: np.ndarray = np.asarray(
+            df[band_cols].mean(axis=0).values, dtype=float
+        )
+        monthly_list: list[float] = trend_vals.tolist()
+        mom_delta: list[float] = (trend_vals[1:] - trend_vals[:-1]).tolist()
+        temporal_trends[band] = {
+            "monthly_means": monthly_list,
+            "month_over_month_delta": mom_delta,
+        }
+
+    # ── 2d: Target correlation per feature ───────────────────────────
+    target_correlation_per_feature: dict[str, float] = {}
+    if primary_target in df.columns:
+        y_vals = pd.to_numeric(df[primary_target], errors="coerce").values
+        for c in numeric_feats:
+            try:
+                x_vals = pd.to_numeric(df[c], errors="coerce").values
+                mask = ~(np.isnan(x_vals) | np.isnan(y_vals))
+                if mask.sum() > 2:
+                    xy = np.corrcoef(x_vals[mask], y_vals[mask])
+                    corr_val = float(xy[0, 1])
+                    if not np.isnan(corr_val):
+                        target_correlation_per_feature[c] = corr_val
+            except Exception:
+                pass
+
+    # ── 2e: Class-separability index ─────────────────────────────────
+    # Diagnostic only — single-feature decision stumps used as a ranking
+    # heuristic during EDA. This is NOT model selection (no feature is
+    # chosen or tuned), NOT AutoML (no hyperparameter search), and NOT
+    # used by any downstream skill to prune features. It is a pure
+    # characterisation step analogous to computing correlation or
+    # variance — just a more discriminative lens.
+    class_separability_index: dict[str, float] = {}
+    seed = int(cfg.get("reproducibility", {}).get("seed", 42))
+    if primary_target in df.columns and len(numeric_feats) > 0:
+        try:
+            from sklearn.tree import DecisionTreeClassifier as _DTC
+            from sklearn.metrics import f1_score as _f1
+
+            y_sep = df[primary_target]
+            for c in numeric_feats:
+                try:
+                    X_sep = df[[c]].fillna(df[c].median())
+                    stump = _DTC(max_depth=1, random_state=seed)
+                    stump.fit(X_sep, y_sep)
+                    preds = stump.predict(X_sep)
+                    class_separability_index[c] = float(_f1(y_sep, preds))
+                except Exception:
+                    pass
+        except ImportError:
+            pass  # scikit-learn not available — skip; not a pipeline halt
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -411,6 +543,12 @@ def run():
         **target_std_dict,  # Per-target std for regression
         "mnar_columns": mnar_cols,
         "mcar_columns": mcar_cols,
+        # ── Phase 1 improvement plan: 5 band-aware diagnostics ──
+        "band_summary_stats": band_summary_stats,
+        "seasonal_amplitude": seasonal_amplitude,
+        "temporal_trends": temporal_trends,
+        "target_correlation_per_feature": target_correlation_per_feature,
+        "class_separability_index": class_separability_index,
     }
 
     updates: dict[str, Any] = {

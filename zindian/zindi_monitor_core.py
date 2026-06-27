@@ -62,6 +62,7 @@ COMPLIANCE_KEYWORDS = [
     "additional data",
     "third party",
     "outside data",
+    "challenge update"
 ]
 
 # External data sources to check for in discussions
@@ -129,15 +130,28 @@ def _parse_deadline(full_text: str) -> str | None:
 
 
 def _get_headers() -> dict:
+    """Get authenticated headers for Zindi API requests.
+
+    Priority:
+    1) Explicit ZINDI_API_KEY or ZINDI_TOKEN (passed directly as token header)
+    2) ZINDI_USERNAME + ZINDI_PASSWORD → ZindiClient login → auth token
+    """
     from dotenv import load_dotenv
 
     load_dotenv(override=True)
-    token = (
-        os.getenv("ZINDI_API_KEY")
-        or os.getenv("ZINDI_TOKEN")
-        or os.getenv("ZINDI_PASSWORD")
-    )
-    return {"token": token} if token else {}
+    token = os.getenv("ZINDI_API_KEY") or os.getenv("ZINDI_TOKEN")
+    if token:
+        return {"token": token}
+
+    # Fall back to proper username/password login flow
+    try:
+        from zindian.zindi_client import ZindiClient
+
+        client = ZindiClient()
+        return client._headers
+    except Exception as e:
+        print(f"  ⚠️  Could not authenticate with Zindi: {e}")
+        return {}
 
 
 # ── Section 1: Competition Page ───────────────────────────────────────────────
@@ -538,9 +552,11 @@ def extract_compliance_flags(
     slug: str,
     headers: dict,
     superseded_map: dict[str, bool] | None = None,
+    watch_usernames: tuple[str, ...] = ("ajoel", "meganomaly"),
 ) -> list:
     superseded_map = superseded_map or {}
     flagged = []
+    watch_usernames = tuple(w.lower() for w in watch_usernames)
     for d in discussions:
         title = d.get("title", "")
         pub_date = d.get("published_at", "")[:10]
@@ -548,6 +564,10 @@ def extract_compliance_flags(
         detail = fetch_discussion_detail(slug, did, headers)
         body = detail.get("body", "")
         comments = detail.get("comments", [])
+
+        discussion_author = (d.get("user", {}) or {}).get("username", "") or ""
+        discussion_author_lower = discussion_author.lower()
+        discussion_from_watched = discussion_author_lower in watch_usernames
 
         title_flagged = is_compliance_relevant(title)
         body_flagged = is_compliance_relevant(body)
@@ -577,6 +597,9 @@ def extract_compliance_flags(
                 x in role for x in ("organizer", "organiser", "admin", "moderator")
             ):
                 organizer_texts.append(c_text)
+            # Capture watcher-authored organizer-like comments as authoritative
+            if username in watch_usernames and c_text.strip():
+                organizer_texts.append(c_text)
             # Also detect authoritative clarifications by phrase match (common organiser reply phrasing)
             if any(
                 phrase in c_text.lower()
@@ -602,10 +625,23 @@ def extract_compliance_flags(
 
         resolved_by_organizer = len(organizer_texts) > 0
 
-        if title_flagged or body_flagged or flagged_comments:
+        # Always capture discussions started by watched users, and always capture
+        # comments from watched users even if no compliance keyword is present.
+        if (
+            title_flagged
+            or body_flagged
+            or flagged_comments
+            or discussion_from_watched
+        ):
+            if discussion_from_watched and not (title_flagged or body_flagged):
+                classification = "clarify"
             # Build a concise flag text for downstream logic: prefer the title, else a preview
             flag_text = title if title_flagged else (body[:300] if body_flagged else "")
             source_url = f"https://zindi.africa/competitions/{slug}/discussions/{did}"
+            # If the flag text would otherwise be empty for a watched-user discussion,
+            # use title fallback so the signal is not blank.
+            if discussion_from_watched and not flag_text:
+                flag_text = title
             flagged.append(
                 {
                     "id": did,
@@ -951,7 +987,104 @@ def update_state(
         community_signals=community_signals,
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
-    print("  ✅ SKILL_STATE.json updated (community_signals only, config frozen)")
+    # Also write scraped competition intel back to challenge_config.json
+    _write_config_intel(comp_intel, paths, store)
+
+
+def _write_config_intel(comp_intel: dict, paths, store: SkillStateStore) -> None:
+    """Write scraped competition intelligence to challenge_config.json.
+
+    Per config temporal lock, only community_signals may be written post-Phase-1.
+    During Phase 1 (or when challenge_config.json is missing key fields), all
+    scraped intel fields are also written to bootstrap the config.
+    """
+    import json as _json
+
+    config_path = paths.config_path
+    try:
+        existing = _json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        existing = {}
+
+    state = store.read()
+    dag_phase = state.get("dag_phase", "uninitialized")
+    _ = dag_phase in ("uninitialized", "phase_1_integrity_locked")
+
+    # Map scraped intel to config keys
+    intel_mapping = {
+        # competition metadata
+        "subtitle": comp_intel.get("subtitle") or existing.get("subtitle"),
+        "end_time": comp_intel.get("end_time") or existing.get("end_time"),
+        # rules
+        "allowed_external_data": not comp_intel.get("external_banned", True),
+        "automl_permitted": not comp_intel.get("automl_banned", True),
+        "use_probabilities": comp_intel.get(
+            "use_probabilities", existing.get("use_probabilities", False)
+        ),
+        # limits
+        "daily_limit": comp_intel.get("daily_limit") or existing.get("daily_limit"),
+        "total_limit": comp_intel.get("total_limit") or existing.get("total_limit"),
+        "public_split_pct": comp_intel.get("public_split_pct")
+        or existing.get("public_split_pct"),
+        "max_team_size": comp_intel.get("team_size") or existing.get("max_team_size"),
+        "code_review_tier": comp_intel.get("code_review_tier")
+        or existing.get("code_review_tier"),
+        # metadata
+        "data_modality": existing.get("data_modality"),
+        "domain": existing.get("domain"),
+    }
+
+    # Resolve private_split_pct from public
+    public = intel_mapping.get("public_split_pct")
+    if public and isinstance(public, (int, float)) and public > 0:
+        intel_mapping["private_split_pct"] = 100 - public
+
+    # Submission budget from limits
+    daily = intel_mapping.get("daily_limit")
+    total = intel_mapping.get("total_limit")
+    if daily or total:
+        budget = existing.get("submission_budget", {})
+        if total:
+            budget["total"] = total
+        if daily:
+            budget["daily"] = daily
+        intel_mapping["submission_budget"] = budget
+
+    # Metric and direction — only write if config doesn't have them (bootstrap case)
+    # Once set by skill_02 intake, the monitor should not overwrite them
+    scraped_metric = comp_intel.get("metric")
+    if scraped_metric and not existing.get("metric"):
+        intel_mapping["metric"] = scraped_metric
+        # Derive direction
+        minimize_metrics = {"rmse", "mae", "log_loss", "logloss", "rmsle"}
+        if scraped_metric.lower() in minimize_metrics:
+            intel_mapping["metric_direction"] = "minimize"
+        else:
+            intel_mapping["metric_direction"] = "maximize"
+
+    # Always update community_signals (per config temporal lock — skill_00 is the sole
+    # exception allowed to write to community_signals at any time)
+    community_signals = state.get("community_signals", [])
+    intel_mapping["community_signals"] = community_signals
+
+    # Merge into existing (preserving any field not in intel_mapping)
+    updated = {
+        **existing,
+        **{
+            k: v
+            for k, v in intel_mapping.items()
+            if v is not None or k in intel_mapping
+        },
+    }
+    updated["populated_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Write atomically
+    tmp_path = config_path.with_suffix(config_path.suffix + ".monitor_tmp")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with tmp_path.open("w", encoding="utf-8") as f:
+        _json.dump(updated, f, indent=2, ensure_ascii=False)
+    tmp_path.replace(config_path)
+    print("  ✅ challenge_config.json updated with scraped intel")
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

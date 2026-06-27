@@ -130,9 +130,29 @@ def _candidate_test_names(branch_name: str, retraining_active: bool) -> list[str
 
 
 def _resolve_test_prob_path(
-    proc_dir: Path, reports_dir: Path, branch_name: str, retraining_active: bool
+    proc_dir: Path,
+    reports_dir: Path,
+    branch_name: str,
+    retraining_active: bool,
+    target_name: str | None = None,
 ) -> Path:
-    for test_name in _candidate_test_names(branch_name, retraining_active):
+    search_names: list[str] = []
+    if target_name:
+        search_names.extend(
+            [
+                f"test_probs_{branch_name}_{target_name}",
+                f"test_probs_{target_name}",
+            ]
+        )
+    search_names.extend(_candidate_test_names(branch_name, retraining_active))
+    # Multi-target fallbacks when branch-specific files were not generated
+    search_names.extend(
+        [
+            "test_probs_anchor_multi",
+            "oof_anchor_multi.csv",
+        ]
+    )
+    for test_name in search_names:
         for base_dir in (proc_dir, reports_dir):
             candidate = base_dir / f"{test_name}.csv"
             if candidate.exists():
@@ -225,12 +245,13 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
 
     proc_dir = paths.data_processed_dir
     reports_dir = paths.reports_dir
-    train = pd.read_csv(proc_dir / "features_train.csv")
+    # Load target from raw Train.csv because feature extraction drops target columns
+    train_raw = pd.read_csv(paths.data_raw_dir / "Train.csv")
 
     target = _resolve_target_col(config)
-    if target not in train.columns:
-        raise RuntimeError(f"target column '{target}' not present in training data")
-    y_raw = train[target]
+    if target not in train_raw.columns:
+        raise RuntimeError(f"target column '{target}' not present in raw training data")
+    y_raw = train_raw[target]
     if y_raw.dtype == "object":
         le = LabelEncoder()
         y = le.fit_transform(y_raw)
@@ -254,7 +275,7 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
         )
 
     cv_strategy = _resolve_cv_strategy(config, state)
-    groups = _get_groups(train, config)
+    groups = _get_groups(train_raw, config)
 
     if method == "none":
         print(
@@ -280,6 +301,10 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
             proc_dir, reports_dir, candidate_branch, retraining_active
         )
         df = pd.read_csv(test_path)
+        if df.empty:
+            raise FileNotFoundError(
+                f"Test probability file for branch '{candidate_branch}' is empty"
+            )
         try:
             cfg = ChallengeConfig.load()
             id_col = cfg.get("id_col") or cfg.get("id_column") or "ID"
@@ -498,12 +523,12 @@ def _run_multi_target(
             if method != "none":
                 calibrated_oof_matrix = np.zeros_like(oof_probs_matrix)
                 for class_idx in range(len(prob_cols)):
-                    y_binary = (y == class_idx).astype(int)
-                    oof_probs_class = oof_probs_matrix[:, class_idx]
+                    y_binary = (np.asarray(y) == class_idx).astype(int)
+                    oof_probs_class = np.asarray(oof_probs_matrix[:, class_idx], dtype=np.float64)
                     calibrated_oof_class, _ = _fit_calibrator_foldwise(
                         method,
                         oof_probs_class,
-                        y_binary,
+                        np.asarray(y_binary, dtype=np.float64),
                         cv_strategy=cv_strategy,
                         groups=groups,
                     )
@@ -532,6 +557,7 @@ def _run_multi_target(
                         )
                     except Exception:
                         pass
+            skipped_targets.append(target_name)
             continue
 
         if method == "none":

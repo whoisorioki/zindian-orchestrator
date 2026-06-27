@@ -334,3 +334,16 @@ def _encode_categoricals(
     test_encoded = combined.iloc[train_len:].reset_index(drop=True)
 
     return train_encoded, test_encoded
+
+
+from plugins.base_extractor import FeatureExtractor
+
+
+class Extractor(FeatureExtractor):
+    """World Cup Extractor implementing the formal FeatureExtractor ABC."""
+
+    def extract(
+        self, paths: Any, tiff_path: Path, config: Any
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        return extract(paths, tiff_path, config)
+

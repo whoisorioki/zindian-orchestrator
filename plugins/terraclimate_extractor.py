@@ -231,3 +231,22 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
     test_feat.to_csv(out_test, index=False)
 
     return train_feat, test_feat
+
+
+from typing import Any, Tuple
+from plugins.base_extractor import FeatureExtractor
+
+
+class Extractor(FeatureExtractor):
+    """Terraclimate Extractor implementing the formal FeatureExtractor ABC."""
+
+    def fetch(
+        self, paths: Any, config: Any, allow_network: bool = True
+    ) -> Path:
+        return fetch(paths, config, allow_network)
+
+    def extract(
+        self, paths: Any, tiff_path: Path, config: Any
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        return extract(paths, tiff_path, config)
+
