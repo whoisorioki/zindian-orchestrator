@@ -47,7 +47,7 @@ def load_data(
     # Load from processed features — base features live here
     # Use branch-specific files for reproducibility contract
     # Branch name comes from state or defaults to "anchor-baseline"
-    branch_name = state.get("anchor_git_branch", "anchor-baseline")
+    branch_name = state.get("anchor_git_branch") or "anchor-baseline"
     train = pd.read_csv(paths.data_processed_dir / f"features_train_{branch_name}.csv")
     test = pd.read_csv(paths.data_processed_dir / f"features_test_{branch_name}.csv")
 
@@ -643,7 +643,7 @@ def _run_multi_target(
 
     # Load features
     # Use branch-specific files for reproducibility contract
-    branch_name = state.get("anchor_git_branch", "anchor-baseline")
+    branch_name = state.get("anchor_git_branch") or "anchor-baseline"
     X_train = pd.read_csv(paths.data_processed_dir / f"features_train_{branch_name}.csv")
     X_test = pd.read_csv(paths.data_processed_dir / f"features_test_{branch_name}.csv")
 

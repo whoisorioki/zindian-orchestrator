@@ -1353,7 +1353,7 @@ def run(
     
     # Determine branch name for reproducibility contract
     # Use variant_name if provided, otherwise use anchor_git_branch from state, or default to "anchor-baseline"
-    branch_name = variant_name if variant_name else state.get("anchor_git_branch", "anchor-baseline")
+    branch_name = variant_name if variant_name else (state.get("anchor_git_branch") or "anchor-baseline")
     
     if hasattr(extractor_instance, "extract"):
         train_feat, test_feat = extractor_instance.extract(paths, tiff_path, config, branch_name)
