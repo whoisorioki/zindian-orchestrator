@@ -382,7 +382,9 @@ def _run_multi_target_gate(config, store, state) -> dict:
     if not multi_metrics:
         return {"status": "BLOCKED", "reason": "no multi-target metrics found"}
 
-    shap_results = state.get("shap_multi_target_results", {})
+    shap_results = state.get("shap_multi_target_results")
+    if shap_results is None:
+        shap_results = {}
     all_pass = all(
         shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
     )
