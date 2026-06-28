@@ -214,7 +214,7 @@ def _fit_calibrator_foldwise(
     return calibrated_oof, None
 
 
-def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
+def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
     print("\n" + "=" * 60)
     print("SKILL 09 — Probability Calibration")
     print("=" * 60 + "\n")
@@ -223,6 +223,10 @@ def run(method: str = "none", dry_run: bool = False) -> Dict[str, object]:
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
+    
+    # Read method from state if not provided
+    if method is None:
+        method = state.get("calibration_method", "none")
 
     raw_config = getattr(config, "_data", {}) or {}
     task_type = str(
