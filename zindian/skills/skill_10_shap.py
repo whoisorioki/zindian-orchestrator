@@ -23,7 +23,12 @@ from datetime import datetime, timezone
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-import shap
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+    shap = None
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from zindian.cv import make_cv_splitter
@@ -366,6 +371,13 @@ def _write_outputs(
 
 
 def run(n_splits: int = 5, seed: int | None = None) -> dict:
+    if not SHAP_AVAILABLE:
+        return {
+            "status": "SKIPPED",
+            "reason": "shap_not_installed",
+            "message": "SHAP library not available. Install with: pip install shap"
+        }
+    
     paths = resolve_competition_paths(require_competition=True)
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")

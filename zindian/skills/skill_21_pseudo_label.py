@@ -993,20 +993,27 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
     print("\n[TARGET] MULTI-TARGET PSEUDO-LABEL MODE (A12)\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
-    policy = target_config.get("pseudo_label_recombination_policy")
-
-    # A12: Validate policy is legal
-    LEGAL_POLICIES = {
-        "freeze_unaugmented_targets_at_original",
-        "block_composite_until_all_targets_augmented_or_none",
-    }
-    if policy not in LEGAL_POLICIES:
-        raise ValueError(
-            f"A12 violation: pseudo_label_recombination_policy must be one of {LEGAL_POLICIES}, got '{policy}'"
-        )
-
+    
+    # A12 only applies when there are multiple targets AND mixed task types
+    if len(targets) > 1:
+        task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
+        if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+            policy = target_config.get("pseudo_label_recombination_policy")
+            LEGAL_POLICIES = {
+                "freeze_unaugmented_targets_at_original",
+                "block_composite_until_all_targets_augmented_or_none",
+            }
+            if policy not in LEGAL_POLICIES:
+                raise ValueError(
+                    f"A12 violation: pseudo_label_recombination_policy must be one of {LEGAL_POLICIES}, got '{policy}'"
+                )
+            print(f"A12 Policy: {policy}\n")
+        else:
+            policy = None
+    else:
+        policy = None
+    
     print(f"Targets: {[t['name'] for t in targets]}")
-    print(f"A12 Policy: {policy}\n")
 
     # Separate classification and regression targets
     classification_targets = [t for t in targets if t["task_type"] == "classification"]
