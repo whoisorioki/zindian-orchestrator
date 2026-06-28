@@ -946,14 +946,20 @@ def _run_multi_target(
             },
         )
 
+    # Resolve first classification and regression targets dynamically from config
+    first_classification_target = next(
+        (t["name"] for t in targets if t.get("task_type") == "classification"), None
+    )
+    first_regression_target = next(
+        (t["name"] for t in targets if t.get("task_type") == "regression"), None
+    )
+
     state_store.update(
         competition=config.slug,
         md5_target_hash=md5_target_hash,
         anchor_oof_score=avg_score,
-        anchor_oof_f1=all_metrics.get("Target", {}).get("oof_f1", 0.0),
-        anchor_oof_rmse=all_metrics.get("total_goals", {}).get(
-            "oof_rmse", 0.0
-        ),  # Now using correct key name
+        anchor_oof_f1=all_metrics.get(first_classification_target, {}).get("oof_f1", 0.0) if first_classification_target else 0.0,
+        anchor_oof_rmse=all_metrics.get(first_regression_target, {}).get("oof_rmse", 0.0) if first_regression_target else 0.0,
         anchor_multi_target_metrics=all_metrics,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
