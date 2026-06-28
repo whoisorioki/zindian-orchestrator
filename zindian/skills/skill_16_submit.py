@@ -288,12 +288,25 @@ def _branch_from_state(state: dict[str, Any]) -> str:
 
 
 def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
+    # Try calibration_candidate_oof_key first (multi-target uses branch_name_target format)
+    calib_key = state.get("calibration_candidate_oof_key")
+    if calib_key:
+        oof = state.get(calib_key)
+        if isinstance(oof, dict):
+            mc = oof.get("model_config") or {}
+            fc = mc.get("feature_count")
+            if isinstance(fc, int):
+                return fc
+    
+    # Fallback to branch_{branch}_oof
     oof = state.get(f"branch_{branch}_oof")
     if isinstance(oof, dict):
         mc = oof.get("model_config") or {}
         fc = mc.get("feature_count")
         if isinstance(fc, int):
             return fc
+    
+    # Final fallbacks
     for key in (
         "last_ensemble_features",
         "best_variant_features",
