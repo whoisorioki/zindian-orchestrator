@@ -37,7 +37,7 @@ from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
 def load_data(
-    paths, config: ChallengeConfig
+    paths, config: ChallengeConfig, state: dict
 ) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
     """
     Load training and test data.
@@ -45,8 +45,11 @@ def load_data(
     These are intentionally different — do not conflate them.
     """
     # Load from processed features — base features live here
-    train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
-    test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+    # Use branch-specific files for reproducibility contract
+    # Branch name comes from state or defaults to "anchor-baseline"
+    branch_name = state.get("anchor_git_branch", "anchor-baseline")
+    train = pd.read_csv(paths.data_processed_dir / f"features_train_{branch_name}.csv")
+    test = pd.read_csv(paths.data_processed_dir / f"features_test_{branch_name}.csv")
 
     # Training target must be initialized during intake and read dynamically.
     training_target_col = config.get("target_col") or config.get("target_column")
@@ -334,7 +337,7 @@ def run(
         )
 
     # -- Load data ----------------------------------------------
-    train, test, training_target_col, submission_col = load_data(paths, config)
+    train, test, training_target_col, submission_col = load_data(paths, config, state)
     print("\nData loaded:")
     print(f"  Train          : {train.shape}")
     print(f"  Test           : {test.shape}")
@@ -639,8 +642,10 @@ def _run_multi_target(
     print(f"Training {len(targets)} targets: {[t['name'] for t in targets]}\n")
 
     # Load features
-    X_train = pd.read_csv(paths.data_processed_dir / "features_train.csv")
-    X_test = pd.read_csv(paths.data_processed_dir / "features_test.csv")
+    # Use branch-specific files for reproducibility contract
+    branch_name = state.get("anchor_git_branch", "anchor-baseline")
+    X_train = pd.read_csv(paths.data_processed_dir / f"features_train_{branch_name}.csv")
+    X_test = pd.read_csv(paths.data_processed_dir / f"features_test_{branch_name}.csv")
 
     # Load raw data for targets
     input_files = config.get("input_files", {}) or {}

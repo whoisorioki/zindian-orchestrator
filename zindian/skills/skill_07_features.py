@@ -8,8 +8,8 @@ Governed by:
   - competitions/<slug>/SKILL_STATE.json
 
 Writes to:
-  - competitions/<slug>/data/processed/features_train.csv
-  - competitions/<slug>/data/processed/features_test.csv
+  - competitions/<slug>/data/processed/features_train_{branch}.csv
+  - competitions/<slug>/data/processed/features_test_{branch}.csv
   - competitions/<slug>/SKILL_STATE.json
   - competitions/<slug>/reports/feature_round_<N>.md
 
@@ -1155,13 +1155,17 @@ def _run_multi_target_variant(
             model_config={"target_name": target_name, "variant": variant_name},
         )
 
-    # Compute composite score
-    rmse = all_metrics.get("total_goals", {}).get("oof_rmse", 0)
-    f1 = all_metrics.get("Target", {}).get("oof_f1", 0)
+    # Compute composite score - read target names from config
+    target_names = [t["name"] for t in targets]
+    regression_targets = [t for t in targets if t["task_type"] == "regression"]
+    classification_targets = [t for t in targets if t["task_type"] == "classification"]
+    
+    rmse = all_metrics.get(regression_targets[0]["name"], {}).get("oof_rmse", 0) if regression_targets else 0
+    f1 = all_metrics.get(classification_targets[0]["name"], {}).get("oof_f1", 0) if classification_targets else 0
 
     target_std = (
-        float(raw_train["total_goals"].std())
-        if "total_goals" in raw_train.columns
+        float(raw_train[regression_targets[0]["name"]].std())
+        if regression_targets and regression_targets[0]["name"] in raw_train.columns
         else 1.0
     )
     normalized_rmse = rmse / target_std if target_std > 0 else rmse
@@ -1346,12 +1350,17 @@ def run(
 
     # -- Phase B: Extract features -----------------------------
     print("\n[B] Feature Extraction")
+    
+    # Determine branch name for reproducibility contract
+    # Use variant_name if provided, otherwise use anchor_git_branch from state, or default to "anchor-baseline"
+    branch_name = variant_name if variant_name else state.get("anchor_git_branch", "anchor-baseline")
+    
     if hasattr(extractor_instance, "extract"):
-        train_feat, test_feat = extractor_instance.extract(paths, tiff_path, config)
+        train_feat, test_feat = extractor_instance.extract(paths, tiff_path, config, branch_name)
     else:
         raise RuntimeError(
             f"Plugin '{plugin_path}' has no extract() function. "
-            f"Implement extract(paths, tiff_path, config) -> (train_df, test_df)."
+            f"Implement extract(paths, tiff_path, config, branch_name) -> (train_df, test_df)."
         )
 
     # -- Phase B2: Build hypothesis-derived features -----------
