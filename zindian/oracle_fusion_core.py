@@ -329,7 +329,8 @@ def run(
         )
 
     # Phase 1: Dynamic intake & strategy check (single-target path)
-    train_path = proc_dir / "features_train.csv"
+    branch_name = state_obj.get("anchor_git_branch") or "anchor-baseline" if state_obj else "anchor-baseline"
+    train_path = proc_dir / f"features_train_{branch_name}.csv"
     if not train_path.exists():
         print(f"Train file not found: {train_path}")
         return {"status": "FAILED", "reason": "Train file missing"}
@@ -367,7 +368,8 @@ def _run_multi_target_fusion(
     targets = target_config.get("targets", [])
     print(f"Targets: {[t['name'] for t in targets]}\n")
 
-    train_path = proc_dir / "features_train.csv"
+    branch_name = state_obj.get("anchor_git_branch") or "anchor-baseline" if state_obj else "anchor-baseline"
+    train_path = proc_dir / f"features_train_{branch_name}.csv"
     if not train_path.exists():
         return {"status": "FAILED", "reason": "Train file missing"}
     train = pd.read_csv(train_path)

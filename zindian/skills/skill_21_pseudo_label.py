@@ -634,11 +634,12 @@ def run(
         }
 
     # -- Dynamic column resolution --------------------------------------------
+    branch_name = state.get("anchor_git_branch") or "anchor-baseline"
     train_file = paths.data_processed_dir / (
-        config.get("features_train_filename") or "features_train.csv"
+        config.get("features_train_filename") or f"features_train_{branch_name}.csv"
     )
     test_file = paths.data_processed_dir / (
-        config.get("features_test_filename") or "features_test.csv"
+        config.get("features_test_filename") or f"features_test_{branch_name}.csv"
     )
     sample_sub_file = paths.data_raw_dir / (
         config.get("sample_submission_filename") or "SampleSubmission.csv"
