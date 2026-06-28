@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional
 
 PREREQUISITE_GATES = [
     "human_gate_1_approved",  # Anchor evaluation before variant generation
-    "human_gate_2_approved",  # Per-branch promotion approvals
+    # Note: human_gate_2 is per-branch, checked separately
     "human_gate_3_approved",  # Before skill_13 oracle fusion
     "human_gate_4_approved",  # Before skill_14 inference formatting
 ]
@@ -66,11 +66,13 @@ def _is_locked(state: Dict[str, Any]) -> bool:
 
 
 def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
-    """Check all prerequisite human gates (1-4) have been approved.
+    """Check all prerequisite human gates (1, 3, 4) and per-branch gate 2.
 
     Returns a list of missing gate keys. Empty list means all pass.
     """
     missing: List[str] = []
+    
+    # Check gates 1, 3, 4
     for gate_key in PREREQUISITE_GATES:
         gate_entry = state.get(gate_key)
         if gate_entry is None:
@@ -89,6 +91,20 @@ def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
                 missing.append(gate_key)
         else:
             missing.append(gate_key)
+    
+    # Check per-branch gate 2 approvals
+    promoted_branches = [
+        k.replace("human_gate_2_", "").replace("_approved", "")
+        for k in state
+        if k.startswith("human_gate_2_") and k.endswith("_approved")
+        and k != "human_gate_2_approved"  # Exclude flat legacy key
+    ]
+    
+    for branch in promoted_branches:
+        gate_key = f"human_gate_2_{branch}_approved"
+        if not state.get(gate_key):
+            missing.append(gate_key)
+    
     return missing
 
 

@@ -6,11 +6,11 @@
 
 ⚠️ **KNOWN GAPS IN IMPLEMENTATION:**
 While the multi-target pipeline and sub-phase mappings are fully implemented and functional,
-a few minor gaps remain (such as the pseudo-labeling retraining loop in skill_21 and 
-composite fold score variance in skill_12).
-See `/docs/sot_audit_report.md` for the complete audit report.
+most gaps from v2.2.1 have been resolved in v2.3. GAP-1 (skill_21 retraining) was already
+implemented, GAP-2 (composite fold variance) has been added, and DRIFT-1 (hardcoded targets)
+has been fixed. See `/docs/sot_audit_report.md` for the complete audit report.
 
-**Last updated:** June 2026 (v2.3: added R5 carbon tracking, known gaps registry)
+**Last updated:** June 2026 (v2.3: added R5 carbon tracking, known gaps registry, resolved GAP-2 and DRIFT-1)
 **Patched from v2.2.1-Multi-Target:** 3 changes —
   Section 2: Replaced "RMSLE vs RMSE Target Transformation and Evaluation"
   with "Regression Target Transformation Lifecycle" — generalized mapping
@@ -1069,8 +1069,8 @@ No string literals permitted in `skill_05` body.
 [ ] reports/feature_policy.json present, non-empty,
     and valid JSON
 [ ] feature_policy.json contains required keys:
-    allowed_features, blocked_features, block_reasons
-[ ] blocked_features contains at minimum all columns
+    allowed_data_sources, banned_transformations, lat_lon_permitted_as_feature
+[ ] banned_transformations contains at minimum all columns
     listed in challenge_config["policy_filters"]
 [ ] skill_04 EDA outputs present in SKILL_STATE.json
     — verified BEFORE skill_05 runs
@@ -2844,8 +2844,8 @@ optimisation.
 [ ] reports/feature_policy.json present, non-empty,
     and valid JSON
 [ ] feature_policy.json contains required keys:
-    allowed_features, blocked_features, block_reasons
-[ ] blocked_features contains at minimum all columns
+    allowed_data_sources, banned_transformations, lat_lon_permitted_as_feature
+[ ] banned_transformations contains at minimum all columns
     listed in challenge_config["policy_filters"]
 [ ] skill_04 EDA outputs in SKILL_STATE.json
     — verified BEFORE skill_05 runs

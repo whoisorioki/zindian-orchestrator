@@ -692,6 +692,7 @@ def run(
             "phase_1",
             "phase_1_complete",
             "phase_1_integrity",
+            "phase_1_integrity_locked",  # Bootstrap phase string
         )
         if current_phase in allowed_write_phases:
             write_config(final_to_write, paths)
@@ -746,6 +747,17 @@ def run(
     print("\nCompliance notes:")
     for note in final_to_write.get("compliance_notes", []):
         print(f"  [WARN]  {note}")
+
+    # R5: Add infrastructure block if missing
+    if "infrastructure" not in final_to_write:
+        final_to_write["infrastructure"] = {
+            "hardware_type": "cpu",
+            "region": "us-east-1",
+            "tdp_watts": 15.0,
+            "pue": 1.0,
+            "carbon_intensity_gco2_per_kwh": 494.0
+        }
+        print("\n[R5] Added infrastructure block for carbon tracking")
 
     return {"status": "OK", "config": final_to_write}
 

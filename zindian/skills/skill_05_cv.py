@@ -492,6 +492,7 @@ def run(strategy: str = "compare") -> dict:
             "phase_0_foundation",
             "phase_1",
             "phase_1_integrity",
+            "phase_1_integrity_locked",  # Bootstrap phase string
         )
         if current_phase in allowed_write_phases:
             cfg_path = paths.config_path
