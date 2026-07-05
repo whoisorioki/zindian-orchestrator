@@ -31,8 +31,10 @@ export ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
 cd competitions/world-cup-2026-goal-prediction-challenge
 
 # Execute CLI
-python -m zindian.cli <command>
+zindian-cli <command>
 ```
+
+If the console script is not available in a source checkout, `python -m zindian.cli <command>` is the equivalent fallback.
 
 ---
 

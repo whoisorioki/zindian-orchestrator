@@ -13,12 +13,13 @@ def make_anchor_comp(tmp_path: Path):
     raw = comp / "data" / "raw"
     train.mkdir(parents=True)
     raw.mkdir(parents=True)
-    # features_train.csv
-    ft = train / "features_train.csv"
+    # features_train_anchor-baseline.csv
+    ft = train / "features_train_anchor-baseline.csv"
     ft.write_text("ID,Occurrence Status,feat1\n1,1,0.1\n2,0,0.2\n", encoding="utf-8")
-    (train / "features_test.csv").write_text(
+    (train / "features_test_anchor-baseline.csv").write_text(
         "ID,feat1\n3,0.3\n4,0.4\n", encoding="utf-8"
     )
+
     # sample submission
     (raw / "SampleSubmission.csv").write_text(
         "ID,Prediction\n3,0\n4,0\n", encoding="utf-8"

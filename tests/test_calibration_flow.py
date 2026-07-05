@@ -11,16 +11,25 @@ class SimplePaths:
         self.reports_dir = proc_dir / "reports"
         self.competition_dir = proc_dir.parent
         self.state_path = proc_dir.parent / "SKILL_STATE.json"
+        self.data_raw_dir = proc_dir.parent / "raw"
+
+
 
 
 def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
     proc = tmp_path / "data" / "processed"
     proc.mkdir(parents=True)
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
 
-    # create train features with target and 2-fold stratification support
+    # create raw Train.csv and train features
+    (raw / "Train.csv").write_text(
+        "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
+    )
     (proc / "features_train.csv").write_text(
         "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
     )
+
 
     # create state-driven candidate records and matching test probs
     state_payload: dict = {

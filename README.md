@@ -3,6 +3,7 @@
 **Version:** 2.3  
 **Status:** Production Ready  
 **Last Updated:** June 2026
+**License:** Apache 2.0
 
 An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
@@ -102,6 +103,9 @@ cat docs/ORCHESTRATOR_OVERVIEW.md
 
 # Read the official specification
 cat docs/source_of_truth.md
+
+# Read the CLI reference
+cat docs/cli_integration_guide.md
 ```
 
 ### 2. Install & Verify (5 min)
@@ -146,7 +150,17 @@ python scripts/init_ledger.py
 .venv/bin/pytest      # Unix
 ```
 
-### 5. Run Phase 1 Tests (5 min)
+### 5. Use the CLI
+
+```bash
+# Console entry point installed by setup.py
+zindian-cli --help
+
+# Equivalent source checkout form
+python -m zindian.cli --help
+```
+
+### 6. Run Phase 1 Tests (5 min)
 
 ```bash
 python scripts/test_phase_1.py
@@ -161,7 +175,8 @@ python scripts/test_phase_1.py
 |----------|---------|----------|
 | **[ORCHESTRATOR_OVERVIEW.md](docs/ORCHESTRATOR_OVERVIEW.md)** | **Complete guide (non-technical + technical)** | **Everyone** |
 | [source_of_truth.md](docs/source_of_truth.md) | Official specification (v2.3) | Developers, architects |
-| [AGENTS.md](AGENTS.md) | Legacy master spec | Historical reference |
+| [cli_integration_guide.md](docs/cli_integration_guide.md) | CLI command reference | Users, operators |
+| [QUICK_START.md](docs/QUICK_START.md) | Refactor onboarding and command flow | Contributors |
 
 ### Technical Documentation
 | Document | Purpose | Audience |
@@ -169,16 +184,19 @@ python scripts/test_phase_1.py
 | [specs/requirements.md](specs/requirements.md) | Functional requirements | Architects, reviewers |
 | [specs/design.md](specs/design.md) | Architecture & data flow | Developers, code reviewers |
 | [specs/tasks.md](specs/tasks.md) | Phase checklist | Project managers |
+| [docs/architecture_matrix.md](docs/architecture_matrix.md) | Stable control-flow map | Contributors |
+| [docs/orchestrator_current_state.md](docs/orchestrator_current_state.md) | Current implementation snapshot | Maintainers |
 | [sot_audit_report.md](docs/sot_audit_report.md) | Known gaps & issues | Developers, QA |
 | [PROGRESS_TRACKER.md](docs/PROGRESS_TRACKER.md) | v2.3 refactor status | Project managers |
+| [documentation_audit_report.md](docs/documentation_audit_report.md) | Doc freshness audit | Maintainers |
 
 ### Operational Documentation
 | Document | Purpose | Audience |
 |----------|---------|----------|
-| [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) | Framework cleanup | DevOps/repo maintainers |
-| [sagemaker_workspace_strategy.md](docs/sagemaker_workspace_strategy.md) | SageMaker architecture | DevOps, SageMaker users |
-| [competition_data_lifecycle.md](docs/competition_data_lifecycle.md) | Data governance | Data engineers, auditors |
-| [storage_cost_governance.md](docs/storage_cost_governance.md) | Cost optimization | Finance, DevOps |
+| [troubleshooting_guide.md](docs/troubleshooting_guide.md) | Common failure modes and fixes | Developers, operators |
+| [workspace_rules.md](docs/workspace_rules.md) | Repository conventions and guardrails | Contributors |
+| [session_log.md](docs/session_logs/session_log.md) | Historical implementation notes | Maintainers |
+| [competition_data_lifecycle.md](docs/session_logs/competition_data_lifecycle.md) | Data lifecycle and repo workflow notes | Maintainers |
 
 ---
 
@@ -207,7 +225,7 @@ python scripts/test_phase_1.py
 ## Testing
 
 ### Automated Tests (pytest)
-- Comprehensive test framework with 160+ test cases
+- Comprehensive pytest-based test framework
 - Run using: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix)
 - Unit tests for: `state.py`, `config.py`, `ledger.py`, `cv.py`, `paths.py`
 - Skill verification tests for: anchor training, gating logic, SHAP audit, pseudo-labeling
@@ -269,14 +287,13 @@ Dynamic threshold normalization:
 ## Development Status
 
 ### v2.3 Complete
-- All 22 skills implemented and verified
+- All skill modules implemented and verified
 - 5 human gates operational
 - Carbon tracking (R5) instrumented
 - Multi-target pipeline functional
 - Pseudo-labeling with rollback
 - Scale-invariant gate normalization
-- 160+ test cases passing
-- Complete documentation suite
+- Comprehensive documentation suite under docs/
 
 ### Known Limitations
 - **C1:** Bootstrap phase string mismatch (workaround documented)
@@ -352,7 +369,7 @@ if __name__ == "__main__":
 
 ## License
 
-[Add your license here]
+Apache 2.0. See [LICENSE](LICENSE).
 
 ---
 
@@ -362,7 +379,7 @@ if __name__ == "__main__":
 |---------|------|------------|
 | **2.3** | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
 | 2.2.1 | May 2026 | Multi-target pipeline, regression support |
-| 2.2 | April 2026 | All 22 skills, 5 human gates |
+| 2.2 | April 2026 | Core skill modules, 5 human gates |
 | 2.0 | March 2026 | Phase 0-5 complete |
 
 ---

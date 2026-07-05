@@ -60,10 +60,11 @@ def test_governance_raises_on_missing_gates(tmp_path, monkeypatch):
     config = {"slug": "cmp-gov-missing"}
     state = {
         "human_gate_1_approved": "2026-06-01T00:00:00",
-        # human_gate_2_approved is missing!
-        "human_gate_3_approved": "2026-06-01T00:00:00",
+        "human_gate_2_approved": "2026-06-01T00:00:00",
+        # human_gate_3_approved is missing!
         "human_gate_4_approved": "2026-06-01T00:00:00",
     }
+
 
     with pytest.raises(RuntimeError, match="Missing prerequisite human gate approvals"):
         gov.run(config, state)

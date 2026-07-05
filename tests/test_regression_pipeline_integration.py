@@ -159,6 +159,11 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
             test_feat_df[col] = 0.0
     train_feat_df.to_csv(proc_dir / "features_train.csv", index=False)
     test_feat_df.to_csv(proc_dir / "features_test.csv", index=False)
+    train_feat_df.to_csv(proc_dir / "features_train_main.csv", index=False)
+    test_feat_df.to_csv(proc_dir / "features_test_main.csv", index=False)
+    train_feat_df.to_csv(proc_dir / "features_train_anchor-baseline.csv", index=False)
+    test_feat_df.to_csv(proc_dir / "features_test_anchor-baseline.csv", index=False)
+
 
     from zindian.skills import skill_08_anchor
 
@@ -179,7 +184,7 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     # Patch importlib.import_module so skill_07 receives a mock plugin with extract().
     import importlib as _importlib
 
-    def mock_extract_fn(paths_arg, tiff_path_arg, config_arg):
+    def mock_extract_fn(paths_arg, tiff_path_arg, config_arg, branch_name=None):
         return (
             pd.read_csv(paths_arg.data_processed_dir / "features_train.csv"),
             pd.read_csv(paths_arg.data_processed_dir / "features_test.csv"),
@@ -187,8 +192,9 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
 
     class _MockPlugin:
         @staticmethod
-        def extract(paths_arg, tiff_path_arg, config_arg):
-            return mock_extract_fn(paths_arg, tiff_path_arg, config_arg)
+        def extract(paths_arg, tiff_path_arg, config_arg, branch_name=None):
+            return mock_extract_fn(paths_arg, tiff_path_arg, config_arg, branch_name)
+
 
     _real_import = _importlib.import_module
 

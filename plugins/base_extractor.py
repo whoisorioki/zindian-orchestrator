@@ -39,7 +39,8 @@ class FeatureExtractor(ABC):
         pass
     
     @abstractmethod
-    def extract(self, paths, data_path, config) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def extract(self, paths, data_path, config, branch_name: str | None = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+
         """
         Extract features from raw data.
         

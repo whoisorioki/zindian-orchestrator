@@ -23,7 +23,8 @@ def test_fusion_dry_run(tmp_path, monkeypatch):
     proc.mkdir(parents=True)
 
     # train with target
-    (proc / "features_train.csv").write_text("ID,occ\n1,0\n2,1\n", encoding="utf-8")
+    (proc / "features_train_anchor-baseline.csv").write_text("ID,occ\n1,0\n2,1\n", encoding="utf-8")
+
 
     # test probs for branch candidate
     (proc / "test_probs_variant-1.csv").write_text(

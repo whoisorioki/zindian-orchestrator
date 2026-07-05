@@ -157,7 +157,10 @@ class TestPluginABCContract:
         """Plugin must read all column names from config, not hardcode"""
 
         class HardcodedPlugin(FeatureExtractor):
-            def extract(self, paths, tiff_path, config):
+            def fetch(self, paths, config, allow_network: bool = True):
+                return None
+
+            def extract(self, paths, data_path, config):
                 # WRONG: Hardcoded column name
                 group_col = "UniqueID"  # Should be config["group_col"]
                 return None, None
@@ -168,6 +171,7 @@ class TestPluginABCContract:
         # Assert: Plugin instantiates but violates A5
         # (Static analysis would catch this in CI/CD)
         assert plugin is not None
+
 
 
 class TestSingleTargetBaseline:
@@ -262,8 +266,9 @@ class TestPluginContractImplementation:
         params = list(sig.parameters.keys())
 
         assert "paths" in params
-        assert "tiff_path" in params
+        assert "data_path" in params
         assert "config" in params
+
 
 
 if __name__ == "__main__":
