@@ -14,8 +14,6 @@ class SimplePaths:
         self.data_raw_dir = proc_dir.parent / "raw"
 
 
-
-
 def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
     proc = tmp_path / "data" / "processed"
     proc.mkdir(parents=True)
@@ -23,13 +21,10 @@ def test_calibration_isotonic_dry_run(tmp_path, monkeypatch):
     raw.mkdir(parents=True)
 
     # create raw Train.csv and train features
-    (raw / "Train.csv").write_text(
-        "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
-    )
+    (raw / "Train.csv").write_text("ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8")
     (proc / "features_train.csv").write_text(
         "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
     )
-
 
     # create state-driven candidate records and matching test probs
     state_payload: dict = {

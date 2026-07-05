@@ -1,5 +1,5 @@
-Skill 20 — The Scientist (reference)
-====================================
+Skill 20 — The Scientist
+========================
 
 Purpose
 -------

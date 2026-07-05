@@ -400,7 +400,9 @@ def _eval_phase2b_generalisation(config: dict, state: dict) -> LensResult:
 
     # Temporal CV limitation — surface known_risk so Gate 1 reviewers see it
     cv_lim = config.get("cv_limitations") or {}
-    if cv_lim.get("temporal_holdout_required") and not cv_lim.get("temporal_cv_feasible"):
+    if cv_lim.get("temporal_holdout_required") and not cv_lim.get(
+        "temporal_cv_feasible"
+    ):
         known_risk = cv_lim.get("known_risk") or (
             "OOF scores may be optimistic — temporal CV not feasible with this data."
         )

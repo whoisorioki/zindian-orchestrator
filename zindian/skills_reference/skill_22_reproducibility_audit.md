@@ -1,5 +1,5 @@
-Skill 22 — Reproducibility & Integration Audit (reference)
-==========================================================
+Skill 22 — Reproducibility & Integration Audit
+==============================================
 
 Purpose
 -------
@@ -40,4 +40,3 @@ Audit findings & resolution status
 - **AST Scan Coverage**: The AST scan successfully blocks forbidden AutoML packages.
 - **Requirements Sync Verification**: Correctly checks lockfile package presence, but may flag false positives/stale alerts if `st_mtime` gets reset during git checkouts or file copies.
 - **OOF Tag Verification**: [RESOLVED] Checks that OOF records have a `cv_strategy_id` matching the active strategy. Normalized CV strategy prefixes (stripping `config:` or `override:`) in `_audit_oof_strategy_tags` before matching, completely preventing false-positive mismatches.
-

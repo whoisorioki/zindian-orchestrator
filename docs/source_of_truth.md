@@ -1121,7 +1121,7 @@ Proceeds to skill_06 only if gate passes
 
 ---
 
-**`skill_06_cleaning` — Imputation pipeline:**
+**`skill_06_preprocessing` — Imputation pipeline:**
 
 ```
 For each column in SKILL_STATE["eda"]["mnar_columns"]:

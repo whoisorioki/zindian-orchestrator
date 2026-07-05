@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import tabula.skill_state_autopatch  # noqa
 import json
-import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -582,7 +580,11 @@ def run(
     # three_lens without requiring any consumer to parse config prose.
     cv_lim = config.get("cv_limitations") or {}
     known_risk = cv_lim.get("known_risk")
-    if known_risk and cv_lim.get("temporal_holdout_required") and not cv_lim.get("temporal_cv_feasible"):
+    if (
+        known_risk
+        and cv_lim.get("temporal_holdout_required")
+        and not cv_lim.get("temporal_cv_feasible")
+    ):
         state_now = state_store.read()
         existing_warnings = state_now.get("metadata_warnings") or []
         if not isinstance(existing_warnings, list):
@@ -609,7 +611,8 @@ def run(
             "[WARN]  submit=True ignored in skill_08_anchor. Use skill_16_submit for submissions."
         )
 
-    print(f"""
+    print(
+        f"""
 {"=" * 60}
 Submission NOT triggered (single-role boundary: skill_16_submit owns submissions).
 OOF Log Loss : {oof_logloss:.6f}
@@ -617,7 +620,8 @@ OOF AUC      : {oof_auc:.6f}
 
 To submit when ready (via orchestrator flow):
   run skill_16_submit after gates and inference formatting
-{"=" * 60}""")
+{"=" * 60}"""
+    )
 
     return {
         "status": "OK",
@@ -644,7 +648,9 @@ def _run_multi_target(
     # Load features
     # Use branch-specific files for reproducibility contract
     branch_name = state.get("anchor_git_branch") or "anchor-baseline"
-    X_train = pd.read_csv(paths.data_processed_dir / f"features_train_{branch_name}.csv")
+    X_train = pd.read_csv(
+        paths.data_processed_dir / f"features_train_{branch_name}.csv"
+    )
     X_test = pd.read_csv(paths.data_processed_dir / f"features_test_{branch_name}.csv")
 
     # Load raw data for targets
@@ -819,13 +825,14 @@ def _run_multi_target(
         else:
             # Binary classification: store positive-class probability
             if target_task == "classification":
-                test_prob_df[f"{target_name}_prob_class_1"] = np.asarray(preds, dtype=np.float64)
+                test_prob_df[f"{target_name}_prob_class_1"] = np.asarray(
+                    preds, dtype=np.float64
+                )
             else:
                 # Regression: no probability columns to save
                 continue
         test_prob_path = (
-            paths.data_processed_dir
-            / f"test_probs_anchor-baseline_{target_name}.csv"
+            paths.data_processed_dir / f"test_probs_anchor-baseline_{target_name}.csv"
         )
         test_prob_df.to_csv(test_prob_path, index=False)
         print(f"[OK] Test probabilities saved → {test_prob_path}")
@@ -963,8 +970,16 @@ def _run_multi_target(
         competition=config.slug,
         md5_target_hash=md5_target_hash,
         anchor_oof_score=avg_score,
-        anchor_oof_f1=all_metrics.get(first_classification_target, {}).get("oof_f1", 0.0) if first_classification_target else 0.0,
-        anchor_oof_rmse=all_metrics.get(first_regression_target, {}).get("oof_rmse", 0.0) if first_regression_target else 0.0,
+        anchor_oof_f1=(
+            all_metrics.get(first_classification_target, {}).get("oof_f1", 0.0)
+            if first_classification_target
+            else 0.0
+        ),
+        anchor_oof_rmse=(
+            all_metrics.get(first_regression_target, {}).get("oof_rmse", 0.0)
+            if first_regression_target
+            else 0.0
+        ),
         anchor_multi_target_metrics=all_metrics,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),

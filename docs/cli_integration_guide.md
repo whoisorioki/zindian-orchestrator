@@ -217,15 +217,15 @@ my_parser.add_argument("--option", help="Optional argument")
 # 2. Add handler in main()
 elif args.command == "mycommand":
     from zindian.module import function
-    
+
     result = function(option=args.option if hasattr(args, "option") else None)
-    
+
     # Output as JSON or formatted text
     if isinstance(result, dict):
         print(json.dumps(result, indent=2, default=str))
     else:
         print(result)
-    
+
     sys.exit(0 if result.get("success") else 1)
 ```
 
@@ -265,7 +265,7 @@ def test_phase_1_execution():
         capture_output=True,
         text=True
     )
-    
+
     assert result.returncode == 0
     assert "PHASE 1 RESULTS" in result.stdout
     assert "skill_01: GO" in result.stdout
@@ -278,7 +278,7 @@ def test_status_command():
         capture_output=True,
         text=True
     )
-    
+
     assert result.returncode == 0
     data = json.loads(result.stdout)
     assert "competition" in data
@@ -294,7 +294,7 @@ def test_status_command():
 elif args.command == "query":
     from zindian.state import SkillStateStore
     from zindian.paths import resolve_competition_paths
-    
+
     paths = resolve_competition_paths()
     state = SkillStateStore(paths.state_path).read()
     print(json.dumps(state.get("key"), indent=2))
@@ -305,7 +305,7 @@ elif args.command == "query":
 elif args.command == "update":
     from zindian.state import SkillStateStore
     from zindian.paths import resolve_competition_paths
-    
+
     paths = resolve_competition_paths()
     store = SkillStateStore(paths.state_path)
     store.update(key="value")

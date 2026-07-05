@@ -1,5 +1,5 @@
-Skill 11 — Branch Gate (reference)
-=================================
+Skill 11 — Branch Gate
+======================
 
 Purpose
 -------
@@ -45,4 +45,3 @@ Recommendations
 ---------------
 - Implement inverted gating comparisons and target standard deviation scaling for regression metrics (RMSE).
 - Ensure safe `.get()` access patterns are used on all optional keys in state.
-

@@ -7,12 +7,14 @@ def test_sql_syntax_loophole_valid_queries():
     # Create sequence first so it exists for the table default
     conn.execute("CREATE SEQUENCE test_seq")
     # Test table creation with NEXTVAL stripping
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS test_table (
             id INTEGER PRIMARY KEY DEFAULT nextval('test_seq'),
             name VARCHAR NOT NULL
         )
-    """)
+    """
+    )
 
     # Test valid insert and select
     conn.execute("INSERT INTO test_table (name) VALUES (?)", ["Alice"])

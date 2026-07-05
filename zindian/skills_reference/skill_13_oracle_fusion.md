@@ -1,5 +1,5 @@
-Skill 13 — Oracle Fusion / Ensemble (reference)
-==============================================
+Skill 13 — Oracle Fusion / Ensemble
+===================================
 
 Purpose
 -------

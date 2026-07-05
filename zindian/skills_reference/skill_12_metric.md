@@ -1,5 +1,5 @@
-Skill 12 — Metric Analysis (reference)
-=====================================
+Skill 12 — Metric Analysis
+==========================
 
 Purpose
 -------

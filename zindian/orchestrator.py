@@ -330,6 +330,7 @@ def run_skill(
     try:
         from .carbon_tracker import estimate_carbon
         from .config import ChallengeConfig
+
         config_obj = ChallengeConfig.load()
         carbon_data = estimate_carbon(duration_sec, peak_memory_mb, config_obj._data)
     except Exception:
@@ -337,7 +338,7 @@ def run_skill(
             "carbon_kg_estimate": None,
             "tracker_method": "not_instrumented",
             "hardware_type": "unknown",
-            "region": "unknown"
+            "region": "unknown",
         }
 
     # Normalize result
@@ -350,7 +351,7 @@ def run_skill(
     result["telemetry"] = {
         "duration_sec": round(duration_sec, 2),
         "peak_memory_mb": round(peak_memory_mb, 2),
-        **carbon_data
+        **carbon_data,
     }
 
     return result
@@ -583,7 +584,18 @@ def run_phase(
         _phase = phase.lower().strip()
         if _phase in ("2b", "3b"):
             run_phase_summary(_phase)
-        _write_json_summary(_phase, paths, state, ["anchor_oof_score", "anchor_oof_f1", "best_variant_features", "submissions_used_total", "cv_strategy_type"])
+        _write_json_summary(
+            _phase,
+            paths,
+            state,
+            [
+                "anchor_oof_score",
+                "anchor_oof_f1",
+                "best_variant_features",
+                "submissions_used_total",
+                "cv_strategy_type",
+            ],
+        )
     except Exception:
         pass
 

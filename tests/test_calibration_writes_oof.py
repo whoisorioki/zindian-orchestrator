@@ -12,13 +12,10 @@ def test_calibration_writes_oof(tmp_path, monkeypatch):
     raw.mkdir(parents=True)
 
     # create raw Train.csv and train features
-    (raw / "Train.csv").write_text(
-        "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
-    )
+    (raw / "Train.csv").write_text("ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8")
     (proc / "features_train.csv").write_text(
         "ID,target\n1,0\n2,1\n3,0\n4,1\n", encoding="utf-8"
     )
-
 
     state_payload: dict = {
         "competition": "cmp",
@@ -58,8 +55,6 @@ def test_calibration_writes_oof(tmp_path, monkeypatch):
             self.competition_dir = proc_dir.parent
             self.state_path = proc_dir.parent / "SKILL_STATE.json"
             self.data_raw_dir = proc_dir.parent / "raw"
-
-
 
     monkeypatch.setattr(
         calib,

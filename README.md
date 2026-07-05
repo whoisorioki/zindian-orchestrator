@@ -251,16 +251,16 @@ def run(
 ):
     """
     Run Skill XX.
-    
+
     Returns:
         Dict: {"status": "GO|ERROR", "result": ..., "message": "..."}
     """
     try:
         config = ChallengeConfig.load(config_path)
         state_store = SkillStateStore(Path(state_path))
-        
+
         # YOUR LOGIC HERE
-        
+
         state_store.update(dag_phase="phase_X_done")
         return {"status": "GO", "result": ...}
     except Exception as e:
@@ -295,5 +295,5 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ---
 
-**Last Updated:** June 2026  
+**Last Updated:** June 2026
 **Status:** v2.3 Production Ready

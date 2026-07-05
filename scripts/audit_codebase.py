@@ -1,9 +1,7 @@
 """Full codebase audit: verify all factual claims in AGENTS.md and SoT against actual code."""
 
-import os
 import re
 from pathlib import Path
-from typing import Any
 
 SKILL_DIR = Path("zindian/skills")
 
@@ -119,7 +117,7 @@ def audit_agents_md_ground_truth() -> list[dict]:
         check(
             "skill_13_ensemble imports from oracle_fusion",
             "oracle_fusion" in ens_src,
-            f"Actual import lines: {[l.strip() for l in ens_src.split(chr(10)) if 'import' in l and ('oracle' in l or 'skill' in l or 'fusion' in l)]}",
+            f"Actual import lines: {[line.strip() for line in ens_src.split(chr(10)) if 'import' in line and ('oracle' in line or 'skill' in line or 'fusion' in line)]}",
         )
     )
     results.append(
@@ -202,11 +200,6 @@ def audit_skill_entry_points() -> list[dict]:
                 )
             )
             # Check returns dict
-            returns_dict = (
-                "-> dict" in src.split("def run(")[1].split(":")[0]
-                if "def run(" in src
-                else False
-            )
             results.append(
                 check(
                     f"{f.name}: run() returns dict",

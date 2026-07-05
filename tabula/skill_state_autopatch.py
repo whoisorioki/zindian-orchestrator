@@ -6,10 +6,10 @@ Usage:
     import tabula.skill_state_autopatch  # noqa
     # Now all SKILL_STATE.json operations are automatically optimized
 """
+
 import json
 import builtins
 from pathlib import Path
-from typing import Any
 
 _original_open = builtins.open
 _original_json_load = json.load
@@ -33,7 +33,7 @@ class _SkillStateFile:
         return self._f.__exit__(exc_type, exc_val, exc_tb)
 
 
-def _patched_open(file, mode='r', *args, **kwargs):
+def _patched_open(file, mode="r", *args, **kwargs):
     """Intercept SKILL_STATE.json opens."""
     f = _original_open(file, mode, *args, **kwargs)
 

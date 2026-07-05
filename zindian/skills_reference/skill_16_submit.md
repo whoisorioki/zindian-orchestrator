@@ -1,5 +1,5 @@
-Skill 16 — Zindi Submission (reference)
-======================================
+Skill 16 — Zindi Submission
+===========================
 
 
 Purpose
@@ -47,4 +47,3 @@ Audit findings & resolution status
   8. Duplicate IDs check (no duplicate IDs in the ID column).
 - **Submission Comments**: [RESOLVED] Uses metric-aware vocabulary (e.g. `oof_f1` for classification) in comments rather than hardcoded metrics.
 - **Budget Guard**: Enforces submission limits before triggering the human validation gate.
-

@@ -1,5 +1,5 @@
-Skill 08 — Anchor Baseline (reference)
-=====================================
+Skill 08 — Anchor Baseline
+==========================
 
 Purpose
 -------
@@ -40,4 +40,3 @@ Audit findings & resolution status
 - **Regression and Secondary Metrics**: [RESOLVED] Supported in anchor training, storing secondary metrics under `secondary_metrics` in regression tasks.
 - **Fold Scores Mismatch**: [RESOLVED] Individual fold score telemetry is successfully collected and written inside the OOF schema (`fold_scores` inside `model_config`) for consumption by downstream diagnostic layers.
 - **Exclusion Hardcoding**: Enforced dynamic configuration lookups instead of hardcoding coordinate names.
-

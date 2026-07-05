@@ -426,19 +426,23 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
                 carbon_kg = val.get("carbon_kg_estimate")
                 if carbon_kg:
                     carbon_total += carbon_kg
-                    carbon_rows.append({
-                        "skill": skill,
-                        "carbon_kg": carbon_kg,
-                        "duration_sec": val.get("duration_sec", 0),
-                        "method": val.get("tracker_method", "unknown")
-                    })
+                    carbon_rows.append(
+                        {
+                            "skill": skill,
+                            "carbon_kg": carbon_kg,
+                            "duration_sec": val.get("duration_sec", 0),
+                            "method": val.get("tracker_method", "unknown"),
+                        }
+                    )
         if carbon_rows:
             lines.append(f"**Total carbon footprint:** `{carbon_total:.6f} kg CO₂e`  ")
             lines.append("")
             lines.append("| Skill | Duration (s) | Carbon (kg CO₂e) | Method |")
             lines.append("|-------|--------------|------------------|--------|")
             for row in carbon_rows:
-                lines.append(f"| {row['skill']} | {row['duration_sec']:.2f} | {row['carbon_kg']:.6f} | {row['method']} |")
+                lines.append(
+                    f"| {row['skill']} | {row['duration_sec']:.2f} | {row['carbon_kg']:.6f} | {row['method']} |"
+                )
         else:
             lines.append("_No carbon tracking data available._")
         lines.append("")
@@ -508,25 +512,35 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
                 carbon_kg = val.get("carbon_kg_estimate")
                 if carbon_kg:
                     carbon_total += carbon_kg
-                    carbon_rows.append({
-                        "skill": skill,
-                        "carbon_kg": carbon_kg,
-                        "duration_sec": val.get("duration_sec", 0),
-                        "peak_memory_mb": val.get("peak_memory_mb", 0),
-                        "method": val.get("tracker_method", "unknown"),
-                        "hardware": val.get("hardware_type", "unknown"),
-                        "region": val.get("region", "unknown")
-                    })
+                    carbon_rows.append(
+                        {
+                            "skill": skill,
+                            "carbon_kg": carbon_kg,
+                            "duration_sec": val.get("duration_sec", 0),
+                            "peak_memory_mb": val.get("peak_memory_mb", 0),
+                            "method": val.get("tracker_method", "unknown"),
+                            "hardware": val.get("hardware_type", "unknown"),
+                            "region": val.get("region", "unknown"),
+                        }
+                    )
         if carbon_rows:
             lines.append(f"**Total carbon footprint:** `{carbon_total:.6f} kg CO₂e`  ")
-            lines.append(f"**Tracking method:** `{carbon_rows[0]['method'] if carbon_rows else 'unknown'}`  ")
-            lines.append(f"**Hardware:** `{carbon_rows[0]['hardware'] if carbon_rows else 'unknown'}`  ")
-            lines.append(f"**Region:** `{carbon_rows[0]['region'] if carbon_rows else 'unknown'}`  ")
+            lines.append(
+                f"**Tracking method:** `{carbon_rows[0]['method'] if carbon_rows else 'unknown'}`  "
+            )
+            lines.append(
+                f"**Hardware:** `{carbon_rows[0]['hardware'] if carbon_rows else 'unknown'}`  "
+            )
+            lines.append(
+                f"**Region:** `{carbon_rows[0]['region'] if carbon_rows else 'unknown'}`  "
+            )
             lines.append("")
             lines.append("| Skill | Duration (s) | Peak RAM (MB) | Carbon (kg CO₂e) |")
             lines.append("|-------|--------------|---------------|------------------|")
             for row in carbon_rows:
-                lines.append(f"| {row['skill']} | {row['duration_sec']:.2f} | {row['peak_memory_mb']:.2f} | {row['carbon_kg']:.6f} |")
+                lines.append(
+                    f"| {row['skill']} | {row['duration_sec']:.2f} | {row['peak_memory_mb']:.2f} | {row['carbon_kg']:.6f} |"
+                )
         else:
             lines.append("_No carbon tracking data available._")
         lines.append("")

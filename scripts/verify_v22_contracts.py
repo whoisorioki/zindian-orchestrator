@@ -114,13 +114,13 @@ for name, result in checks:
         failures.append(name)
     print(f"{status}: {name}")
 
-print(f"\n=== Summary ===")
+print("\n=== Summary ===")
 print(f"Total checks : {len(checks)}")
 print(f"Passed       : {len(checks) - len(failures)}")
 print(f"Failed       : {len(failures)}")
 if failures:
-    print(f"Failures:")
-    for f in failures:
-        print(f"  - {f}")
+    print("Failures:")
+    for failure in failures:
+        print(f"  - {failure}")
 print(f'\nOverall: {"ALL PASS ✅" if all_pass else "SOME FAILED ❌"}')
 sys.exit(0 if all_pass else 1)

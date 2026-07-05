@@ -1,5 +1,5 @@
-Skill 19 — The Code Miner (reference)
-====================================
+Skill 19 — The Code Miner
+=========================
 
 Purpose
 -------

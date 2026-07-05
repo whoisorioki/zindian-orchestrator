@@ -1,5 +1,5 @@
-Skill 01 — Integrity Audit (reference)
-=====================================
+Skill 01 — Integrity Audit
+==========================
 
 Purpose
 -------
@@ -36,4 +36,3 @@ Outputs
 -------
 - Updates `competitions/<slug>/SKILL_STATE.json` with keys: `md5_target_hash`, `md5_train_file`, `md5_test_file`, `md5_sample_sub_file`, and sets `dag_phase` to `phase_1_complete`.
 - Returns a summary dict with dataset counts and `class_distribution`.
-

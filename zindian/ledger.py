@@ -39,7 +39,8 @@ class Ledger:
         except Exception:
             pass
 
-        self.conn.execute("""
+        self.conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS experiments (
                 experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
                 branch_name         VARCHAR NOT NULL,
@@ -55,7 +56,8 @@ class Ledger:
                 notes               VARCHAR,
                 created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Safe migration: add columns that may be absent in pre-existing databases.
         for col_def in (
@@ -84,7 +86,8 @@ class Ledger:
                 except Exception:
                     pass  # Column already exists — safe to ignore.
 
-        self.conn.execute("""
+        self.conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS submissions (
                 submission_id       INTEGER PRIMARY KEY DEFAULT nextval('submissions_id_seq'),
                 experiment_id       INTEGER,
@@ -99,7 +102,8 @@ class Ledger:
                 submitted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
             )
-        """)
+        """
+        )
 
         self.conn.commit()
 
@@ -244,12 +248,14 @@ class Ledger:
 
         # Use oof_score (generic column); fall back to oof_rmse for legacy rows.
         order = "ASC" if metric_direction == "minimize" else "DESC"
-        cursor = self.conn.execute(f"""
+        cursor = self.conn.execute(
+            f"""
             SELECT * FROM experiments
             WHERE COALESCE(oof_score, oof_rmse) IS NOT NULL
             ORDER BY COALESCE(oof_score, oof_rmse) {order}
             LIMIT 1
-            """)
+            """
+        )
         row = cursor.fetchone()
         if row is None:
             return None
@@ -273,11 +279,13 @@ class Ledger:
             )
         except Exception:
             order = "ASC"
-        cursor = self.conn.execute(f"""
+        cursor = self.conn.execute(
+            f"""
             SELECT * FROM experiments
             WHERE gate_result = 'PASS'
             ORDER BY COALESCE(oof_score, oof_rmse) {order}
-            """)
+            """
+        )
         cols = [desc[0] for desc in cursor.description]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 

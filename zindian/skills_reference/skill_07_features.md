@@ -1,5 +1,5 @@
-Skill 07 — Feature Engineering (reference)
-=========================================
+Skill 07 — Feature Engineering
+==============================
 
 Purpose
 -------
@@ -74,4 +74,3 @@ Audit findings & resolution status
 - **Regression OOF outputs**: [RESOLVED] Secondary metrics block generation is supported for regression.
 - **Fold Scores Mismatch**: [RESOLVED] Handled by returning validation fold metrics and appending `fold_scores` directly inside the `model_config` metadata block of the OOF schema. Backward compatibility for mock objects in older test suites is preserved via `getattr` fallbacks.
 - **Two-mode contract enforcement**: Enforced two-mode behavior on target-dependent feature encoding during cross-validation split iterations vs final model training.
-

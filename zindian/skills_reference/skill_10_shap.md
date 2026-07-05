@@ -1,5 +1,5 @@
-Skill 10 — Governed SHAP Audit (reference)
-=========================================
+Skill 10 — Governed SHAP Audit
+==============================
 
 Purpose
 -------

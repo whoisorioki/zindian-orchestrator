@@ -11,7 +11,9 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Tuple
+
 import pandas as pd
+from plugins.base_extractor import FeatureExtractor
 
 try:
     orig_path = sys.path.copy()
@@ -27,7 +29,6 @@ finally:
     sys.path = orig_path
 
 from zindian.config import ChallengeConfig
-from plugins.base_extractor import FeatureExtractor
 
 
 class NedbankExtractor(FeatureExtractor):
@@ -93,7 +94,8 @@ def extract(
     con = duckdb.connect()
 
     print("Aggregating transactions...")
-    txn_df = con.execute(f"""
+    txn_df = con.execute(
+        f"""
         SELECT
             UniqueID,
             COUNT(*) AS txn_count,
@@ -106,10 +108,12 @@ def extract(
             AVG(StatementBalance) AS statement_balance_avg
         FROM read_parquet('{raw_dir}/transactions_features.parquet')
         GROUP BY UniqueID
-    """).df()
+    """
+    ).df()
 
     print("Aggregating financials...")
-    fin_df = con.execute(f"""
+    fin_df = con.execute(
+        f"""
         SELECT
             UniqueID,
             SUM(NetInterestIncome) AS nii_sum,
@@ -118,7 +122,8 @@ def extract(
             AVG(NetInterestRevenue) AS nir_avg
         FROM read_parquet('{raw_dir}/financials_features.parquet')
         GROUP BY UniqueID
-    """).df()
+    """
+    ).df()
 
     print("Loading demographics...")
     demo_df = pd.read_parquet(f"{raw_dir}/demographics_clean.parquet")
@@ -169,16 +174,10 @@ def extract(
 
     return train_feat, test_feat
 
-
-from typing import Any, Tuple
-from plugins.base_extractor import FeatureExtractor
-
-
 class Extractor(FeatureExtractor):
     """Nedbank Extractor implementing the formal FeatureExtractor ABC."""
 
     def extract(
-        self, paths: Any, tiff_path: Path, config: Any
+        self, paths: Any, tiff_path: Path, config: Any, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return extract(paths, tiff_path, config)
-

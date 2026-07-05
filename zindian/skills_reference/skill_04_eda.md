@@ -1,5 +1,5 @@
-Skill 04 — EDA / Data Quality Audit (reference)
-==============================================
+Skill 04 — EDA / Data Quality Audit
+===================================
 
 Purpose
 -------

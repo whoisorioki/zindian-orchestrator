@@ -62,7 +62,7 @@ COMPLIANCE_KEYWORDS = [
     "additional data",
     "third party",
     "outside data",
-    "challenge update"
+    "challenge update",
 ]
 
 # External data sources to check for in discussions
@@ -382,7 +382,7 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
     if config:
         scraped.setdefault("competition_intel", {})
         competition_intel = scraped.setdefault("competition_intel", {})
-        for key, default in (
+        for key, default_value in (
             ("metric", None),
             ("use_probabilities", False),
             ("external_banned", False),
@@ -398,7 +398,7 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
             ("deadline", None),
             ("external_sources_on_data_page", []),
         ):
-            scraped.setdefault(key, default)
+            scraped.setdefault(key, default_value)
         if config.get("metric"):
             scraped["metric"] = config.get("metric")
         if config.get("use_probabilities") is not None:
@@ -627,12 +627,7 @@ def extract_compliance_flags(
 
         # Always capture discussions started by watched users, and always capture
         # comments from watched users even if no compliance keyword is present.
-        if (
-            title_flagged
-            or body_flagged
-            or flagged_comments
-            or discussion_from_watched
-        ):
+        if title_flagged or body_flagged or flagged_comments or discussion_from_watched:
             if discussion_from_watched and not (title_flagged or body_flagged):
                 classification = "clarify"
             # Build a concise flag text for downstream logic: prefer the title, else a preview

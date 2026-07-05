@@ -71,7 +71,7 @@ def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
     Returns a list of missing gate keys. Empty list means all pass.
     """
     missing: List[str] = []
-    
+
     # Check gates 1, 3, 4
     for gate_key in PREREQUISITE_GATES:
         gate_entry = state.get(gate_key)
@@ -91,20 +91,21 @@ def _verify_prerequisite_gates(state: Dict[str, Any]) -> List[str]:
                 missing.append(gate_key)
         else:
             missing.append(gate_key)
-    
+
     # Check per-branch gate 2 approvals
     promoted_branches = [
         k.replace("human_gate_2_", "").replace("_approved", "")
         for k in state
-        if k.startswith("human_gate_2_") and k.endswith("_approved")
+        if k.startswith("human_gate_2_")
+        and k.endswith("_approved")
         and k != "human_gate_2_approved"  # Exclude flat legacy key
     ]
-    
+
     for branch in promoted_branches:
         gate_key = f"human_gate_2_{branch}_approved"
         if not state.get(gate_key):
             missing.append(gate_key)
-    
+
     return missing
 
 

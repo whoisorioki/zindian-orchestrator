@@ -14,11 +14,13 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from typing import Any, Tuple
 
 import numpy as np
 import pandas as pd
 
 from zindian.config import ChallengeConfig
+from plugins.base_extractor import FeatureExtractor
 
 
 def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
@@ -232,21 +234,13 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
 
     return train_feat, test_feat
 
-
-from typing import Any, Tuple
-from plugins.base_extractor import FeatureExtractor
-
-
 class Extractor(FeatureExtractor):
     """Terraclimate Extractor implementing the formal FeatureExtractor ABC."""
 
-    def fetch(
-        self, paths: Any, config: Any, allow_network: bool = True
-    ) -> Path:
+    def fetch(self, paths: Any, config: Any, allow_network: bool = True) -> Path:
         return fetch(paths, config, allow_network)
 
     def extract(
-        self, paths: Any, tiff_path: Path, config: Any
+        self, paths: Any, tiff_path: Path, config: Any, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return extract(paths, tiff_path, config)
-

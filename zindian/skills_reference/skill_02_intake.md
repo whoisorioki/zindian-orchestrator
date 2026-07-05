@@ -4,9 +4,9 @@ Skill 02 — Challenge Intake (reference & audit)
 Deep Research Split (Skill 18 / 19 / 20)
 ----------------------------------------
 - Reference docs:
-  - `zindian/skills/skill_18_reference.md` for the Librarian track.
-  - `zindian/skills/skill_19_reference.md` for the Scientist track.
-  - `zindian/skills/skill_20_reference.md` for the Code Miner track.
+  - `zindian/skills_reference/skill_18_librarian.md` for the Librarian track.
+  - `zindian/skills_reference/skill_19_code_miner.md` for the Code Miner track.
+  - `zindian/skills_reference/skill_20_scientist.md` for the Scientist track.
 - `zindian/skills/skill_18_librarian.py`: domain literature retrieval track (the Why).
 - `zindian/skills/skill_20_scientist.py`: synthesis track that turns approved evidence into bounded hypotheses.
 - `zindian/skills/skill_19_code_miner.py`: machine-learning prior-art retrieval track (the How).
@@ -29,4 +29,3 @@ Commands
 Populate challenge configuration:
 
   python3 -m zindian.skills.skill_02_intake
-

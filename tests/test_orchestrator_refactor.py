@@ -173,7 +173,6 @@ class TestPluginABCContract:
         assert plugin is not None
 
 
-
 class TestSingleTargetBaseline:
     """Test 5: Byte-for-Byte Single-Target Baseline"""
 
@@ -268,7 +267,6 @@ class TestPluginContractImplementation:
         assert "paths" in params
         assert "data_path" in params
         assert "config" in params
-
 
 
 if __name__ == "__main__":

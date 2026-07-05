@@ -1,10 +1,10 @@
-"""Skill 06 — Cleaning / Data Imputation.
+"""Skill 06 — Data Preprocessing.
 
 Phase 2A. Reads cleaned EDA state, applies MNAR indicators, MCAR imputation,
 and dynamic constant-column dropping.
 
 Phase contract (SoT §Phase 2A):
-    policy_gate() → skill_06_cleaning
+    policy_gate() → skill_06_preprocessing
 
 Reads:
     state["eda"]["mnar_columns"]       — columns with non-random missingness
@@ -142,7 +142,7 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
     if _x_train_raw is None or _x_test_raw is None:
         raise ValueError(
-            "skill_06_cleaning requires 'X_train' and 'X_test' in state. "
+            "skill_06_preprocessing requires 'X_train' and 'X_test' in state. "
             "The orchestrator must load and pass feature matrices."
         )
     train: pd.DataFrame = _x_train_raw

@@ -23,8 +23,10 @@ from datetime import datetime, timezone
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+
 try:
     import shap
+
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
@@ -375,9 +377,9 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         return {
             "status": "SKIPPED",
             "reason": "shap_not_installed",
-            "message": "SHAP library not available. Install with: pip install shap"
+            "message": "SHAP library not available. Install with: pip install shap",
         }
-    
+
     paths = resolve_competition_paths(require_competition=True)
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")
@@ -837,8 +839,16 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
             f"## Target: {tname}",
             f"**Top feature**: {r.get('top_feature')}",
             f"**OOF {task_label}**: {score_str}",
-            f"**OOF F1**: {r.get('oof_f1'):.6f}" if r.get("oof_f1") is not None else "**OOF F1**: N/A",
-            f"**Top-15 SHAP share**: {r.get('top15_share', 0):.3%}" if r.get("top15_share") is not None else "**Top-15 SHAP share**: N/A",
+            (
+                f"**OOF F1**: {r.get('oof_f1'):.6f}"
+                if r.get("oof_f1") is not None
+                else "**OOF F1**: N/A"
+            ),
+            (
+                f"**Top-15 SHAP share**: {r.get('top15_share', 0):.3%}"
+                if r.get("top15_share") is not None
+                else "**Top-15 SHAP share**: N/A"
+            ),
             f"**High-corr pairs**: {r.get('high_corr_pairs_count', 0)}",
             f"**Dropped features**: {len(r.get('dropped_features', []))}",
             f"**Pruned feature count**: {r.get('pruned_feature_count', 'N/A')}",
@@ -866,14 +876,9 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
     # Write leaked_features in the flat dict format skill_11/three_lens expect:
     # {"anchor-baseline": ["feat_a"], "variant-xx": [...]}
     # Key is "anchor-baseline" since SHAP runs against the anchor feature set.
-    leaked_by_target = {
-        t: r.get("leaked_features", [])
-        for t, r in all_results.items()
-    }
+    leaked_by_target = {t: r.get("leaked_features", []) for t, r in all_results.items()}
     # Flatten: any feature leaked in ANY target blocks the anchor branch
-    all_leaked = sorted(set(
-        f for leaked in leaked_by_target.values() for f in leaked
-    ))
+    all_leaked = sorted(set(f for leaked in leaked_by_target.values() for f in leaked))
     state_store.update(leaked_features={"anchor-baseline": all_leaked})
     print(f"\n[OK] Multi-target SHAP complete. Overall pass: {all_pass}")
     return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}

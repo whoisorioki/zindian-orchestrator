@@ -226,9 +226,7 @@ def run():
             raw_df = pd.read_csv(raw_train)
             cfg_tmp = _load_json_object(paths.config_path)
             _target_cfg = cfg_tmp.get("target_config", {}) or {}
-            _targets_to_attach = [
-                t["name"] for t in _target_cfg.get("targets", [])
-            ]
+            _targets_to_attach = [t["name"] for t in _target_cfg.get("targets", [])]
             if not _targets_to_attach:
                 # Fallback: single-target from top-level key
                 _single = cfg_tmp.get("target_col")

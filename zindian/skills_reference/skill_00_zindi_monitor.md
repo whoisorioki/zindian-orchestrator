@@ -1,5 +1,5 @@
-Skill 00 — Zindi Monitor (reference)
-===================================
+Skill 00 — Zindi Monitor
+========================
 
 Purpose
 -------

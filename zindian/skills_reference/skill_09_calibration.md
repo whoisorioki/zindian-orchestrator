@@ -1,5 +1,5 @@
-Skill 09 — Probability Calibration (reference)
-==============================================
+Skill 09 — Probability Calibration
+==================================
 
 Purpose
 -------

@@ -97,7 +97,7 @@ def synthesize_default_feature_engineering(config: dict, state: dict) -> dict:
             config["group_signal"], config["missingness_level"]
     Returns: dict matching feature_engineering schema (empty keys = no-ops)
     """
-    eda = (state.get("eda") or {})
+    eda = state.get("eda") or {}
     defaults: dict[str, Any] = {}
 
     # -- Temporal signal: month-over-month deltas and seasonal amplitude ------
@@ -417,11 +417,7 @@ def build_hypothesis_features(
             except Exception:
                 _cfg_inner = cfg
 
-            _id_col = (
-                _cfg_inner.get("id_col")
-                or _cfg_inner.get("id_column")
-                or "ID"
-            )
+            _id_col = _cfg_inner.get("id_col") or _cfg_inner.get("id_column") or "ID"
             _target_lower = str(
                 _cfg_inner.get("target_col")
                 or _cfg_inner.get("target_column")
@@ -430,7 +426,8 @@ def build_hypothesis_features(
             _excluded = {_id_col.lower(), _target_lower}
 
             pca_feature_cols = [
-                c for c in train.columns
+                c
+                for c in train.columns
                 if c.lower() not in _excluded
                 and pd.api.types.is_numeric_dtype(train[c])
             ]
@@ -440,14 +437,10 @@ def build_hypothesis_features(
 
                 _scaler = _SS()
                 X_tr = _scaler.fit_transform(
-                    train[pca_feature_cols].fillna(
-                        train[pca_feature_cols].median()
-                    )
+                    train[pca_feature_cols].fillna(train[pca_feature_cols].median())
                 )
                 X_te = _scaler.transform(
-                    test[pca_feature_cols].fillna(
-                        train[pca_feature_cols].median()
-                    )
+                    test[pca_feature_cols].fillna(train[pca_feature_cols].median())
                 )
 
                 _pca = _PCA(n_components=n_components)
@@ -481,9 +474,7 @@ def build_hypothesis_features(
 # -- Variant Model Config Helpers ----------------------------------------------
 
 
-def _resolve_variant_model_config(
-    variant_name: str, paths, cfg: dict
-) -> dict:
+def _resolve_variant_model_config(variant_name: str, paths, cfg: dict) -> dict:
     """
     Resolve model configuration for a variant.
 
@@ -552,12 +543,15 @@ def _register_variant(variant_name: str, model_cfg: dict, paths, store) -> None:
     # Auto-create sidecar stub if it doesn't exist yet
     try:
         from zindian.config import ChallengeConfig
+
         cfg = ChallengeConfig.load()._data
         comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
         if comp_slug:
             variants_dir = (
                 Path(__file__).parent.parent.parent
-                / "competitions" / comp_slug / "variants"
+                / "competitions"
+                / comp_slug
+                / "variants"
             )
             variants_dir.mkdir(parents=True, exist_ok=True)
             sidecar_path = variants_dir / f"{variant_name}.json"
@@ -599,6 +593,7 @@ def _build_single_model(family: str, hyperparams: dict, seed: int):
         )
     elif family == "rf":
         from sklearn.ensemble import RandomForestClassifier
+
         return RandomForestClassifier(
             n_estimators=hp.pop("n_estimators", 500),
             max_depth=hp.pop("max_depth", None),
@@ -610,6 +605,7 @@ def _build_single_model(family: str, hyperparams: dict, seed: int):
         )
     elif family == "xgb":
         from xgboost import XGBClassifier
+
         return XGBClassifier(
             n_estimators=hp.pop("n_estimators", 500),
             learning_rate=hp.pop("learning_rate", 0.05),
@@ -701,7 +697,8 @@ def _dispatch_variant_training(
             oof_score = float(lgb_result.oof_rmse)
             direction = (
                 config.get("metric_direction", "minimize")
-                if config is not None else "minimize"
+                if config is not None
+                else "minimize"
             )
             delta = (
                 baseline_score - oof_score
@@ -745,8 +742,12 @@ def _dispatch_variant_training(
                 m_hp = dict(member.get("hyperparams") or {})
                 m_weight = float(member.get("weight", 1.0))
                 m_model = _build_single_model(m_family, m_hp, seed)
-                _fit_model(m_model, m_family, X, y, tr_idx, val_idx, seed, early_stopping)
-                val_preds += m_weight * np.asarray(m_model.predict_proba(X[val_idx]))[:, 1]
+                _fit_model(
+                    m_model, m_family, X, y, tr_idx, val_idx, seed, early_stopping
+                )
+                val_preds += (
+                    m_weight * np.asarray(m_model.predict_proba(X[val_idx]))[:, 1]
+                )
                 test_preds += m_weight * np.asarray(m_model.predict_proba(X_test))[:, 1]
                 total_weight += m_weight
             if total_weight > 0:
@@ -783,17 +784,21 @@ def _dispatch_variant_training(
     }
 
 
-def _fit_model(model, family: str, X, y, tr_idx, val_idx, seed: int, early_stopping: int):
+def _fit_model(
+    model, family: str, X, y, tr_idx, val_idx, seed: int, early_stopping: int
+):
     """Fit a single model with family-appropriate early stopping."""
     if family in ("lgb", "dart"):
         model.fit(
-            X[tr_idx], y[tr_idx],
+            X[tr_idx],
+            y[tr_idx],
             eval_set=[(X[val_idx], y[val_idx])],
             callbacks=[lgb.early_stopping(early_stopping), lgb.log_evaluation(-1)],
         )
     elif family == "xgb":
         model.fit(
-            X[tr_idx], y[tr_idx],
+            X[tr_idx],
+            y[tr_idx],
             eval_set=[(X[val_idx], y[val_idx])],
             verbose=False,
         )
@@ -837,6 +842,7 @@ def train_variant(
     if anchor_f1 is not None:
         baseline_score = anchor_f1
     import random
+
     random.seed(seed)
     np.random.seed(seed)
 
@@ -846,7 +852,13 @@ def train_variant(
         else:
             TARGET = "target"
         if TARGET not in train.columns:
-            for candidate in ("target", "Occurrence Status", "label", "target_col", "y"):
+            for candidate in (
+                "target",
+                "Occurrence Status",
+                "label",
+                "target_col",
+                "y",
+            ):
                 if candidate in train.columns:
                     TARGET = candidate
                     break
@@ -881,7 +893,9 @@ def train_variant(
     splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
     n_splits = getattr(splitter, "n_splits", 5)
 
-    print(f"\n  Training {variant_name} ({len(feature_cols)} features, family={family})...")
+    print(
+        f"\n  Training {variant_name} ({len(feature_cols)} features, family={family})..."
+    )
 
     result = _dispatch_variant_training(
         model_cfg=model_cfg,
@@ -912,6 +926,8 @@ def train_variant(
         print(f"  ROC-AUC  : {result['oof_auc']:.5f}")
 
     return result
+
+
 # -- Round Report Writer -------------------------------------------------------
 
 
@@ -1155,13 +1171,20 @@ def _run_multi_target_variant(
             model_config={"target_name": target_name, "variant": variant_name},
         )
 
-    # Compute composite score - read target names from config
-    target_names = [t["name"] for t in targets]
+    # Compute composite score from the loaded target definitions.
     regression_targets = [t for t in targets if t["task_type"] == "regression"]
     classification_targets = [t for t in targets if t["task_type"] == "classification"]
-    
-    rmse = all_metrics.get(regression_targets[0]["name"], {}).get("oof_rmse", 0) if regression_targets else 0
-    f1 = all_metrics.get(classification_targets[0]["name"], {}).get("oof_f1", 0) if classification_targets else 0
+
+    rmse = (
+        all_metrics.get(regression_targets[0]["name"], {}).get("oof_rmse", 0)
+        if regression_targets
+        else 0
+    )
+    f1 = (
+        all_metrics.get(classification_targets[0]["name"], {}).get("oof_f1", 0)
+        if classification_targets
+        else 0
+    )
 
     target_std = (
         float(raw_train[regression_targets[0]["name"]].std())
@@ -1258,7 +1281,6 @@ def run(
         )
 
     target_col = config.get("target_column") or config.get("target_col") or "target"
-    use_probabilities = config.get("use_probabilities", True)
     metric_name = config.get("metric", "f1_score")
     primary_key = (
         f"oof_{metric_name}"
@@ -1350,13 +1372,19 @@ def run(
 
     # -- Phase B: Extract features -----------------------------
     print("\n[B] Feature Extraction")
-    
+
     # Determine branch name for reproducibility contract
     # Use variant_name if provided, otherwise use anchor_git_branch from state, or default to "anchor-baseline"
-    branch_name = variant_name if variant_name else (state.get("anchor_git_branch") or "anchor-baseline")
-    
+    branch_name = (
+        variant_name
+        if variant_name
+        else (state.get("anchor_git_branch") or "anchor-baseline")
+    )
+
     if hasattr(extractor_instance, "extract"):
-        train_feat, test_feat = extractor_instance.extract(paths, tiff_path, config, branch_name)
+        train_feat, test_feat = extractor_instance.extract(
+            paths, tiff_path, config, branch_name
+        )
     else:
         raise RuntimeError(
             f"Plugin '{plugin_path}' has no extract() function. "

@@ -1,7 +1,7 @@
 # Zindian Orchestrator - Complete Overview
 
-**Version:** 2.3  
-**Last Updated:** June 2026  
+**Version:** 2.3
+**Last Updated:** June 2026
 **Status:** Production Ready
 
 ---
@@ -52,9 +52,9 @@ Every decision is evaluated through three simultaneous perspectives:
 ## The Journey: 4 Main Phases
 
 ### Phase 1: Understanding the Competition [SEARCH]
-**What happens:** Reads competition rules, examines data structure, locks configuration  
-**Analogy:** Detective documenting a crime scene before touching anything  
-**Duration:** ~5 minutes  
+**What happens:** Reads competition rules, examines data structure, locks configuration
+**Analogy:** Detective documenting a crime scene before touching anything
+**Duration:** ~5 minutes
 **Output:** Locked `challenge_config.json` (the rulebook)
 
 **Key Activities:**
@@ -67,9 +67,9 @@ Every decision is evaluated through three simultaneous perspectives:
 ---
 
 ### Phase 2: Building the Baseline [ANCHOR]
-**What happens:** Creates a simple, reliable model as starting point  
-**Analogy:** Chef making basic version before trying fancy variations  
-**Duration:** ~15-30 minutes  
+**What happens:** Creates a simple, reliable model as starting point
+**Analogy:** Chef making basic version before trying fancy variations
+**Duration:** ~15-30 minutes
 **Output:** Anchor model with baseline score
 
 **Key Activities:**
@@ -81,9 +81,9 @@ Every decision is evaluated through three simultaneous perspectives:
 ---
 
 ### Phase 3: Testing & Validation [TEST]
-**What happens:** Checks for data leakage, tests stability, validates predictions  
-**Analogy:** Quality inspector checking products before shipping  
-**Duration:** ~30-60 minutes  
+**What happens:** Checks for data leakage, tests stability, validates predictions
+**Analogy:** Quality inspector checking products before shipping
+**Duration:** ~30-60 minutes
 **Output:** Approved models that passed all safety checks
 
 **Key Activities:**
@@ -97,9 +97,9 @@ Every decision is evaluated through three simultaneous perspectives:
 ---
 
 ### Phase 4: Final Submission [SUBMIT]
-**What happens:** Format predictions, submit, document everything  
-**Analogy:** Preparing legal document - everything must be traceable  
-**Duration:** ~10 minutes  
+**What happens:** Format predictions, submit, document everything
+**Analogy:** Preparing legal document - everything must be traceable
+**Duration:** ~10 minutes
 **Output:** Competition submission + complete audit trail
 
 **Key Activities:**
@@ -530,10 +530,10 @@ SKILL_STATE[f"human_gate_2_{branch}_approved"] == True
 for fold in cv_folds:
     # Train on training fold
     model.fit(X_train_fold, y_train_fold)
-    
+
     # Compute SHAP on OOF predictions ONLY
     shap_values = shap.TreeExplainer(model).shap_values(X_val_fold)
-    
+
     # Store per-fold arrays
     fold_shap_arrays.append(shap_values)
 
@@ -592,7 +592,7 @@ else:
 weighted_distances = []
 for target_spec in target_config["targets"]:
     raw_score = oof_score_for_target
-    
+
     if target_spec["task_type"] == "regression":
         target_std = SKILL_STATE["eda"][f"{target_spec['name']}_std"]
         if target_spec["metric"] == "rmsle":
@@ -601,7 +601,7 @@ for target_spec in target_config["targets"]:
             normalized_distance = abs(raw_score) / target_std
     else:  # classification
         normalized_distance = 1.0 - raw_score
-    
+
     weighted_distances.append(normalized_distance * target_spec["weight"])
 
 composite_score = sum(weighted_distances)
@@ -681,12 +681,12 @@ else:
 ## Preflight Validation
 
 ### INIT Mode
-**Triggered:** `challenge_config.json` doesn't exist  
-**Permits:** Phase 1 skills only (01-05, 15)  
+**Triggered:** `challenge_config.json` doesn't exist
+**Permits:** Phase 1 skills only (01-05, 15)
 **Checks:** Workspace, data files, environment lock, no AutoML imports
 
 ### ENFORCE Mode
-**Triggered:** `challenge_config.json` exists  
+**Triggered:** `challenge_config.json` exists
 **Checks:**
 - Config completeness
 - File hash integrity
@@ -748,12 +748,12 @@ spatial_lag = compute_spatial_lag(X_train_full, y_train_full)
 ## Known Limitations
 
 ### C1: Bootstrap Phase String Mismatch
-**Issue:** `bootstrap_competition.py` sets `dag_phase = "phase_1_integrity_locked"` but skills expect `"phase_1_integrity"`.  
-**Impact:** Config writes silently fail after bootstrap.  
+**Issue:** `bootstrap_competition.py` sets `dag_phase = "phase_1_integrity_locked"` but skills expect `"phase_1_integrity"`.
+**Impact:** Config writes silently fail after bootstrap.
 **Workaround:** Add `"phase_1_integrity_locked"` to `allowed_write_phases`.
 
 ### GAP-3: SHAP Interaction Features
-**Issue:** Phase architecture doesn't support SHAP-derived features (would require phase redesign).  
+**Issue:** Phase architecture doesn't support SHAP-derived features (would require phase redesign).
 **Status:** Deferred to v3.0.
 
 ---
@@ -907,7 +907,6 @@ if "pseudo_label_result" in state_store.state:
 
 ---
 
-**Document Version:** 1.1  
-**Orchestrator Version:** 2.3  
+**Document Version:** 1.1
+**Orchestrator Version:** 2.3
 **Last Updated:** July 2026
-

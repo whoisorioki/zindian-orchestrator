@@ -65,6 +65,5 @@ def test_governance_raises_on_missing_gates(tmp_path, monkeypatch):
         "human_gate_4_approved": "2026-06-01T00:00:00",
     }
 
-
     with pytest.raises(RuntimeError, match="Missing prerequisite human gate approvals"):
         gov.run(config, state)

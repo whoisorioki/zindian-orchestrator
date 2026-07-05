@@ -409,7 +409,10 @@ def extract_config(data: dict, slug: str) -> dict:
     temporal_holdout_required: bool = bool(config.get("temporal_holdout", False))
     if not temporal_holdout_required:
         for note in cn:
-            if "held-out time period" in note.lower() or "temporal generalization" in note.lower():
+            if (
+                "held-out time period" in note.lower()
+                or "temporal generalization" in note.lower()
+            ):
                 temporal_holdout_required = True
                 break
 
@@ -430,7 +433,9 @@ def extract_config(data: dict, slug: str) -> dict:
             "temporal_holdout_required": True,
             "temporal_cv_feasible": temporal_cv_feasible,
             "reason": reason,
-            "fallback_strategy": config.get("cv_strategy", {}).get("type", "stratified"),
+            "fallback_strategy": config.get("cv_strategy", {}).get(
+                "type", "stratified"
+            ),
             "known_risk": (
                 "OOF scores likely optimistic relative to true held-out time period "
                 "performance — local CV cannot replicate the actual evaluation split."
@@ -755,7 +760,7 @@ def run(
             "region": "us-east-1",
             "tdp_watts": 15.0,
             "pue": 1.0,
-            "carbon_intensity_gco2_per_kwh": 494.0
+            "carbon_intensity_gco2_per_kwh": 494.0,
         }
         print("\n[R5] Added infrastructure block for carbon tracking")
 

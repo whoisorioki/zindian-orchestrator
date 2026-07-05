@@ -29,6 +29,9 @@ playwright
 # Dev tools
 pip-tools
 pre-commit
+black
+ruff
+mypy
+pyright
 pytest
 pytest-mock
-

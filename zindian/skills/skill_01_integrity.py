@@ -117,7 +117,11 @@ def run(re_verify: bool = False) -> dict:
             tc = targets[0].get("name")
             submission_cols = target_config.get("submission_columns") or []
             if submission_cols:
-                sc = submission_cols[1] if len(submission_cols) > 1 else submission_cols[0]
+                sc = (
+                    submission_cols[1]
+                    if len(submission_cols) > 1
+                    else submission_cols[0]
+                )
             else:
                 sc = tc
         else:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -65,7 +66,7 @@ for comp in (ROOT / "competitions").iterdir():
 
             rows = int(pd.read_csv(f).shape[0])
         except Exception:
-            rows = None
+            rows: Optional[int] = None
         payload = {
             "file": str(f.name),
             "generated_by": "unknown",

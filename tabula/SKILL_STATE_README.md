@@ -5,7 +5,7 @@ Automatic score externalization to prevent memory issues with large SKILL_STATE.
 ## Problem
 SKILL_STATE.json files can grow to 40,000+ lines with embedded score arrays, causing:
 - Memory exhaustion when reading
-- Slow file operations  
+- Slow file operations
 - Git bloat
 
 ## Solution
@@ -63,6 +63,6 @@ competition/
 - **After:** 157 lines (5 KB) - 99.5% reduction ✓
 
 ## Backward Compatibility
-✓ Reads both old (embedded) and new (externalized) formats  
-✓ Automatically converts on save  
+✓ Reads both old (embedded) and new (externalized) formats
+✓ Automatically converts on save
 ✓ No breaking changes

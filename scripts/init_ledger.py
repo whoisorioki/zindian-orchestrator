@@ -1,8 +1,4 @@
-import sys
-from pathlib import Path
-
-# Add parent directory to path so we can import zindian
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import duckdb
 
 from zindian.paths import resolve_competition_paths
 
@@ -11,14 +7,13 @@ paths = resolve_competition_paths()
 ledger_path = paths.reports_dir / "experiments.db"
 ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
-import duckdb
-
 con = duckdb.connect(str(ledger_path))
 con.execute("CREATE SEQUENCE IF NOT EXISTS experiments_id_seq")
 con.execute("CREATE SEQUENCE IF NOT EXISTS submissions_id_seq")
 
 
-con.execute("""
+con.execute(
+    """
     CREATE TABLE IF NOT EXISTS experiments (
         experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
         branch_name         VARCHAR NOT NULL,
@@ -32,9 +27,11 @@ con.execute("""
         notes               VARCHAR,
         created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
-""")
+"""
+)
 
-con.execute("""
+con.execute(
+    """
     CREATE TABLE IF NOT EXISTS submissions (
         submission_id       INTEGER PRIMARY KEY DEFAULT nextval('submissions_id_seq'),
         experiment_id       INTEGER,
@@ -49,7 +46,8 @@ con.execute("""
         submitted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
     )
-""")
+"""
+)
 
 print(f"DuckDB ledger initialized at {ledger_path}")
 print("Tables: experiments, submissions")

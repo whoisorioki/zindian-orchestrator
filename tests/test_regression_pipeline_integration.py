@@ -4,7 +4,7 @@ import pandas as pd
 
 from zindian.state import SkillStateStore
 from zindian.skills import skill_04_eda
-from zindian.skills import skill_06_cleaning
+from zindian.skills import skill_06_preprocessing
 from zindian.skills import skill_07_features
 from zindian.skills import skill_10_shap
 from zindian.skills import skill_11_gate
@@ -136,8 +136,8 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     assert "target_std" in state_after_eda["eda"]
     assert state_after_eda["eda"]["target_std"] > 0.0
 
-    # 5. Execute Skill 06: Cleaning (manual orchestration because it is a state utility)
-    clean_state = skill_06_cleaning.run(
+    # 5. Execute Skill 06: Preprocessing (manual orchestration because it is a state utility)
+    clean_state = skill_06_preprocessing.run(
         cfg,
         {
             "eda": state_after_eda["eda"],
@@ -163,7 +163,6 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
     test_feat_df.to_csv(proc_dir / "features_test_main.csv", index=False)
     train_feat_df.to_csv(proc_dir / "features_train_anchor-baseline.csv", index=False)
     test_feat_df.to_csv(proc_dir / "features_test_anchor-baseline.csv", index=False)
-
 
     from zindian.skills import skill_08_anchor
 
@@ -194,7 +193,6 @@ def test_regression_pipeline_integration(tmp_path, monkeypatch):
         @staticmethod
         def extract(paths_arg, tiff_path_arg, config_arg, branch_name=None):
             return mock_extract_fn(paths_arg, tiff_path_arg, config_arg, branch_name)
-
 
     _real_import = _importlib.import_module
 

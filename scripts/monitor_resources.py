@@ -5,6 +5,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 
 def get_instance_metadata():
@@ -90,7 +91,7 @@ def get_disk_usage():
     return {}
 
 
-def monitor_resources(output_path: Path = None):
+def monitor_resources(output_path: Optional[Path] = None):
     """Monitor and display current resource usage."""
 
     metadata = get_instance_metadata()
@@ -124,7 +125,7 @@ def monitor_resources(output_path: Path = None):
     print("=" * 60)
 
     # Save if path provided
-    if output_path:
+    if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(report, f, indent=2)

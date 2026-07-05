@@ -223,7 +223,7 @@ def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()
-    
+
     # Read method from state if not provided
     if method is None:
         method = state.get("calibration_method", "none")
@@ -528,7 +528,9 @@ def _run_multi_target(
                 calibrated_oof_matrix = np.zeros_like(oof_probs_matrix)
                 for class_idx in range(len(prob_cols)):
                     y_binary = (np.asarray(y) == class_idx).astype(int)
-                    oof_probs_class = np.asarray(oof_probs_matrix[:, class_idx], dtype=np.float64)
+                    oof_probs_class = np.asarray(
+                        oof_probs_matrix[:, class_idx], dtype=np.float64
+                    )
                     calibrated_oof_class, _ = _fit_calibrator_foldwise(
                         method,
                         oof_probs_class,

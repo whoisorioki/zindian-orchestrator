@@ -205,9 +205,7 @@ def validate(
             config.get("target_col") or config.get("target_column") or id_column
         )
         target_col = str(target_col)
-        value_cols = [
-            c for c in sample.columns if c != id_column and c in sub.columns
-        ]
+        value_cols = [c for c in sample.columns if c != id_column and c in sub.columns]
         if not value_cols and target_col in sub.columns:
             value_cols = [target_col]
         task_type = str(config.get("task_type", "classification"))
@@ -219,9 +217,15 @@ def validate(
                 # Multi-column probability submission: binary for non-last columns,
                 # probability interval for the last value column.
                 if idx < len(value_cols) - 1:
-                    errors.extend(_validate_binary(sub[vcol].to_numpy().astype(np.float64)))
+                    errors.extend(
+                        _validate_binary(sub[vcol].to_numpy().astype(np.float64))
+                    )
                 else:
-                    errors.extend(_validate_probability_interval(sub[vcol].to_numpy().astype(np.float64)))
+                    errors.extend(
+                        _validate_probability_interval(
+                            sub[vcol].to_numpy().astype(np.float64)
+                        )
+                    )
             else:
                 errors.extend(
                     _value_validation_errors(sub, vcol, task_type, use_probs, bounds)
@@ -297,7 +301,7 @@ def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
             fc = mc.get("feature_count")
             if isinstance(fc, int):
                 return fc
-    
+
     # Fallback to branch_{branch}_oof
     oof = state.get(f"branch_{branch}_oof")
     if isinstance(oof, dict):
@@ -305,7 +309,7 @@ def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
         fc = mc.get("feature_count")
         if isinstance(fc, int):
             return fc
-    
+
     # Final fallbacks
     for key in (
         "last_ensemble_features",
@@ -456,7 +460,8 @@ def run(
     git_branch = skill_state.get("current_git_branch", "unknown")
     metric_name = str(config.get("metric", "f1")).upper()
 
-    print(f"""
+    print(
+        f"""
 ============================================================
 === HUMAN GATE: Skill 16 — Submit ===
 ============================================================
@@ -471,7 +476,8 @@ Live remaining    : {live_remaining if live_remaining >= 0 else "unknown"}
 Validation        : [OK] PASSED
 
 Type YES to submit or NO to abort.
-============================================================""")
+============================================================"""
+    )
     response = input("Submit? [YES/NO]: ").strip().upper()
     if response != "YES":
         print("[STOP] Submission aborted by user.")

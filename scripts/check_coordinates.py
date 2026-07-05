@@ -1,5 +1,8 @@
 import pandas as pd
-t = pd.read_csv("competitions/geoai-aquaculture-pond-identification-challenge/data/processed/features_train.csv")
+
+t = pd.read_csv(
+    "competitions/geoai-aquaculture-pond-identification-challenge/data/processed/features_train.csv"
+)
 print("shape:", t.shape)
 print("lon present:", "lon" in t.columns)
 print("lat present:", "lat" in t.columns)

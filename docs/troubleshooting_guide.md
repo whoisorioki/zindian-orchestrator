@@ -6,11 +6,11 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
 
 ## 1. Package Shadowing Issues
 *   **Problem:** Stubs or mock modules (such as `duckdb/`, `lightgbm/`, `google/`, or `zindi/`) located at the repository root folder shadowed the real installed site-packages. This is caused by Python prioritizing the current execution root (`sys.path[0]`) over `site-packages`.
-*   **Symptoms:** 
+*   **Symptoms:**
     *   *DuckDB Shadowing:* Database queries executing successfully but all data is silently lost on CLI process exit because the mock module uses an in-memory SQLite wrapper.
     *   *LightGBM Shadowing:* SHAP validation crashes with `InvalidModelError` because the mock LightGBM class is loaded.
     *   *Google Shadowing:* Failures when attempting to load Google GenAI / Auth APIs.
-*   **Resolution:** 
+*   **Resolution:**
     *   Move all test stubs/fixtures from the repository root to `tests/fixtures/`.
     *   If a mock folder must remain, suffix the folder name with `_DISABLED` (e.g. `duckdb_mock_DISABLED/`, `zindi_local_DISABLED/`).
     *   Verify the real packages are installed in the virtual environment.
@@ -72,7 +72,7 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
 
 ## 5. Network Isolation and Zindi API Failures
 *   **Problem:** Scripts attempting to fetch live Zindi pages or submit files fail with `ConnectionError` or `ImportError`.
-*   **Symptoms:** 
+*   **Symptoms:**
     *   `Skill failed: No module named 'zindi'` or network timeouts.
 *   **Resolution:**
     *   During local testing, network isolation is enforced by the CI/CD pipeline environment variables (`ZINDIAN_DISABLE_NETWORK=1`).

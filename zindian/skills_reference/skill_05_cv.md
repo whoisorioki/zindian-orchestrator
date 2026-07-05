@@ -1,5 +1,5 @@
-Skill 05 — CV Architect (reference)
-===================================
+Skill 05 — CV Architect
+=======================
 
 Purpose
 -------

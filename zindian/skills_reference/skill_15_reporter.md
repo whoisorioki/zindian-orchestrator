@@ -1,5 +1,5 @@
-Skill 15 — Reporter (reference)
-==============================
+Skill 15 — Reporter
+===================
 
 Purpose
 -------

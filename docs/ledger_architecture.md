@@ -1,7 +1,7 @@
 # Ledger Architecture
 
-**Version:** 1.0  
-**Last Updated:** 2026-06-17  
+**Version:** 1.0
+**Last Updated:** 2026-06-17
 **Authority:** Binding for all experiment tracking
 
 ---
@@ -97,7 +97,7 @@ def test_ledger_persistence():
     """Verify writes survive process termination."""
     with Ledger() as ledger:
         exp_id = ledger.log_experiment(branch_name="test")
-    
+
     # Simulate process restart
     with Ledger() as ledger:
         result = ledger.get_experiment(exp_id)

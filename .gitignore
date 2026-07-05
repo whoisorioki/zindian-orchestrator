@@ -35,6 +35,7 @@ __pycache__/
 *.mypy_cache
 .coverage
 *.duckdb
+.pre-commit-cache/
 
 ## Debug artifacts
 opencode_output.txt

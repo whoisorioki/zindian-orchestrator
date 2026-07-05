@@ -308,7 +308,9 @@ def run(strategy: str = "compare") -> dict:
             "type": config_cv_type,
             "n_splits": config.get("cv_strategy", {}).get("n_splits", N_SPLITS),
             "shuffle": config.get("cv_strategy", {}).get("shuffle", True),
-            "random_state": config.get("cv_strategy", {}).get("random_state", get_seed()),
+            "random_state": config.get("cv_strategy", {}).get(
+                "random_state", get_seed()
+            ),
             "selection_reason": "configured_in_challenge_config",
         }
     else:

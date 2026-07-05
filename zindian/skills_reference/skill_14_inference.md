@@ -1,5 +1,5 @@
-Skill 14 — Inference / Post-processing (reference)
-=================================================
+Skill 14 — Inference / Post-processing
+======================================
 
 Purpose
 -------

@@ -7,24 +7,40 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
 
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4
     hooks:
       - id: ruff
         args: [ --fix ]
-      - id: ruff-format
 
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-PyYAML, types-pytz]
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.359
+    hooks:
+      - id: pyright
   - repo: local
     hooks:
       - id: check-requirements
         name: check-requirements
-        entry: python -c "
-import os, sys
-if os.path.exists('requirements.in') and os.path.exists('requirements.txt'):
-    if os.path.getmtime('requirements.txt') < os.path.getmtime('requirements.in'):
-        print('Error: requirements.txt is older than requirements.in. Please run: pip-compile requirements.in --output-file requirements.txt')
-        sys.exit(1)
-"
+
+        entry: |
+          python -c "
+          import os, sys
+          if os.path.exists('requirements.in') and os.path.exists('requirements.txt'):
+              if os.path.getmtime('requirements.txt') < os.path.getmtime('requirements.in'):
+                  print('Error: requirements.txt is older than requirements.in. Please run: pip-compile requirements.in --output-file requirements.txt')
+                  sys.exit(1)
+          "
         language: system
         files: ^requirements\.(in|txt)$
         pass_filenames: false

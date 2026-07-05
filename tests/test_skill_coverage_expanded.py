@@ -9,7 +9,7 @@ SKILL_EXPORTS = [
     ("zindian.skills.skill_03_legality", "run"),
     ("zindian.skills.skill_04_eda", "run"),
     ("zindian.skills.skill_05_cv", "run"),
-    ("zindian.skills.skill_06_cleaning", "run"),
+    ("zindian.skills.skill_06_preprocessing", "run"),
     ("zindian.skills.skill_07_features", "run"),
     ("zindian.skills.skill_08_anchor", "run"),
     ("zindian.skills.skill_09_calibration", "run"),

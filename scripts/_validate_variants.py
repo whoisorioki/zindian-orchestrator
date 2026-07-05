@@ -8,14 +8,13 @@ Run from repo root:
 import os
 import sys
 
-sys.path.insert(0, ".")
-os.environ["ZINDIAN_COMPETITION_SLUG"] = (
-    "june-study-jam-series-transaction-volume-forecasting-challenge"
-)
-
 import pandas as pd
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
+
+os.environ["ZINDIAN_COMPETITION_SLUG"] = (
+    "june-study-jam-series-transaction-volume-forecasting-challenge"
+)
 
 paths = resolve_competition_paths()
 config = ChallengeConfig.load()

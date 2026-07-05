@@ -189,6 +189,7 @@ def _atomic_to_csv(df: pd.DataFrame, out_path: Path) -> None:
 def _next_submission_path(paths, suffix: str = "anchor") -> Path:
     """Return the next numbered submission path for this competition."""
     import re as _re
+
     highest = 0
     pattern = _re.compile(r"^sub_(\d{3})_.*\.csv$")
     if paths.submissions_dir.exists():
@@ -200,9 +201,7 @@ def _next_submission_path(paths, suffix: str = "anchor") -> Path:
     return paths.submissions_dir / f"sub_{next_num:03d}_{suffix}.csv"
 
 
-def _resolve_test_probs_path(
-    paths, branch_name: str, target_name: str
-) -> Path:
+def _resolve_test_probs_path(paths, branch_name: str, target_name: str) -> Path:
     """
     Locate the test probability CSV written by skill_08 or skill_07 variant trainers.
     Tries the multi-target pattern first, then the single-target fallback.
@@ -288,7 +287,9 @@ def run(
     target_config = config.get("target_config") or {}
     targets = target_config.get("targets") or []
     if not targets:
-        single_target = config.get("target_col") or config.get("target_column") or "label"
+        single_target = (
+            config.get("target_col") or config.get("target_column") or "label"
+        )
         targets = [{"name": single_target, "task_type": task_type}]
 
     # -- Load SampleSubmission for row-order guarantee --------------------------
@@ -302,7 +303,7 @@ def run(
     # -- Determine submission columns from config --------------------------------
     # Use explicit submission_columns list if present (e.g. GeoAI: [ID, TargetF1, TargetRAUC])
     # Fall back to target-derived column names for single-target competitions.
-    submission_cols = (target_config.get("submission_columns") or [])
+    submission_cols = target_config.get("submission_columns") or []
     if not submission_cols:
         submission_col = config.get("submission_target_col") or targets[0]["name"]
         submission_cols = [id_col, submission_col]
@@ -326,7 +327,11 @@ def run(
 
         # Identify the probability column (first non-ID numeric column)
         prob_col = next(
-            (c for c in prob_df.columns if c != id_col and prob_df[c].dtype.kind == "f"),
+            (
+                c
+                for c in prob_df.columns
+                if c != id_col and prob_df[c].dtype.kind == "f"
+            ),
             None,
         )
         if prob_col is None:
@@ -367,7 +372,9 @@ def run(
         #     probability (use_probabilities=True) or binary label.
         # For regression: the single non-ID column receives the clipped prediction.
         value_cols = [c for c in submission_cols if c != id_col]
-        if target_task == "classification" and bool(config.get("use_probabilities", True)):
+        if target_task == "classification" and bool(
+            config.get("use_probabilities", True)
+        ):
             if len(value_cols) >= 2:
                 # First value column = hard labels, second = raw probabilities
                 out_df[value_cols[0]] = (raw_probs >= threshold).astype(int)
@@ -428,4 +435,3 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     branch = args[0] if args else None
     print(json.dumps(run(branch, dry_run=dry), indent=2))
-

@@ -471,7 +471,7 @@ def verify_section_1_assumptions(
 
             df_sample = pd.read_parquet(train_path, columns=[])
             header = list(df_sample.columns)
-        except Exception as e:
+        except Exception:
             try:
                 import pyarrow.parquet as pq
 
@@ -611,7 +611,7 @@ def verify_section_1_assumptions(
     else:
         fail("requirements.txt missing")
     ok("A10 check: requirements.txt has pip-compile signature header")
-    
+
     # A12 - Multi-target mixed-task competitions require recombination policy
     target_config = cfg.get("target_config")
     if target_config and isinstance(target_config, dict):
@@ -619,7 +619,11 @@ def verify_section_1_assumptions(
         if len(targets) > 1:
             # Check if mixed-task (both classification and regression)
             task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
-            if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+            if (
+                len(task_types) > 1
+                and "classification" in task_types
+                and "regression" in task_types
+            ):
                 policy = target_config.get("pseudo_label_recombination_policy")
                 if not policy:
                     fail(

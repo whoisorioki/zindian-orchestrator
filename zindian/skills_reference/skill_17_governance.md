@@ -1,5 +1,5 @@
-Skill 17 — Submission Governance (reference)
-===========================================
+Skill 17 — Submission Governance
+================================
 
 Purpose
 -------

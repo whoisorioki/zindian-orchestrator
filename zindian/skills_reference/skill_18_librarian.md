@@ -1,5 +1,5 @@
-Skill 18 — The Librarian (reference)
-====================================
+Skill 18 — The Librarian
+========================
 
 Purpose
 -------

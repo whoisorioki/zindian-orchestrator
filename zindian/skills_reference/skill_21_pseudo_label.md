@@ -1,5 +1,5 @@
-Skill 21 — Semi-Supervised Pseudo-Labeling (reference)
-=====================================================
+Skill 21 — Semi-Supervised Pseudo-Labeling
+==========================================
 
 Purpose
 -------

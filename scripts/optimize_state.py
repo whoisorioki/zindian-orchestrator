@@ -1,6 +1,6 @@
 import sys
+
 sys.path.insert(0, ".")
-import json
 
 from zindian.state import SkillStateStore
 from zindian.paths import resolve_competition_paths

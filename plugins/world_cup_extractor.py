@@ -4,10 +4,12 @@ Zero hardcoding (A5) - all file names and columns from config.
 Generates: team_win_rate, has_tournament_history
 """
 
+from pathlib import Path
+from typing import Any, Dict, Tuple
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
-from typing import Dict, Any, Tuple
+from plugins.base_extractor import FeatureExtractor
 
 
 def extract(
@@ -335,15 +337,10 @@ def _encode_categoricals(
 
     return train_encoded, test_encoded
 
-
-from plugins.base_extractor import FeatureExtractor
-
-
 class Extractor(FeatureExtractor):
     """World Cup Extractor implementing the formal FeatureExtractor ABC."""
 
     def extract(
-        self, paths: Any, tiff_path: Path, config: Any
+        self, paths: Any, tiff_path: Path, config: Any, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return extract(paths, tiff_path, config)
-

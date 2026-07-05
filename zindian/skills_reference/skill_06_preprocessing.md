@@ -1,5 +1,5 @@
-Skill 06 — Cleaning / Data Imputation (reference)
-=================================================
+Skill 06 — Data Preprocessing
+=============================
 
 Purpose
 -------
@@ -8,7 +8,7 @@ Purpose
 
 Primary implementation
 ----------------------
-- `zindian/skills/skill_06_cleaning.py`
+- `zindian/skills/skill_06_preprocessing.py`
 
 Current implementation notes
 ----------------------------
@@ -25,7 +25,7 @@ Commands
 
 Audit findings & resolution status
 ----------------------------------
-- **Dependency on Nested eda**: [RESOLVED] Verified that `skill_04_eda.py` nests its data-quality lists (like `mnar_columns` and `mcar_columns`) inside the `"eda"` key in the skill state. `skill_06_cleaning.py` successfully reads from this nested location, ensuring indicators are created and MCAR/MNAR imputation is correctly applied.
+- **Dependency on Nested eda**: [RESOLVED] Verified that `skill_04_eda.py` nests its data-quality lists (like `mnar_columns` and `mcar_columns`) inside the `"eda"` key in the skill state. `skill_06_preprocessing.py` successfully reads from this nested location, ensuring indicators are created and MCAR/MNAR imputation is correctly applied.
 
 
 Outputs

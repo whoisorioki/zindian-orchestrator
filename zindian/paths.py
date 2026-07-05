@@ -39,7 +39,7 @@ def resolve_competition_paths(
     root = Path(__file__).resolve().parent.parent
     comp_root = root / "competitions"
     cwd = Path.cwd().resolve()
-    
+
     selected_slug = slug
 
     # 1) Current Working Directory Check
@@ -70,9 +70,13 @@ def resolve_competition_paths(
                             k, v = line.split("=", 1)
                             k = k.strip()
                             v = v.strip().strip("'").strip('"')
-                            if k in ("ZINDIAN_COMPETITION", "COMPETITION_SLUG", "ZINDIAN_COMPETITION_SLUG"):
-                               selected_slug = v
-                               break
+                            if k in (
+                                "ZINDIAN_COMPETITION",
+                                "COMPETITION_SLUG",
+                                "ZINDIAN_COMPETITION_SLUG",
+                            ):
+                                selected_slug = v
+                                break
             except Exception:
                 pass
 
@@ -94,6 +98,7 @@ def resolve_competition_paths(
         if len(matches) == 1:
             comp_dir = matches[0].parent
         elif len(matches) > 1:
+
             def _state_sort_key(path: Path) -> tuple[int, float]:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))

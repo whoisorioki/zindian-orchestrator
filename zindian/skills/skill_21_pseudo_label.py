@@ -994,11 +994,15 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
     print("\n[TARGET] MULTI-TARGET PSEUDO-LABEL MODE (A12)\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
-    
+
     # A12 only applies when there are multiple targets AND mixed task types
     if len(targets) > 1:
         task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
-        if len(task_types) > 1 and "classification" in task_types and "regression" in task_types:
+        if (
+            len(task_types) > 1
+            and "classification" in task_types
+            and "regression" in task_types
+        ):
             policy = target_config.get("pseudo_label_recombination_policy")
             LEGAL_POLICIES = {
                 "freeze_unaugmented_targets_at_original",
@@ -1013,7 +1017,7 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
             policy = None
     else:
         policy = None
-    
+
     print(f"Targets: {[t['name'] for t in targets]}")
 
     # Separate classification and regression targets
