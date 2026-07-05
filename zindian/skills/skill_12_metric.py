@@ -56,6 +56,9 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
 
     fold_scores = None
     recommended_threshold = 0.5
+    metric_analysis: Dict[str, Any] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
     if targets:
         # Multi-target variance calculation
@@ -112,6 +115,9 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
 
             if composite_fold_scores:
                 fold_scores = composite_fold_scores
+                # Store composite fold variance separately
+                composite_variance = float(np.var(composite_fold_scores, ddof=1))
+                metric_analysis["composite_fold_score_variance"] = composite_variance
 
     if not fold_scores:
         oof_key = f"branch_{active_branch}_oof"
@@ -141,10 +147,6 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
         eda = state.get("eda", {}) or {}
         if isinstance(eda, dict):
             fold_scores = eda.get("fold_scores")
-
-    metric_analysis: Dict[str, Any] = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
 
     if not fold_scores:
         metric_analysis.update(

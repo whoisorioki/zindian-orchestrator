@@ -1,134 +1,107 @@
-# Zindian Orchestrator — README
+# Zindian Orchestrator
+
+**Version:** 2.3  
+**Status:** Production Ready  
+**Last Updated:** June 2026
 
 An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
-> 🎯 **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
+> **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
 
-This framework manages end-to-end competition pipelines autonomously and is built to be fully generic and neutral.
+This framework manages end-to-end competition pipelines autonomously with human oversight at 5 critical checkpoints.
 
-## 🏗️ Architecture Overview
+## What Is This?
+
+Think of Zindian Orchestrator as an **intelligent assistant for data science competitions**. It systematically builds, tests, and submits machine learning models while following strict rules and requiring human approval at key decision points.
+
+**Key Features:**
+- **5 Human Gates** - Stops for approval at critical points
+- **100% Reproducible** - Same data = identical results
+- **Zero Hardcoding** - Reads competition rules dynamically
+- **Carbon Tracking** - Measures environmental impact (R5)
+- **Multi-Target Support** - Handles multiple prediction targets
+- **Zindi Compliant** - No AutoML, full audit trail
+
+## Architecture Overview
 
 ### Core Principles
 
-1. **Competition Agnosticism** — Reads `challenge_config.json` before decisions
-2. **Atomic State** — Tempfile + os.replace prevents corruption
-3. **Data Integrity** — MD5 hash lock on target column
-4. **Submission Governance** — Budget guard, structured comments
-5. **Audit Trail** — DuckDB ledger for all experiments
+1. **Three-Lens Decision Philosophy** — Every decision evaluated through General, Specific, and Generalization lenses
+2. **Competition Agnosticism** — Zero hardcoded competition-specific values (Assumption A5)
+3. **Atomic State Management** — Tempfile + os.replace prevents corruption
+4. **Immutable Config** — Locked after Phase 1, read-only thereafter
+5. **Human-in-the-Loop** — 5 mandatory approval gates
+6. **Reproducibility Contract** — R1-R5 requirements enforced
 
-### Phases
+### The 4 Main Phases
 
 ```
-Phase 0: Foundation (Wiring + Auth)              ✅ 100%
-Phase 1: Integrity + Intake (MD5 Lock + Config) ✅ 100%
-Phase 2: Anchor Baseline (Legality + Anchor)     ✅ 100%
-Phase 3: Features + Calibration + SHAP           ✅ 100%
-Phase 4: Gating & Submission                     ✅ 100%
-Phase 5: Fusion + Final Submit + Governance      ✅ 100%
-Phase 6: Tabula Init CLI                        ✅ 100%
-Phase 7: Multi-competition Validation           🔄 In Progress
+Phase 1: Competition Fingerprint (~5 min)        [COMPLETE]
+  └─ Understand rules, lock config, select CV strategy
+
+Phase 2: Anchor + Feature Search (~30-60 min)    [COMPLETE]
+  └─ Build baseline, generate variants
+  └─ [HUMAN GATE 1]: Review anchor
+
+Phase 3: Generalization Audit (~60-120 min)      [COMPLETE]
+  └─ SHAP leak detection, calibration, gating
+  └─ [HUMAN GATE 2]: Approve variants (per branch)
+  └─ [HUMAN GATE 3]: Approve fusion
+
+Phase 4: Governance (~10 min)                    [COMPLETE]
+  └─ Format, submit, audit reproducibility
+  └─ [HUMAN GATE 4]: Approve inference
+  └─ [HUMAN GATE 5]: Select final 2 submissions
 ```
+
+**Total Runtime:** 2-3 hours per competition
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 zindian-orchestrator/
-├── competitions/                     ← per-competition workspace (challenge_config + SKILL_STATE + data/)
+├── competitions/                     ← per-competition workspace
 │   └── <slug>/
 │       ├── challenge_config.json
 │       ├── SKILL_STATE.json
 │       ├── data/
 │       ├── notebooks/
 │       └── reports/
-├── AGENTS.md                        Master specification (600 lines)
-├── CLEANUP_GUIDE.md                 Guide to remove per-competition files
-│
-├── specs/                           Durable specifications
-│   ├── requirements.md              7 FRs + 3 NFRs
-│   ├── design.md                    Architecture + data flow
-│   └── tasks.md                     Phase 0-5 checklist
-│
-├── zindian/                         Python package (core logic)
+├── docs/                            Documentation
+│   ├── ORCHESTRATOR_OVERVIEW.md     Complete guide (start here)
+│   ├── source_of_truth.md           Official specification v2.3
+│   ├── sot_audit_report.md          Known gaps & issues
+│   └── PROGRESS_TRACKER.md          v2.3 refactor status
+├── specs/                           Technical specifications
+│   ├── requirements.md              Functional requirements
+│   ├── design.md                    Architecture & data flow
+│   └── tasks.md                     Phase checklist
+├── zindian/                         Python package
 │   ├── state.py                     SKILL_STATE.json reader/writer
 │   ├── config.py                    challenge_config.json reader
 │   ├── ledger.py                    DuckDB wrapper
 │   ├── cv.py                        CV splits generator
-│   ├── paths.py                     Path resolver
-│   ├── schemas.py                   Schema validator
-│   ├── zindi_client.py              Zindi API wrapper (agent-mode)
 │   ├── orchestrator.py              Skill orchestration
 │   └── skills/                      All 22 implemented skills
-│       ├── skill_00_discussion_monitor.py
-│       ├── skill_00_zindi_monitor.py
-│       ├── skill_01_integrity.py
-│       ├── skill_02_intake.py
-│       ├── skill_03_legality.py
-│       ├── skill_04_eda.py
-│       ├── skill_05_cv.py
-│       ├── skill_06_cleaning.py
-│       ├── skill_07_features.py
-│       ├── skill_08_anchor.py
-│       ├── skill_09_calibration.py
-│       ├── skill_10_shap.py
-│       ├── skill_11_gate.py
-│       ├── skill_12_metric.py
-│       ├── skill_13_ensemble.py
-│       ├── skill_13_oracle_fusion.py
-│       ├── skill_14_inference.py
-│       ├── skill_15_reporter.py
-│       ├── skill_16_submit.py
-│       ├── skill_17_governance.py
-│       ├── skill_18_librarian.py
-│       ├── skill_19_code_miner.py
-│       ├── skill_20_scientist.py
-│       ├── skill_21_pseudo_label.py
-│       └── skill_22_reproducibility_audit.py
-│
-├── tabula/                          Tabula competition bootstrapper CLI
-│   ├── init.py
-│   ├── __main__.py
-│   └── __init__.py
-│
-├── scripts/
-│   ├── bootstrap_competition.py
-│   ├── compile_requirements.sh
-│   ├── init_ledger.py               Initialize DuckDB
-│   ├── inspect_zindi.py
-│   ├── preflight_enforce.py
-│   ├── test_phase_1.py              Phase 1 integration test
-│   ├── verify_competition_state.py
-│   ├── verify_phase_b.py            Module verification
-│   ├── write_oof_meta.py
-│   └── zindian_audit.sh             Orchestrator audit script
-│
-├── templates/                       Per-competition templates
-│   ├── SKILL_STATE_template.json
-│   └── challenge_config_template.json
-│
-└── IDE bridges (Tool agnostic)
-    ├── .github/instructions/zindian.md
-    ├── .cursor/rules/zindian.md
-    ├── .windsurf/rules/zindian.md
-    └── .kiro/specs/zindian.md
+├── tabula/                          Competition bootstrapper CLI
+├── scripts/                         Utility scripts
+└── tests/                           Test suite (160+ tests)
 ```
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Understand the Architecture (5 min)
 
 ```bash
-# Read the master spec
-cat AGENTS.md
+# Read the complete guide
+cat docs/ORCHESTRATOR_OVERVIEW.md
 
-# Read requirements
-cat specs/requirements.md
-
-# Read design
-cat specs/design.md
+# Read the official specification
+cat docs/source_of_truth.md
 ```
 
 ### 2. Install & Verify (5 min)
@@ -146,7 +119,7 @@ pip install -r requirements.txt
 
 ### Manage Python dependencies (pinned)
 
-This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to produce a pinned `requirements.txt`. Developers should generate and commit `requirements.txt` after updating `requirements.in`.
+This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to produce a pinned `requirements.txt`.
 
 ```bash
 # Install the compiler
@@ -167,11 +140,10 @@ python scripts/init_ledger.py
 
 ### 4. Run Automated Test Suite (5 min)
 
-The repository includes a comprehensive `pytest` test suite covering 44+ test files with 160+ unit and integration tests.
-
 ```bash
 # Run tests inside virtualenv
-.venv\Scripts\pytest
+.venv\Scripts\pytest  # Windows
+.venv/bin/pytest      # Unix
 ```
 
 ### 5. Run Phase 1 Tests (5 min)
@@ -180,91 +152,148 @@ The repository includes a comprehensive `pytest` test suite covering 44+ test fi
 python scripts/test_phase_1.py
 ```
 
-### 6. Review Code (90 min)
+---
 
-## 📚 Documentation
+## Documentation
 
+### Start Here
 | Document | Purpose | Audience |
 |----------|---------|----------|
-| [AGENTS.md](AGENTS.md) | Master spec | Developers, integrators |
-| [specs/requirements.md](specs/requirements.md) | What system must do | Architects, reviewers |
-| [specs/design.md](specs/design.md) | How it works | Developers, code reviewers |
-| [specs/tasks.md](specs/tasks.md) | Task checklist | Project managers |
+| **[ORCHESTRATOR_OVERVIEW.md](docs/ORCHESTRATOR_OVERVIEW.md)** | **Complete guide (non-technical + technical)** | **Everyone** |
+| [source_of_truth.md](docs/source_of_truth.md) | Official specification (v2.3) | Developers, architects |
+| [AGENTS.md](AGENTS.md) | Legacy master spec | Historical reference |
+
+### Technical Documentation
+| Document | Purpose | Audience |
+|----------|---------|----------|
+| [specs/requirements.md](specs/requirements.md) | Functional requirements | Architects, reviewers |
+| [specs/design.md](specs/design.md) | Architecture & data flow | Developers, code reviewers |
+| [specs/tasks.md](specs/tasks.md) | Phase checklist | Project managers |
+| [sot_audit_report.md](docs/sot_audit_report.md) | Known gaps & issues | Developers, QA |
+| [PROGRESS_TRACKER.md](docs/PROGRESS_TRACKER.md) | v2.3 refactor status | Project managers |
+
+### Operational Documentation
+| Document | Purpose | Audience |
+|----------|---------|----------|
 | [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) | Framework cleanup | DevOps/repo maintainers |
-| [docs/sagemaker_workspace_strategy.md](docs/sagemaker_workspace_strategy.md) | SageMaker-first architecture | DevOps, SageMaker users |
-| [docs/competition_data_lifecycle.md](docs/competition_data_lifecycle.md) | Data governance & integrity | Data engineers, auditors |
-| [docs/storage_cost_governance.md](docs/storage_cost_governance.md) | Cost optimization & storage | Finance, DevOps |
+| [sagemaker_workspace_strategy.md](docs/sagemaker_workspace_strategy.md) | SageMaker architecture | DevOps, SageMaker users |
+| [competition_data_lifecycle.md](docs/competition_data_lifecycle.md) | Data governance | Data engineers, auditors |
+| [storage_cost_governance.md](docs/storage_cost_governance.md) | Cost optimization | Finance, DevOps |
 
 ---
 
-## 🔐 Security
+## Security & Compliance
 
-- ✅ Credentials in `.env` (not committed)
-- ✅ Atomic state updates prevent corruption
-- ✅ No hardcoded paths or competition data
-- ✅ Guard exceptions on null config fields
-- ✅ MD5 hash lock prevents data tampering
+### Data Integrity
+- MD5 hash lock on all raw data files
+- Atomic state updates (tempfile + os.replace)
+- Config immutability after Phase 1
+- No hardcoded competition-specific values (A5)
+
+### Zindi Compliance
+- No AutoML libraries (preflight scan)
+- Fixed seed for reproducibility
+- Raw probabilities preserved (classification)
+- Submission budget guard
+- Complete audit trail for code review
+
+### Credentials
+- `.env` file (not committed)
+- Environment variable fallbacks
+- No credentials in code or config
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### Automated Tests (pytest)
-- Comprehensive test framework with 160+ test cases.
-- Run using: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix).
-- Unit tests for: `state.py`, `config.py`, `ledger.py`, `cv.py`, `paths.py`.
-- Skill verification tests for: anchor training, gating logic, SHAP audit, pseudo-labeling.
+- Comprehensive test framework with 160+ test cases
+- Run using: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix)
+- Unit tests for: `state.py`, `config.py`, `ledger.py`, `cv.py`, `paths.py`
+- Skill verification tests for: anchor training, gating logic, SHAP audit, pseudo-labeling
 
 ---
 
-## 📈 Development Progress
+## Key Features (v2.3)
 
-### Completed ✅
-- Architecture design
-- Core modules (state, config, ledger, zindi_client, paths, schemas, cv)
-- Phase 0-5 all 22 skills implemented and verified
-- Tabula Bootstrapper CLI
-- Comprehensive test suite (167 tests passing)
-- Regression Support & Secondary Metrics (Wave 2) refactor completed with scale-invariant safety guards, continuous domain post-processing, and secondary diagnostic telemetry
+### Human Gates (5 Checkpoints)
+System stops and waits for approval at:
+1. **Gate 1:** After anchor model - "Does baseline look reasonable?"
+2. **Gate 2:** Before promoting variants - "Keep this model?" (per variant)
+3. **Gate 3:** Before fusion - "Ready to blend models?"
+4. **Gate 4:** Before inference - "Generate predictions?"
+5. **Gate 5:** Before close - "Which 2 submissions?"
 
-### In Progress 🟡
-- Multi-competition validation
+### Reproducibility Contract (R1-R5)
+- **R1:** Seed always set (fixed at Phase 1)
+- **R2:** Rerun = identical output (bit-identical)
+- **R3:** No custom packages (all in requirements.txt)
+- **R4:** Submission reproducible from config + state
+- **R5:** Carbon tracking (CO2 estimation per skill)
 
-## 📈 Regression Support & Secondary Metrics
-
-The framework supports continuous prediction domains (regression tasks) with scale-invariant safety guards and rich auxiliary diagnostic tracking.
-
-### Secondary Metrics Schema
-For all regression model evaluations, the orchestrator computes and stores secondary diagnostics inside each OOF record under a nested `secondary_metrics` block to prevent schema bloat:
+### Carbon Tracking (R5 - New in v2.3)
+Measures environmental impact:
 ```json
-"branch_variant-01_oof": {
-  "scores": [...],
-  "cv_strategy_id": "stratified",
-  "seed": 42,
-  "branch_name": "variant-01",
-  "secondary_metrics": {
-    "mae": 0.123,
-    "mape": 4.56,
-    "r2": 0.78
-  }
+"telemetry.skill_08_anchor": {
+  "duration_sec": 123.45,
+  "peak_memory_mb": 2048,
+  "carbon_kg_estimate": 0.0012,
+  "tracker_method": "mlco2_formula",
+  "hardware_type": "cpu",
+  "region": "us-east-1"
 }
 ```
 
-### Scale-Invariant Gating (RMSE vs. RMSLE)
-To ensure robust search decisions across arbitrary target distributions, the validation gates dynamically normalize thresholds:
-- **RMSE/MAE (Continuous Original Scale):** Gate variance threshold scales by $\sigma_y^2$ (`target_std ** 2`) and gate margin scales by $\sigma_y$ (`target_std`).
-- **RMSLE (Dimensionless Log-Ratio):** Evaluated against raw thresholds with no target standard deviation scaling, since log-space metrics are naturally scale-invariant.
+### Multi-Target Support
+Handles competitions with multiple prediction targets:
+- Trains separate model per target
+- Computes weighted composite score
+- Normalizes by target standard deviation
+- Single gate decision for all targets
+
+### Pseudo-Labeling (Skill 21)
+For classification: expands training set with confident predictions
+- 6 guard conditions (all must pass)
+- Retraining loop with augmented dataset
+- Rollback if zero variants pass gate
+- Classification-only (guard condition 1)
+
+### Scale-Invariant Gating
+Dynamic threshold normalization:
+- **RMSE/MAE:** Scales by target_std
+- **RMSLE:** No scaling (dimensionless)
+- **Classification:** No scaling (bounded metrics)
 
 ---
 
-## 🤝 Contributing
+## Development Status
+
+### v2.3 Complete
+- All 22 skills implemented and verified
+- 5 human gates operational
+- Carbon tracking (R5) instrumented
+- Multi-target pipeline functional
+- Pseudo-labeling with rollback
+- Scale-invariant gate normalization
+- 160+ test cases passing
+- Complete documentation suite
+
+### Known Limitations
+- **C1:** Bootstrap phase string mismatch (workaround documented)
+- **GAP-3:** SHAP interaction features (deferred to v3.0)
+
+See [sot_audit_report.md](docs/sot_audit_report.md) for details.
+
+---
+
+## Contributing
 
 The framework is **specification-driven**. To add a new skill:
 
 1. **Design** — Add to `specs/tasks.md`
 2. **Implement** — Create `zindian/skills/skill_XX_*.py`
-3. **Test** — Add to `tests/` or `scripts/`
-4. **Document** — Update `specs/requirements.md`
+3. **Test** — Add to `tests/test_skill_XX.py`
+4. **Document** — Update `docs/source_of_truth.md`
 
 ### Skill Template
 
@@ -272,6 +301,7 @@ The framework is **specification-driven**. To add a new skill:
 """Skill XX — Description"""
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
+from pathlib import Path
 
 def run(
     *,
@@ -302,40 +332,40 @@ if __name__ == "__main__":
 
 ---
 
-## 🐛 Known Issues
+## Known Issues
 
-| Issue | Status | Fix |
-|-------|--------|-----|
-| Zindi `select_a_challenge()` breaking | ✅ FIXED | Use `challenge_id=slug` param |
-| Competition files in framework | 📋 NOTED | See [CLEANUP_GUIDE.md](CLEANUP_GUIDE.md) |
-
----
-
-## 📞 Support
-
-- **Architecture questions** → Read [AGENTS.md](AGENTS.md)
-- **Code review** → Read [VALIDATION_SUMMARY.md](VALIDATION_SUMMARY.md)
-- **Implementation questions** → Check specs/
-- **Bug reports** → See [AUDIT_REPORT.md](AUDIT_REPORT.md) for known issues
+| Issue | Status | Reference |
+|-------|--------|-----------|
+| Bootstrap phase string mismatch | DOCUMENTED | [sot_audit_report.md](docs/sot_audit_report.md) C1 |
+| SHAP interaction features | DEFERRED | v3.0 roadmap |
 
 ---
 
-## 📄 License
+## Support
+
+- **Getting Started** → Read [ORCHESTRATOR_OVERVIEW.md](docs/ORCHESTRATOR_OVERVIEW.md)
+- **Architecture Questions** → Read [source_of_truth.md](docs/source_of_truth.md)
+- **Implementation Details** → Check `specs/` directory
+- **Bug Reports** → See [sot_audit_report.md](docs/sot_audit_report.md)
+
+---
+
+## License
 
 [Add your license here]
 
 ---
 
-## 📅 Roadmap
+## Version History
 
-| Phase | Timeline | Status |
-|-------|----------|--------|
-| 0-6 | ✅ Complete | Ready for review |
-| 7 | 🔄 In Progress | Multi-competition Validation |
-
-**MVP Target**: ~3 weeks (after Phase 5 completion)
+| Version | Date | Highlights |
+|---------|------|------------|
+| **2.3** | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
+| 2.2.1 | May 2026 | Multi-target pipeline, regression support |
+| 2.2 | April 2026 | All 22 skills, 5 human gates |
+| 2.0 | March 2026 | Phase 0-5 complete |
 
 ---
 
-**Last Updated**: June 13, 2026  
-**Status**: Phase 0-6 Complete, Regression Support Refactor Completed ✅
+**Last Updated:** June 2026  
+**Status:** v2.3 Production Ready

@@ -325,16 +325,32 @@ def run_skill(
     tracemalloc.stop()
     peak_memory_mb = peak / 1024 / 1024
 
+    # R5: Carbon tracking
+    carbon_data = {}
+    try:
+        from .carbon_tracker import estimate_carbon
+        from .config import ChallengeConfig
+        config_obj = ChallengeConfig.load()
+        carbon_data = estimate_carbon(duration_sec, peak_memory_mb, config_obj._data)
+    except Exception:
+        carbon_data = {
+            "carbon_kg_estimate": None,
+            "tracker_method": "not_instrumented",
+            "hardware_type": "unknown",
+            "region": "unknown"
+        }
+
     # Normalize result
     if result is None or not isinstance(result, dict):
         result = {"status": "COMPLETED"}
     elif "status" not in result:
         result["status"] = "COMPLETED"
 
-    # Add telemetry
+    # Add telemetry with carbon data
     result["telemetry"] = {
         "duration_sec": round(duration_sec, 2),
         "peak_memory_mb": round(peak_memory_mb, 2),
+        **carbon_data
     }
 
     return result
