@@ -118,16 +118,19 @@ with Ledger() as ledger:
 
 ### 5.2 Write Operations
 
-Serialize via file lock or queue:
+Serialize via an atomic directory lock (cross-platform, zero dependencies) or external packages like portalocker:
 ```python
-import fcntl
-
-lock_file = Path("reports/experiments.db.lock")
-with open(lock_file, "w") as f:
-    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+lock_dir = Path("reports/experiments.db.lockdir")
+try:
+    # mkdir is atomic on both Windows and POSIX systems
+    lock_dir.mkdir(parents=True, exist_ok=False)
     with Ledger() as ledger:
         ledger.log_experiment(...)
-    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+finally:
+    try:
+        lock_dir.rmdir()
+    except OSError:
+        pass
 ```
 
 ---
@@ -140,8 +143,8 @@ with open(lock_file, "w") as f:
 try:
     with Ledger() as ledger:
         ledger.log_experiment(...)
-except sqlite3.OperationalError as e:
-    if "database is locked" in str(e):
+except Exception as e:
+    if "database is locked" in str(e).lower():
         # Retry with exponential backoff
         time.sleep(0.1)
         retry_log_experiment()
@@ -149,13 +152,13 @@ except sqlite3.OperationalError as e:
 
 ### 6.2 Corruption Recovery
 
-```bash
-# Backup before repair
-cp reports/experiments.db reports/experiments.db.backup
+Make a backup of the experiments database file before attempting repair:
 
+```bash
 # Rebuild from WAL
 duckdb reports/experiments.db "CHECKPOINT; VACUUM;"
 ```
+
 
 ---
 

@@ -155,6 +155,7 @@ print("[OK] PHASE B VERIFICATION COMPLETE")
 print("=" * 70)
 print("\nAll core modules are functioning correctly!")
 print("\nNext steps:")
-print("  1. Run: python scripts/init_ledger.py (if not done already)")
+print("  1. Run: python -m zindian.cli init-ledger (if not done already)")
+
 print("  2. Proceed to Phase C: Create Skill 01 (integrity) and Skill 02 (intake)")
 print("=" * 70)

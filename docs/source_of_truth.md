@@ -8,7 +8,8 @@
 While the multi-target pipeline and sub-phase mappings are fully implemented and functional,
 most gaps from v2.2.1 have been resolved in v2.3. GAP-1 (skill_21 retraining) was already
 implemented, GAP-2 (composite fold variance) has been added, and DRIFT-1 (hardcoded targets)
-has been fixed. See `/docs/sot_audit_report.md` for the complete audit report.
+has been fixed.
+
 
 **Last updated:** June 2026 (v2.3: added R5 carbon tracking, known gaps registry, resolved GAP-2 and DRIFT-1)
 **Patched from v2.2.1-Multi-Target:** 3 changes —

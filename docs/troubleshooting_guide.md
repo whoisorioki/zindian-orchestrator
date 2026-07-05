@@ -26,9 +26,9 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
     *   *Path Resolution:* Never use `Path.cwd()` to resolve repo-level resources. Always resolve paths using `Path(__file__).resolve().parent.parent` (repo root) inside modules.
     *   *Database Durability:* Ensure the `Ledger` connections are instantiated using Python's context manager pattern (`with Ledger() as ledger:`), which handles flushing commits via checkpoints and closes connections safely on exit.
     *   *Locked Cache:* Clear locking issues in the type checker cache by running:
-        ```bash
-        rm -rf .mypy_cache/
-        ```
+        *   **Unix/macOS:** `rm -rf .mypy_cache/`
+        *   **Windows PowerShell:** `Remove-Item -Recurse -Force .mypy_cache`
+        *   **Windows CMD:** `rmdir /s /q .mypy_cache`
 
 ---
 
@@ -49,13 +49,23 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
     The orchestrator resolves the active competition slug using the following priority:
     1.  **CWD Context:** Run the command from inside the target competition subfolder under `competitions/<slug>/`.
     2.  **Environment Variables:** Set the environment variables:
-        ```bash
-        export ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
-        ```
+        *   **Unix/macOS:**
+            ```bash
+            export ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
+            ```
+        *   **Windows PowerShell:**
+            ```powershell
+            $env:ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
+            ```
+        *   **Windows CMD:**
+            ```cmd
+            set ZINDIAN_COMPETITION=world-cup-2026-goal-prediction-challenge
+            ```
     3.  **Local Environment:** Add the following line to your `.env` file at repo root:
         ```env
         ZINDIAN_COMPETITION=world-cup-2026-goal-prediction-challenge
         ```
+
     4.  **Auto-Select:** If only one competition directory is present under `competitions/`, the system will auto-select it.
 
 ---

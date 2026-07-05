@@ -1,10 +1,5 @@
 # Zindian Orchestrator
 
-**Version:** 2.3  
-**Status:** Production Ready  
-**Last Updated:** June 2026
-**License:** Apache 2.0
-
 An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
 > **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
@@ -55,262 +50,190 @@ Phase 4: Governance (~10 min)                    [COMPLETE]
   └─ [HUMAN GATE 5]: Select final 2 submissions
 ```
 
-**Total Runtime:** 2-3 hours per competition
-
----
-
 ## Project Structure
+
 
 ```
 zindian-orchestrator/
-├── competitions/                     ← per-competition workspace
+├── competitions/                     ← Per-competition workspace folders
 │   └── <slug>/
-│       ├── challenge_config.json
-│       ├── SKILL_STATE.json
+│       ├── challenge_config.json     ← Competition config contract
+│       ├── SKILL_STATE.json          ← Execution state (memory)
 │       ├── data/
 │       ├── notebooks/
 │       └── reports/
-├── docs/                            Documentation
-│   ├── ORCHESTRATOR_OVERVIEW.md     Complete guide (start here)
-│   ├── source_of_truth.md           Official specification v2.3
-│   ├── sot_audit_report.md          Known gaps & issues
-│   └── PROGRESS_TRACKER.md          v2.3 refactor status
-├── specs/                           Technical specifications
-│   ├── requirements.md              Functional requirements
-│   ├── design.md                    Architecture & data flow
-│   └── tasks.md                     Phase checklist
-├── zindian/                         Python package
-│   ├── state.py                     SKILL_STATE.json reader/writer
-│   ├── config.py                    challenge_config.json reader
-│   ├── ledger.py                    DuckDB wrapper
-│   ├── cv.py                        CV splits generator
-│   ├── orchestrator.py              Skill orchestration
-│   └── skills/                      All 22 implemented skills
-├── tabula/                          Competition bootstrapper CLI
-├── scripts/                         Utility scripts
-└── tests/                           Test suite (160+ tests)
+├── docs/                             ← Standardized documentation
+│   ├── source_of_truth.md            ← Authoritative specification v2.3
+│   ├── orchestrator_overview.md      ← System architecture & design overview
+│   ├── quick_start.md                ← Local run onboarding & execution flow
+│   ├── cli_integration_guide.md      ← CLI command usage reference
+│   ├── ledger_architecture.md         ← DuckDB audit ledger schema definition
+│   └── troubleshooting_guide.md      ← Common errors, recoveries & guardrails
+├── zindian/                          ← Core Python package
+│   ├── state.py                      ← Atomic state I/O operations
+│   ├── config.py                     ← Safe challenge_config reader
+│   ├── ledger.py                     ← DuckDB ledger wrapper
+│   ├── cv.py                         ← CV strategy factory
+│   ├── orchestrator.py               ← Phase & skill manager
+│   └── skills/                       ← Implemented skill modules (skills 00-22)
+├── tabula/                           ← CLI bootstrapping tool
+├── scripts/                          ← Utility scripts
+└── tests/                            ← Automated test suite (160+ tests)
 ```
 
 ---
 
 ## Quick Start
 
-### 1. Understand the Architecture (5 min)
+### 1. Read the Architecture Docs
+Open the canonical documentation files under the `docs/` directory. We recommend reading them in this order:
+1. [docs/orchestrator_overview.md](docs/orchestrator_overview.md) — Architectural philosophy and phase flow.
+2. [docs/source_of_truth.md](docs/source_of_truth.md) — authoritative specifications and rules.
+3. [docs/cli_integration_guide.md](docs/cli_integration_guide.md) — command references.
 
+### 2. Install & Verify
+First, activate your virtual environment:
+
+* **Unix/macOS:**
+  ```bash
+  source .venv/bin/activate
+  ```
+* **Windows (PowerShell):**
+  ```powershell
+  .venv\Scripts\Activate.ps1
+  ```
+
+Then install the pinned dependencies:
 ```bash
-# Read the complete guide
-cat docs/ORCHESTRATOR_OVERVIEW.md
-
-# Read the official specification
-cat docs/source_of_truth.md
-
-# Read the CLI reference
-cat docs/cli_integration_guide.md
+python -m pip install -r requirements.txt
 ```
 
-### 2. Install & Verify (5 min)
-
+#### Managing Dependencies (Optional)
+To add or update top-level packages:
 ```bash
-# Activate venv (Unix)
-source .venv/bin/activate
+# Install package compiler
+python -m pip install --upgrade pip-tools
 
-# Activate venv (Windows PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Install dependencies from pinned file
-pip install -r requirements.txt
-```
-
-### Manage Python dependencies (pinned)
-
-This repository uses `requirements.in` plus `pip-compile` (from `pip-tools`) to produce a pinned `requirements.txt`.
-
-```bash
-# Install the compiler
-pip install --upgrade pip-tools
-
-# Generate pinned requirements.txt
+# Recompile requirements.txt from requirements.in
 pip-compile requirements.in --output-file requirements.txt
 
-# Install the pinned environment
-pip install -r requirements.txt
+# Install compiled environment
+python -m pip install -r requirements.txt
 ```
 
-### 3. Initialize DuckDB Ledger (2 min)
-
+### 3. Initialize DuckDB Ledger
+Set up the SQLite-compatible DuckDB experiments ledger:
 ```bash
-python scripts/init_ledger.py
+python -m zindian.cli init-ledger
+
 ```
 
-### 4. Run Automated Test Suite (5 min)
-
+### 4. Run Automated Test Suite
+Verify your environment by running the test suite:
 ```bash
-# Run tests inside virtualenv
-.venv\Scripts\pytest  # Windows
-.venv/bin/pytest      # Unix
+python -m pytest
 ```
 
 ### 5. Use the CLI
-
+Interact with the orchestrator using Python's module syntax:
 ```bash
-# Console entry point installed by setup.py
-zindian-cli --help
-
-# Equivalent source checkout form
+# Run command bootstrapper CLI
 python -m zindian.cli --help
+
+# Alternative console entrypoint (if setup.py was installed)
+zindian-cli --help
 ```
 
-### 6. Run Phase 1 Tests (5 min)
-
+### 6. Run Phase 1 Simulation Demo
+Run the mock simulation check to verify your setup:
 ```bash
 python scripts/test_phase_1.py
 ```
+
+
 
 ---
 
 ## Documentation
 
-### Start Here
+### Core Guides
 | Document | Purpose | Audience |
 |----------|---------|----------|
-| **[ORCHESTRATOR_OVERVIEW.md](docs/ORCHESTRATOR_OVERVIEW.md)** | **Complete guide (non-technical + technical)** | **Everyone** |
-| [source_of_truth.md](docs/source_of_truth.md) | Official specification (v2.3) | Developers, architects |
-| [cli_integration_guide.md](docs/cli_integration_guide.md) | CLI command reference | Users, operators |
-| [QUICK_START.md](docs/QUICK_START.md) | Refactor onboarding and command flow | Contributors |
-
-### Technical Documentation
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| [specs/requirements.md](specs/requirements.md) | Functional requirements | Architects, reviewers |
-| [specs/design.md](specs/design.md) | Architecture & data flow | Developers, code reviewers |
-| [specs/tasks.md](specs/tasks.md) | Phase checklist | Project managers |
-| [docs/architecture_matrix.md](docs/architecture_matrix.md) | Stable control-flow map | Contributors |
-| [docs/orchestrator_current_state.md](docs/orchestrator_current_state.md) | Current implementation snapshot | Maintainers |
-| [sot_audit_report.md](docs/sot_audit_report.md) | Known gaps & issues | Developers, QA |
-| [PROGRESS_TRACKER.md](docs/PROGRESS_TRACKER.md) | v2.3 refactor status | Project managers |
-| [documentation_audit_report.md](docs/documentation_audit_report.md) | Doc freshness audit | Maintainers |
-
-### Operational Documentation
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| [troubleshooting_guide.md](docs/troubleshooting_guide.md) | Common failure modes and fixes | Developers, operators |
-| [workspace_rules.md](docs/workspace_rules.md) | Repository conventions and guardrails | Contributors |
-| [session_log.md](docs/session_logs/session_log.md) | Historical implementation notes | Maintainers |
-| [competition_data_lifecycle.md](docs/session_logs/competition_data_lifecycle.md) | Data lifecycle and repo workflow notes | Maintainers |
+| **[docs/orchestrator_overview.md](docs/orchestrator_overview.md)** | **Complete system guide (non-technical + technical)** | **Everyone** |
+| [docs/source_of_truth.md](docs/source_of_truth.md) | Official architectural spec (v2.3) | Developers, reviewers |
+| [docs/quick_start.md](docs/quick_start.md) | Guide for setting up local runs | Developers, users |
+| [docs/cli_integration_guide.md](docs/cli_integration_guide.md) | CLI command syntax reference | Operators, users |
+| [docs/ledger_architecture.md](docs/ledger_architecture.md) | Experiment ledger schema specifications | DAAD Reviewers, DBAs |
+| [docs/troubleshooting_guide.md](docs/troubleshooting_guide.md) | Common errors and resolutions | Developers, operators |
 
 ---
 
 ## Security & Compliance
 
 ### Data Integrity
-- MD5 hash lock on all raw data files
-- Atomic state updates (tempfile + os.replace)
-- Config immutability after Phase 1
-- No hardcoded competition-specific values (A5)
+- MD5 hash locking on raw input files (calculated at intake).
+- Atomic state updates (written via tempfile + os.replace).
+- Immutability checks on challenge configuration after Phase 1.
+- Zero hardcoded competition-specific strings (columns, targets, metrics).
 
 ### Zindi Compliance
-- No AutoML libraries (preflight scan)
-- Fixed seed for reproducibility
-- Raw probabilities preserved (classification)
-- Submission budget guard
-- Complete audit trail for code review
-
-### Credentials
-- `.env` file (not committed)
-- Environment variable fallbacks
-- No credentials in code or config
+- AutoML library scanner checks (fails preflight if unauthorized imports found).
+- Fixed random seeds for reproducible folds and predictions.
+- Raw class probability values preserved for calibration checks.
+- Daily submission budget limit safety guards.
 
 ---
 
 ## Testing
 
 ### Automated Tests (pytest)
-- Comprehensive pytest-based test framework
-- Run using: `.venv\Scripts\pytest` (Windows) or `.venv/bin/pytest` (Unix)
-- Unit tests for: `state.py`, `config.py`, `ledger.py`, `cv.py`, `paths.py`
-- Skill verification tests for: anchor training, gating logic, SHAP audit, pseudo-labeling
+- Comprehensive test coverage of core modules: `state.py`, `config.py`, `ledger.py`, `cv.py`.
+- Run tests using standard python syntax:
+  ```bash
+  python -m pytest
+  ```
+- Specific tests verify: anchor baseline training, threshold calibration, SHAP ratio leakage checks, and pseudo-labeling retraining.
 
 ---
 
 ## Key Features (v2.3)
 
 ### Human Gates (5 Checkpoints)
-System stops and waits for approval at:
-1. **Gate 1:** After anchor model - "Does baseline look reasonable?"
-2. **Gate 2:** Before promoting variants - "Keep this model?" (per variant)
-3. **Gate 3:** Before fusion - "Ready to blend models?"
-4. **Gate 4:** Before inference - "Generate predictions?"
-5. **Gate 5:** Before close - "Which 2 submissions?"
+The orchestrator pauses execution and requests human Operator validation at:
+1. **Gate 1:** After anchor model training completes.
+2. **Gate 2:** Before promoting feature variants to state (evaluated per-branch).
+3. **Gate 3:** Before triggering model fusion (blending).
+4. **Gate 5:** Before close, to select the final 2 submissions.
 
 ### Reproducibility Contract (R1-R5)
-- **R1:** Seed always set (fixed at Phase 1)
-- **R2:** Rerun = identical output (bit-identical)
-- **R3:** No custom packages (all in requirements.txt)
-- **R4:** Submission reproducible from config + state
-- **R5:** Carbon tracking (CO2 estimation per skill)
-
-### Carbon Tracking (R5 - New in v2.3)
-Measures environmental impact:
-```json
-"telemetry.skill_08_anchor": {
-  "duration_sec": 123.45,
-  "peak_memory_mb": 2048,
-  "carbon_kg_estimate": 0.0012,
-  "tracker_method": "mlco2_formula",
-  "hardware_type": "cpu",
-  "region": "us-east-1"
-}
-```
-
-### Multi-Target Support
-Handles competitions with multiple prediction targets:
-- Trains separate model per target
-- Computes weighted composite score
-- Normalizes by target standard deviation
-- Single gate decision for all targets
-
-### Pseudo-Labeling (Skill 21)
-For classification: expands training set with confident predictions
-- 6 guard conditions (all must pass)
-- Retraining loop with augmented dataset
-- Rollback if zero variants pass gate
-- Classification-only (guard condition 1)
-
-### Scale-Invariant Gating
-Dynamic threshold normalization:
-- **RMSE/MAE:** Scales by target_std
-- **RMSLE:** No scaling (dimensionless)
-- **Classification:** No scaling (bounded metrics)
+- **R1:** Config-pinned reproducibility seed.
+- **R2:** End-to-end runs yield bit-identical predictions.
+- **R3:** Pinning of runtime dependencies in `requirements.txt`.
+- **R4:** Submissions are fully regenerable from the competition folder config + state.
+- **R5:** Carbon telemetry (real-time CPU/GPU memory & CO2 estimates computed per-skill).
 
 ---
 
 ## Development Status
 
 ### v2.3 Complete
-- All skill modules implemented and verified
-- 5 human gates operational
-- Carbon tracking (R5) instrumented
-- Multi-target pipeline functional
-- Pseudo-labeling with rollback
-- Scale-invariant gate normalization
-- Comprehensive documentation suite under docs/
-
-### Known Limitations
-- **C1:** Bootstrap phase string mismatch (workaround documented)
-- **GAP-3:** SHAP interaction features (deferred to v3.0)
-
-See [sot_audit_report.md](docs/sot_audit_report.md) for details.
+- All skill modules implemented and verified.
+- 5 human gates operational.
+- Carbon tracking (R5) telemetry instrumented.
+- Multi-target composite scoring pipeline functional.
+- Pseudo-labeling with rollback.
+- Scale-invariant gate normalization.
 
 ---
 
 ## Contributing
 
-The framework is **specification-driven**. To add a new skill:
+The framework is specification-driven. To add or update a skill:
 
-1. **Design** — Add to `specs/tasks.md`
-2. **Implement** — Create `zindian/skills/skill_XX_*.py`
-3. **Test** — Add to `tests/test_skill_XX.py`
-4. **Document** — Update `docs/source_of_truth.md`
+1. **Design** — Outline the behavior in the master spec.
+2. **Implement** — Create the module under `zindian/skills/skill_XX_*.py`.
+3. **Test** — Add assertions to `tests/test_skill_XX.py`.
+4. **Document** — Update [docs/source_of_truth.md](docs/source_of_truth.md).
 
 ### Skill Template
 
@@ -342,28 +265,16 @@ def run(
         return {"status": "GO", "result": ...}
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
-
-if __name__ == "__main__":
-    print(run())
 ```
-
----
-
-## Known Issues
-
-| Issue | Status | Reference |
-|-------|--------|-----------|
-| Bootstrap phase string mismatch | DOCUMENTED | [sot_audit_report.md](docs/sot_audit_report.md) C1 |
-| SHAP interaction features | DEFERRED | v3.0 roadmap |
 
 ---
 
 ## Support
 
-- **Getting Started** → Read [ORCHESTRATOR_OVERVIEW.md](docs/ORCHESTRATOR_OVERVIEW.md)
-- **Architecture Questions** → Read [source_of_truth.md](docs/source_of_truth.md)
-- **Implementation Details** → Check `specs/` directory
-- **Bug Reports** → See [sot_audit_report.md](docs/sot_audit_report.md)
+- **Getting Started** → Read [docs/orchestrator_overview.md](docs/orchestrator_overview.md)
+- **Architecture & Specifications** → Read [docs/source_of_truth.md](docs/source_of_truth.md)
+- **Troubleshooting** → Check [docs/troubleshooting_guide.md](docs/troubleshooting_guide.md)
+- **Licenses & Legal** → Check [LICENSE](LICENSE)
 
 ---
 

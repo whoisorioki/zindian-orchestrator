@@ -22,16 +22,22 @@
 
 ### Setup Environment
 ```bash
-cd /home/sagemaker-user/shared/zindian-orchestrator
+cd path/to/zindian-orchestrator
 
 # Option 1: Set competition via environment variable
+# Unix/macOS:
 export ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
+# Windows PowerShell:
+$env:ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
+# Windows CMD:
+set ZINDIAN_COMPETITION=world-cup-2026-goal-prediction-challenge
 
 # Option 2: Run from competition directory (auto-detects)
 cd competitions/world-cup-2026-goal-prediction-challenge
 
-# Execute CLI
-zindian-cli <command>
+# Execute CLI via python module syntax
+python -m zindian.cli <command>
+
 ```
 
 If the console script is not available in a source checkout, `python -m zindian.cli <command>` is the equivalent fallback.

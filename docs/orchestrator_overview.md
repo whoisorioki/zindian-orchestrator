@@ -763,15 +763,16 @@ spatial_lag = compute_spatial_lag(X_train_full, y_train_full)
 ### Unit Tests (pytest)
 - 160+ test cases
 - Coverage: state, config, ledger, cv, paths, schemas
-- Run: `pytest tests/`
+- Run: `python -m pytest`
 
 ### Integration Tests
-- Phase 1 end-to-end: `python scripts/test_phase_1.py`
-- Skill verification: `python scripts/verify_phase_b.py`
+- Phase 1 end-to-end: `python -m zindian.cli phase 1`
+- Skill verification: `python -m zindian.cli verify-phase-b`
 
 ### Validation Tests
-- Preflight: `python scripts/preflight_enforce.py`
-- Competition state: `python scripts/verify_competition_state.py`
+- Preflight: `python -m zindian.cli preflight`
+- Competition state: `python -m zindian.cli verify-state`
+
 
 ---
 
@@ -783,7 +784,7 @@ spatial_lag = compute_spatial_lag(X_train_full, y_train_full)
 2. Implement `run()` function with standard signature
 3. Add to phase map in `challenge_config.json`
 4. Write unit tests in `tests/test_skill_XX.py`
-5. Update `specs/requirements.md`
+5. Update `docs/source_of_truth.md`
 
 ### Adding a New Metric
 
@@ -824,19 +825,20 @@ competitions/<slug>/
 
 ```bash
 # Bootstrap new competition
-python -m tabula init <competition-slug>
+python -m zindian.cli bootstrap <competition-slug>
 
 # Run preflight
-python scripts/preflight_enforce.py
+python -m zindian.cli preflight
 
 # Run Phase 1
-python scripts/test_phase_1.py
+python -m zindian.cli phase 1
 
-# Run full pipeline
-python -m zindian.orchestrator --competition <slug>
+# Run full pipeline phases (e.g. 1, 2A, 2B, 3A, 3B, 4)
+python -m zindian.cli phase <phase_id>
 
 # Audit state
-python scripts/verify_competition_state.py <slug>
+python -m zindian.cli verify-state
+
 ```
 
 ## Configuration Keys
@@ -898,13 +900,14 @@ if "pseudo_label_result" in state_store.state:
 
 ## Support Resources
 
-- **Master Spec:** [AGENTS.md](../AGENTS.md)
-- **Source of Truth:** [docs/source_of_truth.md](source_of_truth.md)
-- **Audit Report:** [docs/sot_audit_report.md](sot_audit_report.md)
-- **Progress Tracker:** [docs/PROGRESS_TRACKER.md](PROGRESS_TRACKER.md)
+- **Source of Truth:** [docs/source_of_truth.md](source_of_truth.md) — The authoritative system specification.
+- **CLI Reference:** [docs/cli_integration_guide.md](cli_integration_guide.md) — CLI command usages.
+- **Troubleshooting:** [docs/troubleshooting_guide.md](troubleshooting_guide.md) — Solutions for common failure modes.
+- **Operational Master Spec:** [AGENTS.md](../AGENTS.md) — Operational guidelines for agent system prompt.
 
 ---
 
-**Document Version:** 1.0  
+**Document Version:** 1.1  
 **Orchestrator Version:** 2.3  
-**Last Updated:** June 2026
+**Last Updated:** July 2026
+
