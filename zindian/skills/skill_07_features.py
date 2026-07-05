@@ -344,7 +344,9 @@ def build_hypothesis_features(
                     if train_idx is None:
                         raise ValueError("train_idx must be provided in mode='cv'")
                     tr_idx = np.asarray(train_idx, dtype=int)
-                    tr_vals = np.asarray(train.iloc[tr_idx][col].to_numpy(), dtype=float)
+                    tr_vals = np.asarray(
+                        train.iloc[tr_idx][col].to_numpy(), dtype=float
+                    )
                     tr_targets = np.asarray(cast(Any, target_array))[tr_idx]
                 else:
                     tr_vals = np.asarray(train[col].to_numpy(), dtype=float)
@@ -380,7 +382,9 @@ def build_hypothesis_features(
                 )
 
                 def map_to_mean(series_vals: np.ndarray) -> np.ndarray:
-                    bins = cast(list[float], np.asarray(bin_edges, dtype=float).tolist())
+                    bins = cast(
+                        list[float], np.asarray(bin_edges, dtype=float).tolist()
+                    )
                     cats = pd.cut(
                         pd.Series(series_vals), bins=bins, include_lowest=True
                     )
@@ -470,7 +474,9 @@ def build_hypothesis_features(
     base_cols = list(train_df.columns)
     final_cols = base_cols + [c for c in new_cols if c not in base_cols]
     test_final_cols = [c for c in final_cols if c in test.columns]
-    return cast(pd.DataFrame, train[final_cols]), cast(pd.DataFrame, test[test_final_cols])
+    return cast(pd.DataFrame, train[final_cols]), cast(
+        pd.DataFrame, test[test_final_cols]
+    )
 
 
 # -- Variant Model Config Helpers ----------------------------------------------
@@ -656,7 +662,9 @@ def _dispatch_variant_training(
     # -- Shared LGB path (fastest, uses train_lightgbm_cv) --
     if use_lgb_shared_path and family in ("lgb", "dart") and not ensemble_spec:
         if train_df is None or test_df is None or feature_cols is None:
-            raise RuntimeError("train/test/feature_cols must be resolved before training")
+            raise RuntimeError(
+                "train/test/feature_cols must be resolved before training"
+            )
         feature_cols = cast(list[str], feature_cols)
         params: dict[str, Any] = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
         params.update(hyperparams)

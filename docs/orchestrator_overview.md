@@ -18,7 +18,7 @@
 
 ## What is Zindian Orchestrator?
 
-Zindian Orchestrator is an **intelligent assistant for data science competitions**. Think of it as an experienced data scientist that follows a strict, repeatable playbook to compete in machine learning competitions on the Zindi platform (Africa's leading data science competition platform).
+Zindian Orchestrator is an **intelligent assistant for tabular machine learning competitions on the Zindi platform.** Think of it as an experienced data scientist that follows a strict, repeatable playbook to systematically ingest raw data, engineer features, train models, audit validation folds, and manage submissions.
 
 ### The Problem It Solves
 

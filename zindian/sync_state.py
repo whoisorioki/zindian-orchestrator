@@ -29,7 +29,6 @@ def get_git_branch() -> str:
 def sync_submission_board(client: ZindiClient, state: dict[str, Any]) -> dict[str, Any]:
     """Sync submission board data to state."""
     import io
-    import sys
     from contextlib import redirect_stdout
 
     buf = io.StringIO()

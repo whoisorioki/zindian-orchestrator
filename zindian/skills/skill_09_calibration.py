@@ -602,8 +602,7 @@ def _run_multi_target(
         test_prob_cols = [
             c
             for c in df_test.columns
-            if c.startswith(f"{target_name}_prob_class_")
-            or c.startswith("prob_class_")
+            if c.startswith(f"{target_name}_prob_class_") or c.startswith("prob_class_")
         ]
         if not test_prob_cols:
             print(

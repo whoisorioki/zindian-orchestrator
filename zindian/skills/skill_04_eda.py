@@ -306,7 +306,9 @@ def run():
     zero_variance = [name for name, value in var_series.items() if value == 0]
     near_zero_variance = [name for name, value in var_series.items() if value < 0.01]
 
-    constants = [c for c in feature_cols if cast(pd.Series, df[c]).nunique(dropna=False) == 1]
+    constants = [
+        c for c in feature_cols if cast(pd.Series, df[c]).nunique(dropna=False) == 1
+    ]
 
     # Correlations
     numeric_feats = feature_frame.select_dtypes(include=[np.number]).columns.tolist()

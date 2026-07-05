@@ -4,7 +4,7 @@
 **Status:** SIGNED OFF
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
 
-⚠️ **KNOWN GAPS IN IMPLEMENTATION:**
+**KNOWN GAPS IN IMPLEMENTATION:**
 While the multi-target pipeline and sub-phase mappings are fully implemented and functional,
 most gaps from v2.2.1 have been resolved in v2.3. GAP-1 (skill_21 retraining) was already
 implemented, GAP-2 (composite fold variance) has been added, and DRIFT-1 (hardcoded targets)
@@ -49,7 +49,7 @@ The orchestrator manages one active competition.
 `challenge_config.json` and `SKILL_STATE.json` are scoped to one
 competition directory. Parallel competition support is out of scope.
 
-⚠️ **IMPLEMENTATION STATUS:** Recombination policy logic is implemented in `skill_21_pseudo_label.py`, though the actual model retraining loop inside the pseudo-labeling function is currently a stub.
+**IMPLEMENTATION STATUS:** Recombination policy logic (A12) is implemented in `skill_21_pseudo_label.py`, and the model retraining loop (LightGBM + Random Forest ensemble with strict split isolation) is fully implemented and operational.
 
 **A2 — Tabular data only.**
 All skills assume structured, tabular input. Image, text, audio,
@@ -140,7 +140,7 @@ reproducible, reviewable pinning while keeping the top-level intent in
 `requirements.in`.
 
 **A11 — Multi-target competitions are config-declared, never inferred.**
-⚠️ **IMPLEMENTATION STATUS:** Multi-target logic is implemented and operational in skills 02, 04, 07, 08, 09, 10, and 11.
+**IMPLEMENTATION STATUS:** Multi-target logic is implemented and operational in skills 02, 04, 07, 08, 09, 10, and 11.
 
 A competition is multi-target if and only if
 `challenge_config.json["target_config"]["targets"]` contains more than one
@@ -156,7 +156,7 @@ etc. from the top-level config fields exactly as in v2.2 — unchanged code
 path. Single-target competitions are byte-for-byte unaffected.
 
 **A12 — Pseudo-label recombination policy is mandatory for mixed-task multi-target competitions.**
-⚠️ **IMPLEMENTATION STATUS:** Recombination policy logic is implemented in `skill_21_pseudo_label.py`, though the retraining loop is currently stubbed.
+**IMPLEMENTATION STATUS:** Recombination policy logic (A12) is implemented in `skill_21_pseudo_label.py`, and the model retraining loop (LightGBM + Random Forest ensemble with strict split isolation) is fully implemented and operational.
 
 Whenever `target_config` has more than one target AND at least one target is classification, `target_config` must include `pseudo_label_recombination_policy`. Permitted values are exclusively `"freeze_unaugmented_targets_at_original"` and `"block_composite_until_all_targets_augmented_or_none"`. This field is absent for single-target competitions and for multi-target competitions where all targets are regression.
 
@@ -342,45 +342,38 @@ an evaluation matrix determined by `config["metric"]`:
 
 3. **Score Computation:**
    * RMSLE is computed in original space:
-     $\sqrt{\frac{1}{N} \sum (\ln(y + 1) - \ln(\hat{y} + 1))^2}$.
-   * RMSE (root_mean_squared_error) and MAE (mean_absolute_error)
-     are computed in original space with standard scikit-learn
-     functions, operating on the domain-clipped predictions.
+     $$\sqrt{\frac{1}{N} \sum_{i=1}^{N} (\ln(y_i + 1) - \ln(\hat{y}_i + 1))^2}$$
+   * RMSE (root_mean_squared_error) and MAE (mean_absolute_error) are computed in original space with standard scikit-learn functions, operating on the domain-clipped predictions.
 
-Breaking this contract in any skill invalidates all
-cross-branch score comparisons. A contract violation is a
-hard halt — not a warning.
+Breaking this contract in any skill invalidates all cross-branch score comparisons. A contract violation is a hard halt — not a warning.
 
-For multi-target competitions, this lifecycle applies independently per
-target, using that target's own metric and target_domain_bounds from
-target_config.targets[i] — there is no shared transformation lifecycle.
-Each target is pre-transformed, clipped, and scored entirely on its own
-terms before composite aggregation (below).
+For multi-target competitions, this lifecycle applies independently per target, using that target's own metric and `target_domain_bounds` from `target_config.targets[i]` — there is no shared transformation lifecycle. Each target is pre-transformed, clipped, and scored entirely on its own terms before composite aggregation (below).
 
 #### Composite Score Computation (multi-target only)
 
+```python
 For each target_spec in target_config["targets"]:
-    raw_score = oof_score for this target (computed via the existing
-                per-task-type pipeline above)
+    raw_score = oof_score for this target (computed via the existing per-task-type pipeline above)
 
-    If target_spec["task_type"] == "regression":
+    if target_spec["task_type"] == "regression":
         target_std = SKILL_STATE["eda"][f"{target_spec['name']}_std"]
         normalized_distance = abs(raw_score) / target_std
-        If target_spec["metric"] == "rmsle":
-            normalized_distance = raw_score directly (no division)
+        if target_spec["metric"] == "rmsle":
+            normalized_distance = raw_score  # directly (no division)
 
-    If target_spec["task_type"] == "classification":
+    if target_spec["task_type"] == "classification":
         normalized_distance = 1.0 - raw_score
 
     weighted_distances.append(normalized_distance * target_spec["weight"])
 
 composite_score = sum(weighted_distances)
-# composite_direction is fixed as "minimize_composite_distance" — every
-# term is already a "lower is better" distance, regardless of how many
-# targets individually maximize or minimize.
+```
 
-Composite variance threshold (multi-target only):
+`composite_direction` is fixed as `"minimize_composite_distance"` — every term is already a "lower is better" distance, regardless of how many targets individually maximize or minimize.
 
+#### Composite variance threshold (multi-target only)
+
+```python
 effective_target_std = sqrt(
     sum(w_i * sigma_i^2 for i in regression_targets)
     / sum(w_i for i in regression_targets)
@@ -388,13 +381,10 @@ effective_target_std = sqrt(
 effective_variance_threshold = (
     config["variance_gate_threshold"] * (effective_target_std ** 2)
 )
+```
 
-Dividing by the sum of regression weights (rather than treating them as
-summing to 1.0) removes the suppression artifact when classification
-targets are present. Verified against single regression target at weight
-0.60 (reduces to target_std unmodified) and two regression targets at
-0.30/0.30 (produces proper weighted RMS independent of classification
-weight).
+Dividing by the sum of regression weights (rather than treating them as summing to 1.0) removes the suppression artifact when classification targets are present. Verified against single regression target at weight 0.60 (reduces to `target_std` unmodified) and two regression targets at 0.30/0.30 (produces proper weighted RMS independent of classification weight).
+
 
 ---
 
@@ -1263,7 +1253,7 @@ If config["target_distribution"] == "continuous_skewed"
 If config["missingness_level"] == "high":
     → Interaction terms between MNAR indicator columns
       and top features from anchor
-      ⚠️ **DOCUMENTATION ERROR:** Original text claimed "top SHAP features"
+      **DOCUMENTATION ERROR:** Original text claimed "top SHAP features"
       but `skill_10_shap.py` has no anchor-only invocation mode. SHAP values
       are not available during `skill_07` feature generation. This rule cannot
       be implemented as documented.
@@ -2230,7 +2220,7 @@ during Phase 1 mutable window):
   "carbon_intensity_gco2_per_kwh": 494.0
 }
 
-⚠️ KNOWN BUG: config["infrastructure"] writes by skill_02
+KNOWN BUG: config["infrastructure"] writes by skill_02
 silently fail on fresh bootstrap (see C1 in Section 9).
 The fallback path (not_instrumented with warning) will
 trigger on every fresh run until the bootstrap phase string

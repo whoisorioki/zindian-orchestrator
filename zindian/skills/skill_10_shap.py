@@ -259,10 +259,10 @@ def _compute_shap_audit(
         else 0.0
     )
     top15_share = (
-            float(
-                np.asarray(ranking.head(15)["mean_abs_shap"], dtype=np.float64).sum()
-                / shap_total
-            )
+        float(
+            np.asarray(ranking.head(15)["mean_abs_shap"], dtype=np.float64).sum()
+            / shap_total
+        )
         if shap_total > 0
         else 0.0
     )

@@ -234,6 +234,7 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
 
     return train_feat, test_feat
 
+
 class Extractor(FeatureExtractor):
     """Terraclimate Extractor implementing the formal FeatureExtractor ABC."""
 

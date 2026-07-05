@@ -276,7 +276,9 @@ def _enrich(
 
     # Merge teams
     if "teams" in auxiliary_data and team_id_col in df.columns:
-        teams = auxiliary_data["teams"][[team_id_col, "confederation_id"]].drop_duplicates()
+        teams = auxiliary_data["teams"][
+            [team_id_col, "confederation_id"]
+        ].drop_duplicates()
         df = df.merge(teams, on=team_id_col, how="left", suffixes=("", "_aux"))
 
         # Fill new team confederation_id
@@ -340,6 +342,7 @@ def _encode_categoricals(
     test_encoded = combined.iloc[train_len:].reset_index(drop=True)
 
     return train_encoded, test_encoded
+
 
 class Extractor(FeatureExtractor):
     """World Cup Extractor implementing the formal FeatureExtractor ABC."""

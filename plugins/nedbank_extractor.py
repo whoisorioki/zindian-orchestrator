@@ -174,6 +174,7 @@ def extract(
 
     return train_feat, test_feat
 
+
 class Extractor(FeatureExtractor):
     """Nedbank Extractor implementing the formal FeatureExtractor ABC."""
 

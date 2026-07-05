@@ -2,13 +2,14 @@
 
 An **autonomous ML competition agent framework** for Zindi Africa competitions.
 
-> **Framework, not specific competition** — Works for any Zindi competition by reading competition rules dynamically.
+> **Framework, not specific competition** — Designed specifically for tabular machine learning competitions on the Zindi platform, reading rules and target schemas dynamically.
 
 This framework manages end-to-end competition pipelines autonomously with human oversight at 5 critical checkpoints.
 
 ## What Is This?
 
 Think of Zindian Orchestrator as an intelligent co-pilot for data science hackathons. It systematically cleans raw data, engineers features, trains baseline models, audits validation folds for target leaks (using SHAP), and blends predictions using advanced ensemble fusion—all while adhering to a strict, reproducible execution contract.
+
 
 **Key Features:**
 - **5 Human Gates** - Stops for approval at critical points

@@ -77,7 +77,9 @@ def test_world_cup_intake_a12_compliance():
     try:
         config = {"metric": "composite"}
         target_config = _detect_multi_target_from_submission(sample_sub_path, config)
-        assert target_config is not None, "A12 policy detection must return target_config"
+        assert (
+            target_config is not None
+        ), "A12 policy detection must return target_config"
 
         # A12 Compliance: Policy must be present for mixed-task
         assert (

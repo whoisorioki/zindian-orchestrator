@@ -50,7 +50,10 @@ class ZindiClient:
         )
         auth_data = cast(Any, self._user)._Zindian__auth_data
         self._auth_token = auth_data["auth_token"]
-        self._headers = {**cast(Any, self._user)._Zindian__headers, "token": self._auth_token}
+        self._headers = {
+            **cast(Any, self._user)._Zindian__headers,
+            "token": self._auth_token,
+        }
         self._challenge_id = None
         print(f"✅ Logged in as: {os.getenv('ZINDI_USERNAME')}")
 
