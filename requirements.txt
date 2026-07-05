@@ -27,6 +27,8 @@ certifi==2026.5.20
     #   requests
 cffi==2.0.0
     # via cryptography
+cfgv==3.5.0
+    # via pre-commit
 charset-normalizer==3.4.7
     # via requests
 click==8.4.1
@@ -47,10 +49,16 @@ colorama==0.4.6
     #   tqdm
 cryptography==49.0.0
     # via google-auth
+distlib==0.4.3
+    # via virtualenv
 distro==1.9.0
     # via google-genai
 duckdb==1.5.3
     # via -r requirements.in
+filelock==3.29.5
+    # via
+    #   python-discovery
+    #   virtualenv
 google-auth[requests]==2.54.0
     # via google-genai
 google-genai==2.8.0
@@ -63,6 +71,8 @@ httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via google-genai
+identify==2.6.19
+    # via pre-commit
 idna==3.18
     # via
     #   anyio
@@ -84,6 +94,8 @@ llvmlite==0.47.0
     #   shap
 narwhals==2.22.1
     # via scikit-learn
+nodeenv==1.10.0
+    # via pre-commit
 numba==0.65.1
     # via shap
 numpy==2.4.6
@@ -116,10 +128,16 @@ pip-tools==7.5.3
     # via -r requirements.in
 planetary-computer==1.0.0
     # via -r requirements.in
+platformdirs==4.10.0
+    # via
+    #   python-discovery
+    #   virtualenv
 playwright==1.60.0
     # via -r requirements.in
 pluggy==1.6.0
     # via pytest
+pre-commit==4.6.0
+    # via -r requirements.in
 pyarrow==24.0.0
     # via -r requirements.in
 pyasn1==0.6.3
@@ -165,12 +183,16 @@ python-dateutil==2.9.0.post0
     #   pandas
     #   pystac
     #   pystac-client
+python-discovery==1.4.3
+    # via virtualenv
 python-dotenv==1.2.2
     # via
     #   -r requirements.in
     #   planetary-computer
 pytz==2026.2
     # via planetary-computer
+pyyaml==6.0.3
+    # via pre-commit
 rasterio==1.5.0
     # via -r requirements.in
 referencing==0.37.0
@@ -234,6 +256,8 @@ tzdata==2026.2
     # via pandas
 urllib3==2.7.0
     # via requests
+virtualenv==21.5.1
+    # via pre-commit
 websockets==16.0
     # via google-genai
 wheel==0.47.0

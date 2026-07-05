@@ -28,5 +28,7 @@ playwright
 
 # Dev tools
 pip-tools
+pre-commit
 pytest
 pytest-mock
+
