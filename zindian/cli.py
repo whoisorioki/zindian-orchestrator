@@ -361,12 +361,12 @@ def main():
     elif args.command == "init-ledger":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, str(root / "scripts" / "init_ledger.py")],
                 cwd=str(root),
             )
-            if result.returncode != 0:
-                sys.exit(result.returncode)
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -377,9 +377,9 @@ def main():
             cmd = [sys.executable, str(root / "scripts" / "preflight_enforce.py")]
             if args.competition:
                 cmd.extend(["--competition", args.competition])
-            result = subprocess.run(cmd, cwd=str(root))
-            if result.returncode != 0:
-                sys.exit(result.returncode)
+            proc = subprocess.run(cmd, cwd=str(root))
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -390,12 +390,12 @@ def main():
     elif args.command == "verify-state":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, str(root / "scripts" / "verify_competition_state.py")],
                 cwd=str(root),
             )
-            if result.returncode != 0:
-                sys.exit(result.returncode)
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -403,12 +403,12 @@ def main():
     elif args.command == "verify-phase-b":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, str(root / "scripts" / "verify_phase_b.py")],
                 cwd=str(root),
             )
-            if result.returncode != 0:
-                sys.exit(result.returncode)
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -416,12 +416,12 @@ def main():
     elif args.command == "write-oof-meta":
         try:
             root = Path(__file__).resolve().parent.parent
-            result = subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, str(root / "scripts" / "write_oof_meta.py")],
                 cwd=str(root),
             )
-            if result.returncode != 0:
-                sys.exit(result.returncode)
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)

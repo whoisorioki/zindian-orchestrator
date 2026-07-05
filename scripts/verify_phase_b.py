@@ -73,6 +73,8 @@ try:
 
     # Retrieve it
     exp = ledger.get_experiment(exp_id)
+    if exp is None:
+        raise RuntimeError(f"Experiment {exp_id} not found after logging it")
     print(f"    - Retrieved: {exp['branch_name']} (OOF RMSE={exp['oof_rmse']})")
 
     # Log submission

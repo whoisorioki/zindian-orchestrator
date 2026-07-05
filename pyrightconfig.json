@@ -6,6 +6,8 @@
         "**/.venv/**",
         "**/site-packages/**",
         "**/.venv/*",
-        "**/.venv/**"
+        "**/.venv/**",
+        "zindi_local_DISABLED/**",
+        "zindi_stub_backup_DISABLED/**"
     ]
 }

@@ -221,7 +221,7 @@ def empirical_validate_hypothesis(
     target_col = resolve_target_column(train_frame)
 
     subset = train_frame[feature_columns].replace([np.inf, -np.inf], np.nan)
-    if subset.isna().all().all():
+    if bool(subset.isna().to_numpy().all()):
         return False, "all values are missing"
 
     # Stage 2a: mutual information must be positive.

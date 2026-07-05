@@ -35,7 +35,7 @@ def estimate_carbon(
 
     # Try CodeCarbon first
     try:
-        from codecarbon import EmissionsTracker
+        from codecarbon import EmissionsTracker  # pyright: ignore[reportMissingImports]
 
         tracker = EmissionsTracker(measure_power_secs=duration_sec, save_to_file=False)
         tracker.start()

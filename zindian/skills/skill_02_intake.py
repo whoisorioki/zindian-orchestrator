@@ -11,6 +11,7 @@ import requests
 import tempfile
 from datetime import datetime, timezone
 import difflib
+from typing import cast
 
 from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.config import ConfigNotPopulated
@@ -518,7 +519,8 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
         sample_vals = df[col].dropna().head(100)
         # Convert to numeric for comparison
         try:
-            numeric_vals = pd.to_numeric(sample_vals, errors="coerce").dropna()
+            numeric_raw = pd.to_numeric(sample_vals, errors="coerce")
+            numeric_vals = cast(pd.Series, numeric_raw).dropna()
             is_binary = set(numeric_vals.unique()).issubset({0, 1, 0.0, 1.0})
             is_prob = (numeric_vals >= 0).all() and (numeric_vals <= 1).all()
         except Exception:

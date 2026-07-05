@@ -163,7 +163,8 @@ def train_lightgbm_cv(
             from sklearn.preprocessing import LabelEncoder
 
             le = LabelEncoder()
-            y = le.fit_transform(y_raw.astype(str))
+            y_raw_str = np.asarray(y_raw, dtype=str)
+            y = le.fit_transform(y_raw_str)
         else:
             y = y_raw
         y = np.asarray(y, dtype=np.int32)
@@ -232,7 +233,7 @@ def train_lightgbm_cv(
         if hasattr(cv, "split"):
             split_iter = cast(Splitter, cv).split(X, y)
         else:
-            split_iter = iter(cv)
+            split_iter = cast(Iterable[tuple[np.ndarray, np.ndarray]], cv)
 
     # Resolve target_domain_bounds for RMSE/MAE domain clipping
     domain_bounds = None
@@ -295,13 +296,13 @@ def train_lightgbm_cv(
         if task_type == "regression":
             val_pred_flat = val_pred_raw
             test_pred_flat = test_pred_raw
-        elif len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] > 2:
+        elif val_pred_raw.ndim > 1 and val_pred_raw.shape[-1] > 2:
             # Multiclass: keep full probability matrix
             oof_probs[val_idx] = val_pred_raw
             test_probs += test_pred_raw / n_splits
             val_pred_flat = np.argmax(val_pred_raw, axis=1).astype(np.float64)
             test_pred_flat = None  # Not used for multiclass
-        elif len(val_pred_raw.shape) > 1 and val_pred_raw.shape[1] == 2:
+        elif val_pred_raw.ndim > 1 and val_pred_raw.shape[-1] == 2:
             # Binary classification with 2-column output
             val_pred_flat = val_pred_raw[:, 1]
             test_pred_flat = test_pred_raw[:, 1]

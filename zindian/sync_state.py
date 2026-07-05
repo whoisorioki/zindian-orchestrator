@@ -4,7 +4,7 @@
 import json
 import subprocess
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable, cast
 
 from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
@@ -30,14 +30,11 @@ def sync_submission_board(client: ZindiClient, state: dict[str, Any]) -> dict[st
     """Sync submission board data to state."""
     import io
     import sys
+    from contextlib import redirect_stdout
 
     buf = io.StringIO()
-    old = sys.stdout
-    sys.stdout = buf
-    try:
-        subs = list(client._user.submission_board())
-    finally:
-        sys.stdout = old
+    with redirect_stdout(buf):
+        subs = list(cast(Iterable[Any], client._user.submission_board()))
 
     selected = [s for s in subs if s.get("chosen")]
     state["selected_submissions"] = [s.get("filename") for s in selected]

@@ -8,7 +8,7 @@ from plugins.geoai_extractor import Extractor as GeoAIExtractor
 def test_base_extractor_is_abc():
     """FeatureExtractor should be abstract."""
     with pytest.raises(TypeError):
-        FeatureExtractor()
+        FeatureExtractor()  # type: ignore[abstract]
 
 
 def test_geoai_inherits_from_abc():

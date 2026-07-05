@@ -30,7 +30,7 @@ import tabula.skill_state_autopatch  # noqa
 import json
 import sys
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 import lightgbm as lgb
 import numpy as np
@@ -365,8 +365,14 @@ def train_ensemble_and_predict(
 
         model_rf = RandomForestClassifier(**{**RF_PARAMS, "random_state": seed})
         model_rf.fit(X_tr, y_tr, sample_weight=w_tr)
-        rf_val = np.array(model_rf.predict_proba(X_va)[:, 1], dtype=np.float64)
-        rf_test = np.array(model_rf.predict_proba(X_test)[:, 1], dtype=np.float64)
+        rf_probs_val = np.asarray(
+            cast(Any, model_rf).predict_proba(X_va), dtype=np.float64
+        )
+        rf_probs_test = np.asarray(
+            cast(Any, model_rf).predict_proba(X_test), dtype=np.float64
+        )
+        rf_val = np.array(rf_probs_val[:, 1], dtype=np.float64)
+        rf_test = np.array(rf_probs_test[:, 1], dtype=np.float64)
 
         oof[va_idx] = 0.5 * lgb_val + 0.5 * rf_val
         preds += (0.5 * lgb_test + 0.5 * rf_test) / max(n_splits, 1)

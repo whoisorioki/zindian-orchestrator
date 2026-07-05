@@ -27,7 +27,7 @@ finally:
     sys.stdout = old
 
 with Ledger() as ledger:
-    for s in subs:
+    for _, s in subs:
         # Create experiment
         exp_id = ledger.log_experiment(
             branch_name=state.get("current_git_branch", "main"),

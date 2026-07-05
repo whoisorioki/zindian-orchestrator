@@ -16,7 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from zindian.paths import resolve_competition_paths, CompetitionPaths
 
@@ -107,9 +107,9 @@ def _high_correlation_pairs(
 
 
 def _outlier_summary(series: pd.Series, total_rows: int) -> dict[str, Any]:
-    numeric_values = (
-        pd.to_numeric(series, errors="coerce").dropna().astype(float).to_numpy()
-    )
+    numeric_raw = pd.to_numeric(series, errors="coerce")
+    numeric_series = cast(pd.Series, numeric_raw).dropna()
+    numeric_values = numeric_series.astype(float).to_numpy()
     if numeric_values.size == 0:
         return {"outlier_pct": 0.0, "flag": False, "method": "empty", "skewness": 0.0}
 
@@ -159,16 +159,17 @@ def _build_categorical_columns(
 ) -> list[dict[str, Any]]:
     categorical_columns: list[dict[str, Any]] = []
     for column in feature_cols:
+        column_series = cast(pd.Series, df[column])
         column_rules = explicit_rules.get(column)
         if (
-            pd.api.types.is_object_dtype(df[column])
-            or pd.api.types.is_string_dtype(df[column])
-            or str(df[column].dtype) == "category"
+            pd.api.types.is_object_dtype(column_series)
+            or pd.api.types.is_string_dtype(column_series)
+            or str(column_series.dtype) == "category"
         ):
             categorical_columns.append(
                 {
                     "name": column,
-                    "cardinality": int(df[column].nunique(dropna=False)),
+                    "cardinality": int(column_series.nunique(dropna=False)),
                     "encoding": column_rules or "one-hot or ordinal",
                 }
             )
@@ -176,7 +177,7 @@ def _build_categorical_columns(
             categorical_columns.append(
                 {
                     "name": column,
-                    "cardinality": int(df[column].nunique(dropna=False)),
+                    "cardinality": int(column_series.nunique(dropna=False)),
                     "encoding": column_rules,
                 }
             )
@@ -185,7 +186,7 @@ def _build_categorical_columns(
 
 def mcar_mnar_assessment(df: pd.DataFrame, col: str, targets: list[str]) -> str:
     """Multi-target MNAR assessment. If missingness correlates with ANY target, flag as MNAR."""
-    series = df[col]
+    series = cast(pd.Series, df[col])
     null_rate = series.isnull().mean()
     if null_rate == 0:
         return "none"
@@ -194,7 +195,8 @@ def mcar_mnar_assessment(df: pd.DataFrame, col: str, targets: list[str]) -> str:
     null_ind = series.isnull().astype(float)
     for target in targets:
         if target in df.columns:
-            target_series = pd.to_numeric(df[target], errors="coerce").astype(float)
+            target_raw = pd.to_numeric(cast(pd.Series, df[target]), errors="coerce")
+            target_series = cast(pd.Series, target_raw).astype(float)
             corr = null_ind.corr(target_series)
             if pd.notna(corr) and abs(corr) >= 0.05:
                 return "MNAR"  # Correlated with at least one target
@@ -295,19 +297,21 @@ def run():
     except Exception:
         pass
 
-    total_nulls = int(df[feature_cols].isnull().sum().sum())
-    null_cols = df[feature_cols].columns[df[feature_cols].isnull().any()].tolist()
-    null_pct = {c: float(df[c].isnull().mean()) for c in null_cols}
+    feature_frame = cast(pd.DataFrame, df[feature_cols])
+    total_nulls = int(feature_frame.isnull().sum().sum())
+    null_cols = feature_frame.columns[feature_frame.isnull().any()].tolist()
+    null_pct = {c: float(cast(pd.Series, df[c]).isnull().mean()) for c in null_cols}
 
-    var = df[feature_cols].var(numeric_only=True)
-    zero_variance = var[var == 0].index.tolist()
-    near_zero_variance = var[var < 0.01].index.tolist()
+    var_series = cast(pd.Series, feature_frame.var(numeric_only=True))
+    zero_variance = [name for name, value in var_series.items() if value == 0]
+    near_zero_variance = [name for name, value in var_series.items() if value < 0.01]
 
-    constants = [c for c in feature_cols if df[c].nunique(dropna=False) == 1]
+    constants = [c for c in feature_cols if cast(pd.Series, df[c]).nunique(dropna=False) == 1]
 
     # Correlations
-    numeric_feats = df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
-    corr = df[numeric_feats].corr().abs()
+    numeric_feats = feature_frame.select_dtypes(include=[np.number]).columns.tolist()
+    numeric_frame = cast(pd.DataFrame, feature_frame[numeric_feats])
+    corr = numeric_frame.corr().abs()
     high_corr_pairs = _high_correlation_pairs(corr, thresh=0.95)
 
     pii_keywords = {"email", "phone", "name", "id_number", "ssn"}
@@ -329,7 +333,8 @@ def run():
 
     scaling_needed = []
     for c in numeric_feats:
-        snum = pd.to_numeric(df[c], errors="coerce").dropna()
+        snum_raw = pd.to_numeric(df[c], errors="coerce")
+        snum = cast(pd.Series, snum_raw).dropna()
         if snum.empty:
             continue
         range_span = float(snum.quantile(0.95) - snum.quantile(0.05))
@@ -343,7 +348,7 @@ def run():
 
     outlier_flags = {}
     for c in numeric_feats:
-        outlier_flags[c] = _outlier_summary(df[c], len(df))
+        outlier_flags[c] = _outlier_summary(cast(pd.Series, df[c]), len(df))
 
     # Standardisation verdict
     std_verdict = {
@@ -373,7 +378,7 @@ def run():
         band_cols = [c for c in feature_cols if c.startswith(band + "_")]
         if not band_cols:
             continue
-        vals = df[band_cols].values.astype(float)
+        vals = cast(pd.DataFrame, df[band_cols]).to_numpy(dtype=float)
         band_summary_stats[band] = {
             "mean": float(np.nanmean(vals)),
             "std": float(np.nanstd(vals, ddof=1)),
@@ -391,7 +396,8 @@ def run():
         if len(band_cols) < 2:
             continue
         monthly_vals: np.ndarray = np.asarray(
-            df[band_cols].mean(axis=0).values, dtype=float
+            cast(pd.Series, df[band_cols].mean(axis=0)).to_numpy(dtype=float),
+            dtype=float,
         )
         seasonal_amplitude[band] = float(np.max(monthly_vals) - np.min(monthly_vals))
 
@@ -408,7 +414,8 @@ def run():
         if len(band_cols) < 2:
             continue
         trend_vals: np.ndarray = np.asarray(
-            df[band_cols].mean(axis=0).values, dtype=float
+            cast(pd.Series, df[band_cols].mean(axis=0)).to_numpy(dtype=float),
+            dtype=float,
         )
         monthly_list: list[float] = trend_vals.tolist()
         mom_delta: list[float] = (trend_vals[1:] - trend_vals[:-1]).tolist()
@@ -420,10 +427,12 @@ def run():
     # ── 2d: Target correlation per feature ───────────────────────────
     target_correlation_per_feature: dict[str, float] = {}
     if primary_target in df.columns:
-        y_vals = pd.to_numeric(df[primary_target], errors="coerce").values
+        y_raw = pd.to_numeric(cast(pd.Series, df[primary_target]), errors="coerce")
+        y_vals = cast(pd.Series, y_raw).to_numpy(dtype=float)
         for c in numeric_feats:
             try:
-                x_vals = pd.to_numeric(df[c], errors="coerce").values
+                x_raw = pd.to_numeric(cast(pd.Series, df[c]), errors="coerce")
+                x_vals = cast(pd.Series, x_raw).to_numpy(dtype=float)
                 mask = ~(np.isnan(x_vals) | np.isnan(y_vals))
                 if mask.sum() > 2:
                     xy = np.corrcoef(x_vals[mask], y_vals[mask])

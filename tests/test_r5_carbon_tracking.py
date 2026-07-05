@@ -5,7 +5,7 @@ from zindian.carbon_tracker import estimate_carbon
 
 def test_carbon_estimate_fallback():
     """Test ML CO2 formula fallback when CodeCarbon unavailable."""
-    config = {
+    config: dict[str, object] = {
         "infrastructure": {
             "hardware_type": "cpu",
             "region": "us-east-1",
@@ -32,7 +32,7 @@ def test_carbon_estimate_fallback():
 
 def test_carbon_estimate_defaults():
     """Test defaults when infrastructure block missing."""
-    config = {}
+    config: dict[str, object] = {}
 
     result = estimate_carbon(duration_sec=5.0, peak_memory_mb=50.0, config=config)
 

@@ -18,11 +18,12 @@ Exits 0 on success, 1 on failure.
 from __future__ import annotations
 
 import ast
+import argparse
 import json
 import re
 import sys
 from pathlib import Path
-import argparse
+from typing import cast
 
 
 def fail(msg: str):
@@ -85,6 +86,7 @@ def check_config_completeness(cfg: dict) -> None:
     repro = cfg.get("reproducibility")
     if not isinstance(repro, dict):
         fail("challenge_config.json `reproducibility` must be a dictionary")
+    repro = cast(dict[str, object], repro)
     seed = repro.get("seed")
     if seed is None or not isinstance(seed, int):
         fail("reproducibility.seed is missing or not an int")
@@ -94,6 +96,7 @@ def check_config_completeness(cfg: dict) -> None:
     cv = cfg.get("cv_strategy")
     if not isinstance(cv, dict):
         fail("challenge_config.json `cv_strategy` must be a dictionary")
+    cv = cast(dict[str, object], cv)
     for subfield in (
         "type",
         "n_splits",
@@ -454,6 +457,7 @@ def verify_section_1_assumptions(
         fail(
             "[A4 Target In Schema Violation] target_col is not defined in challenge_config.json"
         )
+    target_col = str(target_col)
 
     header = []
     if train_path.suffix.lower() == ".csv":
@@ -513,12 +517,13 @@ def verify_section_1_assumptions(
             if isinstance(node, ast.Constant):
                 val = node.value
             elif node.__class__.__name__ == "Str":
-                val = node.s
+                val = getattr(node, "s", None)
             if isinstance(val, str):
                 val_lower = val.lower()
                 if val_lower in prohibited_strings and len(val_lower) > 2:
+                    lineno = getattr(node, "lineno", "?")
                     violations_a5.append(
-                        f"{skill_file.name} line {node.lineno}: contains hardcoded competition-specific string literal '{val}'"
+                        f"{skill_file.name} line {lineno}: contains hardcoded competition-specific string literal '{val}'"
                     )
     if violations_a5:
         for v in violations_a5:
@@ -578,19 +583,21 @@ def verify_section_1_assumptions(
             fail(f"Failed to parse AST of {skill_file.name}: {e}")
         for node in ast.walk(tree):
             if isinstance(node, ast.Subscript):
+                slice_node = node.slice
                 slice_val = None
-                if isinstance(node.slice, ast.Constant):
-                    slice_val = node.slice.value
-                elif node.slice.__class__.__name__ == "Str":
-                    slice_val = node.slice.s
-                elif isinstance(node.slice, ast.Index):  # Python < 3.9
-                    if isinstance(node.slice.value, ast.Constant):
-                        slice_val = node.slice.value
-                    elif node.slice.value.__class__.__name__ == "Str":
-                        slice_val = node.slice.value.s
+                if isinstance(slice_node, ast.Constant):
+                    slice_val = slice_node.value
+                elif slice_node.__class__.__name__ == "Str":
+                    slice_val = getattr(slice_node, "s", None)
+                else:
+                    inner_slice = getattr(slice_node, "value", None)
+                    if isinstance(inner_slice, ast.Constant):
+                        slice_val = inner_slice.value
+                    elif inner_slice.__class__.__name__ == "Str":
+                        slice_val = getattr(inner_slice, "s", None)
                 if slice_val in unsafe_keys:
                     violations_a9.append(
-                        f"{skill_file.name} line {node.lineno}: direct bracket access on unsafe key '{slice_val}'"
+                        f"{skill_file.name} line {getattr(node, 'lineno', '?')}: direct bracket access on unsafe key '{slice_val}'"
                     )
     if violations_a9:
         for v in violations_a9:

@@ -10,6 +10,7 @@ import hashlib
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import cast
 
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
@@ -225,8 +226,9 @@ def run(re_verify: bool = False) -> dict:
         counts = {}
     else:
         # Validate target values; be permissive but warn if non-binary
-        unique_targets = sorted(pd.unique(train[target_col].astype(str)).tolist())
-        is_binary_numeric = set(train[target_col].dropna().unique()) <= {0, 1}
+        target_series = cast(pd.Series, train[target_col])
+        unique_targets = sorted(pd.unique(target_series.astype(str)).tolist())
+        is_binary_numeric = set(target_series.dropna().unique()) <= {0, 1}
         if not is_binary_numeric:
             print(
                 f"[WARN] Target values are not strictly 0/1: {unique_targets} — will hash canonical string form"
@@ -249,7 +251,7 @@ def run(re_verify: bool = False) -> dict:
     print("\nComputing MD5 hashes...")
     # In INIT mode, skip target column hash (will be computed by skill_02)
     if target_col is not None:
-        md5_target = compute_md5(train[target_col])
+        md5_target = compute_md5(cast(pd.Series, train[target_col]))
     else:
         md5_target = "pending_skill_02"  # Placeholder for INIT mode
 

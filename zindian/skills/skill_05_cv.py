@@ -20,7 +20,7 @@ import tabula.skill_state_autopatch  # noqa
 import json
 import sys
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -106,7 +106,11 @@ def build_spatial_splits(
         raise RuntimeError("Not enough spatial samples to build stable fold groups")
 
     projected = _build_sphere_projection(coords)
-    kmeans = KMeans(n_clusters=cluster_count, random_state=get_seed(), n_init=10)
+    kmeans = KMeans(
+        n_clusters=cluster_count,
+        random_state=get_seed(),
+        n_init=cast(Any, 10),
+    )
     geo_groups = kmeans.fit_predict(projected)
 
     print("\n  Geographic block distribution:")

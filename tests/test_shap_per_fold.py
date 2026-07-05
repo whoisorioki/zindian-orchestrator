@@ -9,6 +9,8 @@ def test_shap_computed_per_fold():
     X, y = make_classification(
         n_samples=120, n_features=6, n_informative=3, random_state=0
     )
+    X = np.asarray(X)
+    y = np.asarray(y)
     n_splits = 3
     splitter = make_cv_splitter(
         {"type": "stratified", "n_splits": n_splits, "random_seed": 42}

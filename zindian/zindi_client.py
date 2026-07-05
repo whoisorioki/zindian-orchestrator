@@ -8,6 +8,7 @@ import os
 import requests
 from dotenv import load_dotenv
 import sys
+from typing import Any, cast
 
 
 # Dynamically resolve Zindian to bypass the local shadow package 'zindi/' in the repository root,
@@ -47,8 +48,9 @@ class ZindiClient:
             username=os.getenv("ZINDI_USERNAME"),
             fixed_password=os.getenv("ZINDI_PASSWORD"),
         )
-        self._auth_token = self._user._Zindian__auth_data["auth_token"]
-        self._headers = {**self._user._Zindian__headers, "token": self._auth_token}
+        auth_data = cast(Any, self._user)._Zindian__auth_data
+        self._auth_token = auth_data["auth_token"]
+        self._headers = {**cast(Any, self._user)._Zindian__headers, "token": self._auth_token}
         self._challenge_id = None
         print(f"✅ Logged in as: {os.getenv('ZINDI_USERNAME')}")
 
@@ -120,7 +122,8 @@ class ZindiClient:
     def remaining_submissions(self) -> int:
         """Check submission budget before submitting."""
         try:
-            return self._user.remaining_subimissions
+            remaining = getattr(cast(Any, self._user), "remaining_subimissions", -1)
+            return int(remaining) if remaining is not None else -1
         except Exception:
             return -1  # Unknown — do not block, but log warning
 

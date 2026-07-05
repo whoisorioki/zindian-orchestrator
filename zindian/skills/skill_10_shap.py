@@ -19,6 +19,7 @@ import tabula.skill_state_autopatch  # noqa
 import json
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import lightgbm as lgb
 import numpy as np
@@ -215,7 +216,10 @@ def _compute_shap_audit(
             fold_scores.append(fold_rmse)
             print(f"  Fold {fold_idx}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
-            val_probs = np.asarray(model.predict_proba(X[val_idx]), dtype=np.float64)
+            val_probs = np.asarray(
+                cast(lgb.LGBMClassifier, model).predict_proba(X[val_idx]),
+                dtype=np.float64,
+            )
             n_classes = val_probs.shape[1]
             if n_classes == 2:
                 val_probs_1d = val_probs[:, 1]
@@ -236,7 +240,8 @@ def _compute_shap_audit(
             fold_scores.append(fold_auc)
             print(f"  Fold {fold_idx}/{n_splits}: auc={fold_auc:.6f}")
 
-        explainer = shap.TreeExplainer(model)
+        shap_module = cast(Any, shap)
+        explainer = shap_module.TreeExplainer(model)
         shap_values = explainer.shap_values(X[val_idx], check_additivity=False)
         fold_importance = np.abs(_as_positive_shap_values(shap_values)).mean(axis=0)
         fold_importances.append(fold_importance)
@@ -248,9 +253,16 @@ def _compute_shap_audit(
         .reset_index(drop=True)
     )
 
-    shap_total = float(ranking["mean_abs_shap"].sum()) if not ranking.empty else 0.0
+    shap_total = (
+        float(np.asarray(ranking["mean_abs_shap"], dtype=np.float64).sum())
+        if not ranking.empty
+        else 0.0
+    )
     top15_share = (
-        float(ranking.head(15)["mean_abs_shap"].sum() / shap_total)
+            float(
+                np.asarray(ranking.head(15)["mean_abs_shap"], dtype=np.float64).sum()
+                / shap_total
+            )
         if shap_total > 0
         else 0.0
     )
@@ -327,7 +339,7 @@ def _compute_shap_audit(
 def _build_pruned_feature_set(
     feature_cols: list[str], ranking: pd.DataFrame, frame: pd.DataFrame
 ) -> dict:
-    corr = frame[feature_cols].corr().abs()
+    corr = cast(pd.DataFrame, frame.loc[:, feature_cols].corr()).abs()
     corr_values = corr.to_numpy(dtype=float, copy=False)
     upper_mask = np.triu(np.ones(corr_values.shape, dtype=bool), k=1)
     rank_lookup = {
@@ -441,7 +453,8 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
                 oof_probs[val_idx] = val_preds
             else:
                 val_probs = np.asarray(
-                    model.predict_proba(X[val_idx]), dtype=np.float64
+                    cast(lgb.LGBMClassifier, model).predict_proba(X[val_idx]),
+                    dtype=np.float64,
                 )[:, 1]
                 oof_probs[val_idx] = val_probs
 

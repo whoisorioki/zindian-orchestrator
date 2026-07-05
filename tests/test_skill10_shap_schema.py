@@ -10,6 +10,8 @@ def test_skill10_shap_output_schema():
     X, y = make_classification(
         n_samples=90, n_features=5, n_informative=3, random_state=1
     )
+    X = np.asarray(X)
+    y = np.asarray(y)
     splitter = make_cv_splitter(
         {"type": "stratified", "n_splits": 3, "random_seed": 42}
     )

@@ -24,8 +24,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+reconfigure = getattr(sys.stdout, "reconfigure", None)
+if callable(reconfigure):
+    reconfigure(encoding="utf-8")
 
 import pandas as pd
 
@@ -50,8 +51,8 @@ PASS = "✅"
 FAIL = "❌"
 WARN = "⚠️ "
 
-errors = []
-warnings = []
+errors: list[str] = []
+warnings: list[str] = []
 
 
 def section(title: str):
@@ -454,8 +455,8 @@ except Exception as e:
 # ── Summary ────────────────────────────────────────────────────────────────────
 section("SUMMARY")
 print(f"\n  Errors   : {len(errors)}")
-for e in errors:
-    print(f"    {FAIL} {e}")
+for error in errors:
+    print(f"    {FAIL} {error}")
 
 print(f"\n  Warnings : {len(warnings)}")
 for w in warnings:

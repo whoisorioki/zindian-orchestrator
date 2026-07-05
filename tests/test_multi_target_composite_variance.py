@@ -1,6 +1,7 @@
 """Test composite fold variance for multi-target competitions."""
 
 import numpy as np
+from typing import cast
 from zindian.skills.skill_12_metric import run
 
 
@@ -47,14 +48,20 @@ def test_composite_fold_variance_multi_target():
 
     # Verify variance uses ddof=1 (unbiased)
     composite_scores = []
+    reg_branch = cast(dict[str, object], state["branch_test_goals_oof"])
+    cls_branch = cast(dict[str, object], state["branch_test_label_oof"])
+    reg_model = cast(dict[str, object], reg_branch["model_config"])
+    cls_model = cast(dict[str, object], cls_branch["model_config"])
+    reg_scores = cast(list[float], reg_model["fold_scores"])
+    cls_scores = cast(list[float], cls_model["fold_scores"])
     for i in range(5):
         # Regression: normalize by std, convert to 0-1 scale
-        reg_score = state["branch_test_goals_oof"]["model_config"]["fold_scores"][i]
+        reg_score = reg_scores[i]
         normalized = reg_score / 2.5
         reg_val = max(0.0, 1.0 - normalized)
 
         # Classification: use raw score
-        cls_score = state["branch_test_label_oof"]["model_config"]["fold_scores"][i]
+        cls_score = cls_scores[i]
 
         # Weighted composite
         composite = 0.6 * reg_val + 0.4 * cls_score

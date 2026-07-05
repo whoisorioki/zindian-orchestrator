@@ -595,7 +595,7 @@ def _eval_phase3b_generalisation(config: dict, state: dict) -> LensResult:
     pseudo = state.get("pseudo_label_result", {})
     if pseudo.get("retraining_required") is True:
         # Check augmented anchor OOF is present
-        state.get("branch_anchor_oof_augmented") or state.get(
+        _ = state.get("branch_anchor_oof_augmented") or state.get(
             "branch_anchor_oof_augmented_score"
         )
         if not any(k for k in state if k.endswith("_augmented")):

@@ -160,7 +160,7 @@ class TestPluginABCContract:
             def fetch(self, paths, config, allow_network: bool = True):
                 return None
 
-            def extract(self, paths, data_path, config):
+            def extract(self, paths, data_path, config, branch_name: str | None = None):
                 # WRONG: Hardcoded column name
                 group_col = "UniqueID"  # Should be config["group_col"]
                 return None, None

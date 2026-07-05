@@ -29,7 +29,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -415,7 +415,7 @@ def run(
     # -- Write output -----------------------------------------------------------
     out_path = _next_submission_path(paths, suffix=branch_name.replace("/", "-"))
     if not dry_run:
-        _atomic_to_csv(out_df, out_path)
+        _atomic_to_csv(cast(pd.DataFrame, out_df), out_path)
         if state is None:
             store.update(
                 last_inference_path=str(out_path),

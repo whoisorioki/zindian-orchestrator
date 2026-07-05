@@ -35,7 +35,7 @@ class NedbankExtractor(FeatureExtractor):
     """Nedbank-specific feature extractor implementing FeatureExtractor ABC."""
 
     def extract(
-        self, paths: Any, tiff_path: Path, config: Any
+        self, paths: Any, tiff_path: Path, config: Any, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return self.extract_features(paths.data_raw_dir, config)
 

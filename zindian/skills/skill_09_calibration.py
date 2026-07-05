@@ -15,7 +15,7 @@ import json
 from sklearn.preprocessing import LabelEncoder
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import numpy as np
 import pandas as pd
@@ -226,7 +226,7 @@ def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
 
     # Read method from state if not provided
     if method is None:
-        method = state.get("calibration_method", "none")
+        method = state.get("calibration_method") or "none"
 
     raw_config = getattr(config, "_data", {}) or {}
     task_type = str(
@@ -237,7 +237,7 @@ def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
     target_config = config.get("target_config")
     if target_config and len(target_config.get("targets", [])) > 1:
         return _run_multi_target(
-            method, dry_run, paths, config, store, state, target_config
+            cast(str, method), dry_run, paths, config, store, state, target_config
         )
 
     # Skip for regression
@@ -258,7 +258,7 @@ def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
     y_raw = train_raw[target]
     if y_raw.dtype == "object":
         le = LabelEncoder()
-        y = le.fit_transform(y_raw)
+        y = np.asarray(le.fit_transform(y_raw), dtype=int)
     else:
         y = np.asarray(y_raw.values, dtype=int)
 
@@ -451,7 +451,6 @@ def _run_multi_target(
             continue
 
         print(f"\nCalibrating classification target: {target_name}")
-
         if target_name not in train_raw.columns:
             print(f"Warning: {target_name} not in training data, skipping")
             skipped_targets.append(target_name)
@@ -481,7 +480,8 @@ def _run_multi_target(
         y_raw = train_raw[target_name]
         if y_raw.dtype.kind in ("U", "S", "O"):
             le = LabelEncoder()
-            y = le.fit_transform(y_raw.astype(str)).astype(int)
+            y_raw_str = np.asarray(y_raw, dtype=str)
+            y = np.asarray(le.fit_transform(y_raw_str), dtype=int)
         else:
             y = np.asarray(y_raw.values, dtype=int)
 
@@ -496,7 +496,7 @@ def _run_multi_target(
             continue
 
         # Extract probability matrix from OOF file
-        oof_probs_matrix = oof_df[prob_cols].values
+        oof_probs_matrix = np.asarray(oof_df[prob_cols].values, dtype=np.float64)
 
         if len(oof_probs_matrix) != len(y):
             print(f"Warning: OOF length mismatch for {target_name}, skipping")
@@ -576,7 +576,9 @@ def _run_multi_target(
 
         for class_idx in range(len(prob_cols)):
             y_binary = (y == class_idx).astype(int)
-            oof_probs_class = oof_probs_matrix[:, class_idx]
+            oof_probs_class = np.asarray(
+                oof_probs_matrix[:, class_idx], dtype=np.float64
+            )
 
             calibrated_oof_class, global_calibrator = _fit_calibrator_foldwise(
                 method,
@@ -600,7 +602,8 @@ def _run_multi_target(
         test_prob_cols = [
             c
             for c in df_test.columns
-            if c.startswith(f"{target_name}_prob_class_") or c.startswith("prob_class_")
+            if c.startswith(f"{target_name}_prob_class_")
+            or c.startswith("prob_class_")
         ]
         if not test_prob_cols:
             print(
@@ -609,12 +612,14 @@ def _run_multi_target(
             skipped_targets.append(target_name)
             continue
 
-        test_probs_matrix = df_test[test_prob_cols].values
+        test_probs_matrix = np.asarray(df_test[test_prob_cols].values, dtype=np.float64)
         calibrated_test_matrix = np.zeros_like(test_probs_matrix)
 
         for class_idx in range(len(prob_cols)):
             y_binary = (y == class_idx).astype(int)
-            oof_probs_class = oof_probs_matrix[:, class_idx]
+            oof_probs_class = np.asarray(
+                oof_probs_matrix[:, class_idx], dtype=np.float64
+            )
 
             if np.unique(y_binary).size < 2:
                 calibrated_test_matrix[:, class_idx] = test_probs_matrix[:, class_idx]
@@ -623,12 +628,14 @@ def _run_multi_target(
             if method == "platt":
                 calibrator = _fit_platt(oof_probs_class, y_binary)
                 calibrated_test_matrix[:, class_idx] = calibrator.predict_proba(
-                    test_probs_matrix[:, class_idx].reshape(-1, 1)
+                    np.asarray(
+                        test_probs_matrix[:, class_idx], dtype=np.float64
+                    ).reshape(-1, 1)
                 )[:, 1]
             elif method == "isotonic":
                 calibrator = _fit_isotonic(oof_probs_class, y_binary)
                 calibrated_test_matrix[:, class_idx] = calibrator.transform(
-                    test_probs_matrix[:, class_idx]
+                    np.asarray(test_probs_matrix[:, class_idx], dtype=np.float64)
                 )
             else:
                 calibrated_test_matrix[:, class_idx] = test_probs_matrix[:, class_idx]

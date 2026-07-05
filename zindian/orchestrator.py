@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from .paths import resolve_competition_paths
 
@@ -348,13 +348,14 @@ def run_skill(
         result["status"] = "COMPLETED"
 
     # Add telemetry with carbon data
-    result["telemetry"] = {
+    result_dict = cast(dict[str, Any], result)
+    result_dict["telemetry"] = {
         "duration_sec": round(duration_sec, 2),
         "peak_memory_mb": round(peak_memory_mb, 2),
         **carbon_data,
     }
 
-    return result
+    return result_dict
 
 
 def run_phase(

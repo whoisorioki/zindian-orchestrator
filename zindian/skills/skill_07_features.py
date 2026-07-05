@@ -28,7 +28,7 @@ import tempfile
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -344,16 +344,17 @@ def build_hypothesis_features(
                     if train_idx is None:
                         raise ValueError("train_idx must be provided in mode='cv'")
                     tr_idx = np.asarray(train_idx, dtype=int)
-                    tr_vals = train.iloc[tr_idx][col].to_numpy()
-                    tr_targets = np.asarray(target_array)[tr_idx]
+                    tr_vals = np.asarray(train.iloc[tr_idx][col].to_numpy(), dtype=float)
+                    tr_targets = np.asarray(cast(Any, target_array))[tr_idx]
                 else:
-                    tr_vals = train[col].to_numpy()
-                    tr_targets = np.asarray(target_array)
+                    tr_vals = np.asarray(train[col].to_numpy(), dtype=float)
+                    tr_targets = np.asarray(cast(Any, target_array))
 
                 try:
-                    _, bin_edges = pd.qcut(
+                    qcut_result = pd.qcut(
                         tr_vals, q=q_val, retbins=True, duplicates="drop"
                     )
+                    bin_edges = qcut_result[1]
                 except Exception:
                     unique_vals = np.unique(tr_vals)
                     if len(unique_vals) < 2:
@@ -371,7 +372,7 @@ def build_hypothesis_features(
                 tr_bins = pd.cut(
                     pd.Series(tr_vals), bins=bin_edges, include_lowest=True
                 )
-                bin_map = tr_bins.to_frame(name="bin")
+                bin_map = pd.DataFrame({"bin": tr_bins})
                 bin_map["target"] = tr_targets
                 agg = bin_map.groupby("bin").target.mean()
                 global_mean = (
@@ -379,8 +380,9 @@ def build_hypothesis_features(
                 )
 
                 def map_to_mean(series_vals: np.ndarray) -> np.ndarray:
+                    bins = cast(list[float], np.asarray(bin_edges, dtype=float).tolist())
                     cats = pd.cut(
-                        pd.Series(series_vals), bins=bin_edges, include_lowest=True
+                        pd.Series(series_vals), bins=bins, include_lowest=True
                     )
                     out = np.empty(len(series_vals), dtype=float)
                     for i, cat in enumerate(cats):
@@ -468,7 +470,7 @@ def build_hypothesis_features(
     base_cols = list(train_df.columns)
     final_cols = base_cols + [c for c in new_cols if c not in base_cols]
     test_final_cols = [c for c in final_cols if c in test.columns]
-    return train[final_cols], test[test_final_cols]
+    return cast(pd.DataFrame, train[final_cols]), cast(pd.DataFrame, test[test_final_cols])
 
 
 # -- Variant Model Config Helpers ----------------------------------------------
@@ -653,7 +655,10 @@ def _dispatch_variant_training(
 
     # -- Shared LGB path (fastest, uses train_lightgbm_cv) --
     if use_lgb_shared_path and family in ("lgb", "dart") and not ensemble_spec:
-        params = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
+        if train_df is None or test_df is None or feature_cols is None:
+            raise RuntimeError("train/test/feature_cols must be resolved before training")
+        feature_cols = cast(list[str], feature_cols)
+        params: dict[str, Any] = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
         params.update(hyperparams)
         if family == "dart":
             params["boosting_type"] = "dart"
@@ -869,10 +874,11 @@ def train_variant(
     if task_type == "regression":
         y = np.asarray(train[TARGET].values, dtype=np.float64)
     else:
-        _y_raw = train[TARGET].values
+        _y_raw = np.asarray(train[TARGET].values)
         if _y_raw.dtype.kind in ("U", "S", "O"):
             _le = LabelEncoder()
-            y = _le.fit_transform(_y_raw.astype(str)).astype(np.int32)
+            y_encoded = _le.fit_transform(np.asarray(_y_raw, dtype=str))
+            y = np.asarray(y_encoded, dtype=np.int32)
         else:
             y = np.asarray(_y_raw, dtype=np.int32)
     X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
@@ -1186,11 +1192,11 @@ def _run_multi_target_variant(
         else 0
     )
 
-    target_std = (
-        float(raw_train[regression_targets[0]["name"]].std())
-        if regression_targets and regression_targets[0]["name"] in raw_train.columns
-        else 1.0
-    )
+    target_name = regression_targets[0]["name"] if regression_targets else ""
+    if regression_targets and target_name in raw_train.columns:
+        target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
+    else:
+        target_std = 1.0
     normalized_rmse = rmse / target_std if target_std > 0 else rmse
     regression_score = max(0.0, 1.0 - normalized_rmse)
 

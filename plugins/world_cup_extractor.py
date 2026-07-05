@@ -148,9 +148,13 @@ def _map_keys_and_compute_features(
     # Populate team_id
     if team_id_col not in df.columns:
         df[team_id_col] = (
-            df["country"].map(lambda c: country_map.get(c, c)).map(team_name_to_id)
+            df["country"]
+            .map(lambda c: country_map.get(c, c))
+            .map(lambda c: team_name_to_id.get(c))
         )
-        df[team_id_col] = df[team_id_col].fillna(df["country"].map(new_team_ids))
+        df[team_id_col] = df[team_id_col].fillna(
+            df["country"].map(lambda c: new_team_ids.get(c))
+        )
 
     # Populate year
     if "year" not in df.columns:
@@ -164,10 +168,12 @@ def _map_keys_and_compute_features(
     # Populate confederation_name
     if "confederation_name" not in df.columns:
         df["confederation_name"] = (
-            df["country"].map(lambda c: country_map.get(c, c)).map(team_name_to_conf)
+            df["country"]
+            .map(lambda c: country_map.get(c, c))
+            .map(lambda c: team_name_to_conf.get(c))
         )
         df["confederation_name"] = df["confederation_name"].fillna(
-            df["country"].map(new_team_confs)
+            df["country"].map(lambda c: new_team_confs.get(c))
         )
 
     # Helper to parse matches year
@@ -270,9 +276,7 @@ def _enrich(
 
     # Merge teams
     if "teams" in auxiliary_data and team_id_col in df.columns:
-        teams = auxiliary_data["teams"][
-            [team_id_col, "confederation_id"]
-        ].drop_duplicates(subset=[team_id_col], keep="first")
+        teams = auxiliary_data["teams"][[team_id_col, "confederation_id"]].drop_duplicates()
         df = df.merge(teams, on=team_id_col, how="left", suffixes=("", "_aux"))
 
         # Fill new team confederation_id
@@ -283,14 +287,14 @@ def _enrich(
             "T-92": "CONCACAF",
         }
         df["confederation_id"] = df["confederation_id"].fillna(
-            df[team_id_col].map(new_team_conf_ids)
+            df[team_id_col].map(lambda c: new_team_conf_ids.get(c))
         )
 
     # Merge confederations
     if "confederations" in auxiliary_data and "confederation_id" in df.columns:
         confed = auxiliary_data["confederations"][
             ["confederation_id", "confederation_name"]
-        ].drop_duplicates(subset=["confederation_id"], keep="first")
+        ].drop_duplicates()
         df = df.merge(confed, on="confederation_id", how="left", suffixes=("", "_aux"))
 
         # Fill new team confederation_name
@@ -300,7 +304,7 @@ def _enrich(
             "CONCACAF": "Confederation of North, Central American and Caribbean Association Football",
         }
         df["confederation_name_aux"] = df["confederation_name_aux"].fillna(
-            df["confederation_id"].map(new_conf_names)
+            df["confederation_id"].map(lambda c: new_conf_names.get(c))
         )
 
     return df

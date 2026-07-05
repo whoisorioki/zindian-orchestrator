@@ -25,7 +25,7 @@ Writes:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -68,7 +68,7 @@ def _impute_mcar(
             # Use fold-restricted median from training data
             # (here we compute from full df as proxy; the orchestrator
             #  should restrict to training fold before calling this)
-            value = float(df[col].median())
+            value = float(cast(Any, df[col].median()))
             df[col] = df[col].fillna(value)
         else:
             value = df[col].mode().iloc[0] if not df[col].mode().empty else None

@@ -43,10 +43,7 @@ print("=" * 80)
 try:
     from zindian.skills.skill_01_integrity import run as skill_01_run
 
-    result = skill_01_run(
-        data_path="data/raw/train.csv",
-        target_col="bank_account",
-    )
+    result = skill_01_run()
 
     print(f"\nStatus: {result['status']}")
     if result["status"] == "GO":
@@ -70,9 +67,7 @@ print("=" * 80)
 try:
     from zindian.skills.skill_02_intake import run as skill_02_run
 
-    result = skill_02_run(
-        zindi_challenge_data=MOCK_ZINDI_CHALLENGE_DATA,
-    )
+    result = skill_02_run(slug=str(MOCK_ZINDI_CHALLENGE_DATA["slug"]))
 
     print(f"\nStatus: {result['status']}")
     if result["status"] == "GO":

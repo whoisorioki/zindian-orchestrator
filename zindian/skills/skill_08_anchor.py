@@ -172,7 +172,8 @@ def compute_oof_predictions(
         _y_raw_08 = train[target_col].values
         if _y_raw_08.dtype.kind in ("U", "S", "O"):
             _le_08 = LabelEncoder()
-            y = _le_08.fit_transform(_y_raw_08.astype(str)).astype(np.int32)
+            _y_raw_08_str = np.asarray(_y_raw_08, dtype=str)
+            y = np.asarray(_le_08.fit_transform(_y_raw_08_str), dtype=np.int32)
         else:
             y = np.asarray(_y_raw_08, dtype=np.int32)
     groups = None
@@ -381,7 +382,7 @@ def run(
                 feature_cols,
                 cv_strategy_id,
                 feature_count,
-            ) = result[:10]
+            ) = cast(tuple[Any, ...], result)[:10]
             fold_scores_list = [0.0] * n_splits
     except (TypeError, ValueError):
         # Backward compatibility for monkeypatched tests expecting the old
@@ -863,7 +864,7 @@ def _run_multi_target(
             target_name = t["name"]
             weight = t.get("weight", 0.5)
             rmse = float(all_metrics[target_name]["oof_rmse"])
-            target_std = float(raw_train[target_name].std())
+            target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
             normalized_rmse = rmse / target_std if target_std > 0 else rmse
             regression_score = max(0.0, 1.0 - normalized_rmse)
             weighted_scores.append(regression_score * weight)
@@ -897,7 +898,7 @@ def _run_multi_target(
             rmse = float(
                 all_metrics[target_name]["oof_rmse"]
             )  # Now using correct key name
-            target_std = float(raw_train[target_name].std())
+            target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
             normalized_rmse = rmse / target_std if target_std > 0 else rmse
             regression_score = max(0.0, 1.0 - normalized_rmse)
             regression_scores.append(regression_score)
@@ -919,7 +920,7 @@ def _run_multi_target(
     with Ledger() as ledger:
         exp_id = ledger.log_experiment(
             branch_name="anchor-baseline",
-            oof_score=avg_score,
+            oof_score=float(avg_score),
             metric="composite_avg",
             feature_count=feature_count,
             calibration_method="none",

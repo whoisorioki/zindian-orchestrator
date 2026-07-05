@@ -61,12 +61,13 @@ for comp in (ROOT / "competitions").iterdir():
             "anchor_cv_strategy_id"
         )
         # rows
+        rows: Optional[int]
         try:
             import pandas as pd
 
             rows = int(pd.read_csv(f).shape[0])
         except Exception:
-            rows: Optional[int] = None
+            rows = None
         payload = {
             "file": str(f.name),
             "generated_by": "unknown",
