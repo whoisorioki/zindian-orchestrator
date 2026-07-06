@@ -9,7 +9,6 @@ from typing import (
     Tuple,
     Protocol,
     runtime_checkable,
-    cast,
 )
 
 import numpy as np
@@ -225,15 +224,43 @@ def train_lightgbm_cv(
     # - an sklearn splitter object (with .split)
     # - an iterable of (train_idx, val_idx) tuples
     # Otherwise fall back to the canonical CV splitter from `zindian.cv`.
-    if cv is None:
-        # Obtain an iterator of (train_idx, val_idx) from the central CV helpers
-        split_iter = get_cv_splits(X, y, random_seed=random_seed)
-    else:
-        # If `cv` implements `split`, call it; otherwise assume it's an iterable of index pairs.
-        if hasattr(cv, "split"):
-            split_iter = cast(Splitter, cv).split(X, y)
+    try:
+        from zindian.config import ChallengeConfig, resolve_competition_paths
+
+        _cfg_obj = ChallengeConfig.load()
+        _paths_obj = resolve_competition_paths(_cfg_obj.slug)
+        _raw_train_file = (_cfg_obj.get("input_files") or {}).get("train", "Train.csv")
+        n_labelled = len(pd.read_csv(_paths_obj.data_raw_dir / _raw_train_file))
+    except Exception:
+        n_labelled = len(train)
+
+    split_iter: Any
+
+    if len(train) > n_labelled:
+        X_lab = X[:n_labelled]
+        y_lab = y[:n_labelled]
+        raw_splits: Any
+        if cv is None:
+            raw_splits = get_cv_splits(X_lab, y_lab, random_seed=random_seed)
         else:
-            split_iter = cast(Iterable[tuple[np.ndarray, np.ndarray]], cv)
+            if hasattr(cv, "split"):
+                raw_splits = getattr(cv, "split")(X_lab, y_lab)
+            else:
+                raw_splits = cv
+
+        split_iter = []
+        pseudo_indices = np.arange(n_labelled, len(train))
+        for tr_idx, val_idx in raw_splits:
+            tr_idx_augmented = np.concatenate([tr_idx, pseudo_indices])
+            split_iter.append((tr_idx_augmented, val_idx))
+    else:
+        if cv is None:
+            split_iter = get_cv_splits(X, y, random_seed=random_seed)
+        else:
+            if hasattr(cv, "split"):
+                split_iter = getattr(cv, "split")(X, y)
+            else:
+                split_iter = cv
 
     # Resolve target_domain_bounds for RMSE/MAE domain clipping
     domain_bounds = None

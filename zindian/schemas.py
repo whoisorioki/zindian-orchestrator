@@ -113,9 +113,6 @@ def skill_state_skeleton() -> Dict[str, Any]:
         "competition": None,
         "md5_target_hash": None,
         "anchor_oof_score": None,
-        "anchor_oof_f1": None,
-        # Legacy compatibility field; downstream logic should prefer anchor_oof_f1.
-        "anchor_oof_rmse": None,
         "anchor_lb_score": None,
         "submissions_used_today": 0,
         "submissions_used_total": 0,

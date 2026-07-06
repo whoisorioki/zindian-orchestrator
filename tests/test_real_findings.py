@@ -165,9 +165,9 @@ def test_skill12_composite_variance():
     }
 
     # Composite calculation hand-math check for fold 0:
-    # f1 = 0.8
-    # rmse = 2.0 -> normalized = 2.0 / 4.0 = 0.5 -> regression_score = 1.0 - 0.5 = 0.5
-    # composite_score_0 = (0.8 * 0.4 + 0.5 * 0.6) / 1.0 = 0.62
+    # f1 = 0.8 -> distance = 1.0 - 0.8 = 0.2
+    # rmse = 2.0 -> distance = 2.0 / 4.0 = 0.5
+    # composite_score_0 = (0.2 * 0.4 + 0.5 * 0.6) / 1.0 = 0.38
 
     res = run_skill_12(config=config, state=state)
     assert "metric_analysis" in res
@@ -175,7 +175,7 @@ def test_skill12_composite_variance():
 
     assert "fold_scores" in analysis
     assert len(analysis["fold_scores"]) == 5
-    assert abs(analysis["fold_scores"][0] - 0.62) < 1e-9
+    assert abs(analysis["fold_scores"][0] - 0.38) < 1e-9
     assert "fold_score_variance" in analysis
     assert analysis["fold_score_variance"] > 0
 
@@ -195,7 +195,6 @@ def test_skill21_recombination_and_multi_target_retraining(monkeypatch):
     }
 
     class DummyConfig:
-
         def __init__(self, data):
             self._data = data
 

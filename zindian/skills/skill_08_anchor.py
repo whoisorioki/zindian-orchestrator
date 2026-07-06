@@ -792,9 +792,10 @@ def _run_multi_target(
                 _y_true = oof_df[f"{target_name}_true"].values
 
                 # Use the same encoding as training (pd.factorize) for reproducibility
-                _codes, _uniques = pd.factorize(_y_true)
-                _macro_f1 = float(_f1(_codes, _y_pred, average="macro"))
-                _weighted_f1 = float(_f1(_codes, _y_pred, average="weighted"))
+                _codes_raw, _uniques = pd.factorize(_y_true)
+                _codes_arr = np.asarray(_codes_raw, dtype=np.int32)
+                _macro_f1 = float(_f1(_codes_arr, _y_pred, average="macro"))
+                _weighted_f1 = float(_f1(_codes_arr, _y_pred, average="weighted"))
 
                 print(f"\n[HONEST MACRO F1] {target_name}:")
                 print(f"  Classes: {len(_uniques)} ({list(_uniques)})")
@@ -842,71 +843,51 @@ def _run_multi_target(
     # test_probs_anchor-baseline_<target>.csv from data/processed/ and produces
     # the final submission CSV with competition-specific column formatting.
 
-    # Compute weighted composite score per SoT v2.2.1 A11
-    # For mixed-task competitions: 0.6 × classification_f1 + 0.4 × normalized_regression
-    classification_targets = [t for t in targets if t["task_type"] == "classification"]
-    regression_targets = [t for t in targets if t["task_type"] == "regression"]
+    # Compute weighted composite distance score (lower is better) per SoT v2.2.1 A11
+    # distance = 1.0 - f1 for classification; rmse / target_std for regression
+    weighted_distances = []
+    class_details = []
+    reg_details = []
 
-    if classification_targets and regression_targets:
-        # Mixed-task: use weighted composite
-        weighted_scores = []
-        class_details = []
-        reg_details = []
+    for t in targets:
+        target_name = t["name"]
+        task_type = t["task_type"]
+        weight = t.get("weight", 0.5)
 
-        for t in classification_targets:
-            target_name = t["name"]
-            weight = t.get("weight", 0.5)
+        if task_type == "classification":
             f1 = all_metrics[target_name]["oof_f1"]
-            weighted_scores.append(f1 * weight)
-            class_details.append((target_name, f1, weight))
-
-        for t in regression_targets:
-            target_name = t["name"]
-            weight = t.get("weight", 0.5)
+            distance = 1.0 - f1
+            weighted_distances.append(distance * weight)
+            class_details.append((target_name, distance, f1, weight))
+        elif task_type == "regression":
             rmse = float(all_metrics[target_name]["oof_rmse"])
-            target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
-            normalized_rmse = rmse / target_std if target_std > 0 else rmse
-            regression_score = max(0.0, 1.0 - normalized_rmse)
-            weighted_scores.append(regression_score * weight)
-            reg_details.append((target_name, regression_score, weight))
+            # Get target std from eda block, falling back to raw train standard deviation
+            eda_block = state.get("eda", {}) if state else {}
+            target_std = float(
+                eda_block.get(f"{target_name}_std", eda_block.get("target_std", 0.0))
+                or np.asarray(raw_train[target_name], dtype=float).std()
+            )
+            distance = rmse / target_std if target_std > 0 else rmse
+            weighted_distances.append(distance * weight)
+            reg_details.append((target_name, distance, rmse, target_std, weight))
 
-        total_weight = sum(t.get("weight", 0.5) for t in targets)
-        avg_score = (
-            sum(weighted_scores) / total_weight
-            if total_weight > 0
-            else sum(weighted_scores)
+    total_weight = sum(t.get("weight", 0.5) for t in targets)
+    avg_score = (
+        sum(weighted_distances) / total_weight
+        if total_weight > 0
+        else sum(weighted_distances)
+    )
+
+    print("\n[STATS] Weighted Composite Distance Calculation:")
+    for name, dist, f1, w in class_details:
+        print(
+            f"  Classification distance ({name}): {dist:.6f} (raw F1: {f1:.6f}, weight: {w})"
         )
-
-        print("\n[STATS] Weighted Composite Score Calculation:")
-        for name, f1, w in class_details:
-            print(f"  Classification F1 ({name}): {f1:.6f} (weight: {w})")
-        for name, score, w in reg_details:
-            print(f"  Regression score ({name}):  {score:.6f} (weight: {w})")
-        print(f"  Composite:         {avg_score:.6f}")
-    elif classification_targets:
-        # Classification-only: use average F1
-        classification_f1s = [
-            float(all_metrics[t["name"]]["oof_f1"]) for t in classification_targets
-        ]
-        avg_score = np.mean(classification_f1s)
-        print(f"\n[STATS] Classification-only composite: {avg_score:.6f}")
-    elif regression_targets:
-        # Regression-only: use average normalized RMSE score
-        regression_scores = []
-        for t in regression_targets:
-            target_name = t["name"]
-            rmse = float(
-                all_metrics[target_name]["oof_rmse"]
-            )  # Now using correct key name
-            target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
-            normalized_rmse = rmse / target_std if target_std > 0 else rmse
-            regression_score = max(0.0, 1.0 - normalized_rmse)
-            regression_scores.append(regression_score)
-        avg_score = np.mean(regression_scores)
-        print(f"\n[STATS] Regression-only composite: {avg_score:.6f}")
-    else:
-        # Fallback (should never happen)
-        avg_score = 0.0
+    for name, dist, rmse, std, w in reg_details:
+        print(
+            f"  Regression distance ({name}):     {dist:.6f} (raw RMSE: {rmse:.6f}, std: {std:.6f}, weight: {w})"
+        )
+    print(f"  Composite Distance: {avg_score:.6f} (LOWER IS BETTER)")
 
     # Compute MD5 hash of all target columns
     import hashlib
@@ -935,7 +916,7 @@ def _run_multi_target(
     from zindian.config import get_seed
 
     seed = int(random_seed if random_seed is not None else get_seed())
-    cv_strategy_id = state.get("anchor_cv_strategy_id", "stratified_5fold")
+    cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
 
     retraining_active = bool(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
@@ -959,28 +940,10 @@ def _run_multi_target(
             },
         )
 
-    # Resolve first classification and regression targets dynamically from config
-    first_classification_target = next(
-        (t["name"] for t in targets if t.get("task_type") == "classification"), None
-    )
-    first_regression_target = next(
-        (t["name"] for t in targets if t.get("task_type") == "regression"), None
-    )
-
     state_store.update(
         competition=config.slug,
         md5_target_hash=md5_target_hash,
         anchor_oof_score=avg_score,
-        anchor_oof_f1=(
-            all_metrics.get(first_classification_target, {}).get("oof_f1", 0.0)
-            if first_classification_target
-            else 0.0
-        ),
-        anchor_oof_rmse=(
-            all_metrics.get(first_regression_target, {}).get("oof_rmse", 0.0)
-            if first_regression_target
-            else 0.0
-        ),
         anchor_multi_target_metrics=all_metrics,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),

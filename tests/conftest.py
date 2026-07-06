@@ -1,8 +1,28 @@
 import os
+import warnings
 from pathlib import Path
 import pytest
 import zindian.paths
 from zindian.paths import CompetitionPaths
+
+# Suppress known third-party noise that does not indicate test failures:
+# 1. sklearn/LightGBM feature-name mismatch during eval-with-numpy-array
+# 2. SHAP TreeExplainer list-of-ndarray behavior change for binary classifiers
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names, but LGBMClassifier was fitted with feature names",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names, but LGBMRegressor was fitted with feature names",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message="LightGBM binary classifier with TreeExplainer shap values output has changed to a list of ndarray",
+    category=UserWarning,
+)
 
 
 def pytest_sessionstart(session):

@@ -199,9 +199,9 @@ def extract(paths, tiff_path: Path, config: ChallengeConfig):
         if nan_mask.sum() > 0:
             for i in np.where(nan_mask)[0]:
                 lon, lat = coords[i]
-                r, c = rowcol(src.transform, lon, lat)
-                r = int(max(0, min(src.height - 1, r)))
-                c = int(max(0, min(src.width - 1, c)))
+                r_orig, c_orig = rowcol(src.transform, lon, lat)
+                r = int(max(0, min(src.height - 1, int(r_orig))))
+                c = int(max(0, min(src.width - 1, int(c_orig))))
                 values[i] = spiral_search(data, r, c)
         return pd.concat(
             [df.reset_index(drop=True), pd.DataFrame(values, columns=band_names)],

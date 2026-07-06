@@ -418,35 +418,31 @@ def _run_multi_target_gate(config, store, state) -> dict:
         }
 
     # Compute proper composite score using config weights
-    classification_targets = [t for t in targets if t["task_type"] == "classification"]
-    regression_targets = [t for t in targets if t["task_type"] == "regression"]
+    weighted_distances = []
 
-    weighted_scores = []
-
-    for t in classification_targets:
+    for t in targets:
         target_name = t["name"]
+        task_type = t["task_type"]
         weight = t.get("weight", 0.5)
-        f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
-        weighted_scores.append(f1 * weight)
 
-    for t in regression_targets:
-        target_name = t["name"]
-        weight = t.get("weight", 0.5)
-        rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)
-        # Normalize by target std from eda block
-        eda_std = float(state.get("eda", {}).get(f"{target_name}_std", 0.0))
-        if eda_std <= 0.0:
-            # Fallback standard deviation
-            eda_std = float(state.get("eda", {}).get("total_goals_std", 1.0))
-        normalized_rmse = rmse / eda_std if eda_std > 0 else rmse
-        regression_score = max(0.0, 1.0 - normalized_rmse)
-        weighted_scores.append(regression_score * weight)
+        if task_type == "classification":
+            f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
+            distance = 1.0 - f1
+        else:
+            rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)
+            # Normalize by target std from eda block
+            eda_std = float(state.get("eda", {}).get(f"{target_name}_std", 0.0))
+            if eda_std <= 0.0:
+                # Fallback standard deviation
+                eda_std = float(state.get("eda", {}).get("target_std", 1.0))
+            distance = rmse / eda_std if eda_std > 0 else rmse
+        weighted_distances.append(distance * weight)
 
     total_weight = sum(t.get("weight", 0.5) for t in targets)
     avg_score = (
-        sum(weighted_scores) / total_weight
+        sum(weighted_distances) / total_weight
         if total_weight > 0
-        else sum(weighted_scores)
+        else sum(weighted_distances)
     )
 
     round_num = int(state.get("feature_round") or 1)

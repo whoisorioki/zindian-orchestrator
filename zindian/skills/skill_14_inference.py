@@ -133,48 +133,6 @@ def _enforce_regression_bounds(
     return clipped
 
 
-def _enforce_submission_values(
-    df: pd.DataFrame,
-    target_column: str,
-    task_type: str,
-    use_probabilities: bool,
-    target_domain_bounds: dict[str, Any],
-    submission_log1p: bool = False,
-) -> pd.DataFrame:
-    """Apply task-aware validation and clipping to the prediction column."""
-    if target_column not in df.columns:
-        raise ValueError(
-            f"Submission is missing the target column '{target_column}'. "
-            f"Found columns: {list(df.columns)}"
-        )
-    values = df[target_column].to_numpy()
-    if not np.issubdtype(values.dtype, np.number):
-        try:
-            values = values.astype(np.float64)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Submission target column '{target_column}' is not numeric: {exc}"
-            ) from exc
-
-    if task_type == "classification":
-        if use_probabilities:
-            values = _enforce_probability_interval(values.astype(np.float64))
-        else:
-            values = _enforce_binary(values.astype(np.float64))
-    elif task_type == "regression":
-        values = _enforce_regression_bounds(
-            values.astype(np.float64), target_domain_bounds, submission_log1p
-        )
-    else:
-        raise ValueError(
-            f"Unsupported task_type '{task_type}'. Expected 'classification' or 'regression'."
-        )
-
-    df = df.copy()
-    df[target_column] = values
-    return df
-
-
 def _atomic_to_csv(df: pd.DataFrame, out_path: Path) -> None:
     """Write a CSV atomically using a tempfile + os.replace."""
     out_path.parent.mkdir(parents=True, exist_ok=True)

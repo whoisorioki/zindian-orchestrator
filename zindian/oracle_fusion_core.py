@@ -387,18 +387,26 @@ def _run_multi_target_fusion(
     if raw_train_path.exists():
         raw_train = pd.read_csv(raw_train_path)
         # Merge by index since features_train is label-encoded
+        _targets_to_merge = []
         for target_spec in targets:
             target_name = target_spec["name"]
-            if target_name in raw_train.columns and target_name not in train.columns:
-                target_values = raw_train[target_name].values
-                # Encode categorical targets using pd.factorize
-                # to match the encoding used by skill_07 and skill_08 multi-target paths.
-                if (
-                    target_spec["task_type"] == "classification"
-                    and target_values.dtype == object
-                ):
-                    target_values = pd.factorize(target_values)[0]
-                train[target_name] = target_values
+            if target_name not in raw_train.columns or target_name in train.columns:
+                continue
+            target_values = raw_train[target_name].values
+            # Encode categorical targets using pd.factorize
+            # to match the encoding used by skill_07 and skill_08 multi-target paths.
+            if (
+                target_spec["task_type"] == "classification"
+                and target_values.dtype == object
+            ):
+                target_values = pd.factorize(target_values)[0]
+            _targets_to_merge.append(target_name)
+            raw_train[target_name] = target_values
+        if _targets_to_merge:
+            train = pd.concat(
+                [train, raw_train[_targets_to_merge].reset_index(drop=True)],
+                axis=1,
+            )
 
     fusion_results = {}
     submission_columns = {}
@@ -517,7 +525,9 @@ def _run_single_target_fusion(
         target_values = train[target_col].values
         if target_values.dtype.kind in ("U", "S", "O"):
             # Encode string labels with pd.factorize to match training pipeline
-            y_true = pd.factorize(target_values)[0].astype(np.int32)
+            # pd.factorize returns np.ndarray at runtime; cast for type-checker compatibility
+            _codes_raw = np.asarray(pd.factorize(target_values)[0], dtype=np.int32)
+            y_true = _codes_raw
         else:
             y_true = np.asarray(target_values, dtype=np.int32)
     else:
@@ -589,22 +599,28 @@ def _run_single_target_fusion(
         use_probabilities=use_probabilities,
     )
 
-    anchor_metric_key = (
-        "anchor_oof_f1"
-        if metric_name.lower() in ("f1", "f1_score")
-        else (
-            "anchor_oof_auc"
-            if metric_name.lower() in ("auc", "roc_auc", "roc_auc_score")
-            else "anchor_oof_rmse"
-        )
-    )
-    if retraining_active:
-        augmented_key = f"{anchor_metric_key}_augmented"
-        anchor_score = float(
-            state_obj.get(augmented_key, state_obj.get(anchor_metric_key) or 0.0) or 0.0
-        )
+    if target_name:
+        # Multi-target path: resolve target-specific anchor score from the metrics dict
+        multi_metrics = state_obj.get("anchor_multi_target_metrics", {})
+        target_metrics = multi_metrics.get(target_name, {})
+        if task_type == "regression":
+            metric_key = "oof_rmse"
+        else:
+            metric_key = (
+                "oof_f1" if metric_name.lower() in ("f1", "f1_score") else "oof_auc"
+            )
+        anchor_score = float(target_metrics.get(metric_key) or 0.0)
     else:
-        anchor_score = float(state_obj.get(anchor_metric_key) or 0.0)
+        if retraining_active:
+            anchor_score = float(
+                state_obj.get(
+                    "anchor_oof_score_augmented",
+                    state_obj.get("anchor_oof_score") or 0.0,
+                )
+                or 0.0
+            )
+        else:
+            anchor_score = float(state_obj.get("anchor_oof_score") or 0.0)
 
     print(f"\nBlend OOF metric ({metric_name}): {blend_score:.6f}")
     if blend_threshold is not None:

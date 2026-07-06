@@ -334,10 +334,18 @@ def _eval_phase2b_general(config: dict, state: dict) -> LensResult:
     )
     if anchor_key:
         oof_entry = state.get(anchor_key, {})
-        if not oof_entry.get("cv_strategy_id"):
+        cv_id = oof_entry.get("cv_strategy_id")
+        if not cv_id:
             findings.append(
                 f"anchor OOF entry '{anchor_key}' is missing cv_strategy_id tag"
             )
+        else:
+            active_cv_id = _resolve_active_cv_id_for_check(state, config)
+            if cv_id != active_cv_id:
+                findings.append(
+                    f"anchor OOF entry '{anchor_key}' cv_strategy_id '{cv_id}' "
+                    f"does not match active CV strategy '{active_cv_id}'"
+                )
     else:
         findings.append(
             "no branch_anchor_oof entry found in state to verify cv_strategy_id tag"

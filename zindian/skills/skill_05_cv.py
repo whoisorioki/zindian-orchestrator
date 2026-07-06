@@ -25,7 +25,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.model_selection import GroupKFold, StratifiedKFold
+from sklearn.model_selection import GroupKFold
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.paths import resolve_competition_paths
@@ -63,16 +63,6 @@ def _build_sphere_projection(coords: np.ndarray) -> np.ndarray:
     y = np.cos(lat) * np.sin(lon)
     z = np.sin(lat)
     return np.column_stack([x, y, z]).astype(np.float64)
-
-
-def build_stratified_splits(
-    X: np.ndarray,
-    y: np.ndarray,
-    n_splits: int = N_SPLITS,
-) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Strategy: StratifiedKFold for class imbalance stability."""
-    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=get_seed())
-    return list(splitter.split(X, y))
 
 
 def build_spatial_splits(

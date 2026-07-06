@@ -234,14 +234,19 @@ def run():
                 _single = cfg_tmp.get("target_col")
                 if _single:
                     _targets_to_attach = [_single]
-            for _t in _targets_to_attach:
-                if _t in raw_df.columns and _t not in df.columns:
-                    if len(raw_df) == len(df):
-                        df[_t] = raw_df[_t].values
-                    else:
-                        # Row counts differ — cannot align; fall back to raw
-                        df = raw_df
-                        break
+            _cols_to_attach = [
+                _t
+                for _t in _targets_to_attach
+                if _t in raw_df.columns and _t not in df.columns
+            ]
+            if _cols_to_attach and len(raw_df) == len(df):
+                df = pd.concat(
+                    [df, raw_df[_cols_to_attach].reset_index(drop=True)],
+                    axis=1,
+                )
+            elif _cols_to_attach:
+                # Row counts differ — cannot align; fall back to raw
+                df = raw_df
     else:
         if not raw_train.exists():
             raise FileNotFoundError(

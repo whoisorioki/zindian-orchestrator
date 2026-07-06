@@ -1093,13 +1093,14 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
         if retraining_required:
             # Copy baseline OOF for regression/unaugmented targets to augmented keys
             state = store.read()
+            branch_name = state.get("anchor_git_branch") or "anchor-baseline"
             for t in targets:
                 t_name = t["name"]
                 if t_name not in augmented_results or not augmented_results[t_name].get(
                     "augmented"
                 ):
-                    original_key = f"branch_anchor-baseline_{t_name}_oof"
-                    augmented_key = f"branch_anchor-baseline_{t_name}_augmented_oof"
+                    original_key = f"branch_{branch_name}_{t_name}_oof"
+                    augmented_key = f"branch_{branch_name}_{t_name}_augmented_oof"
                     if original_key in state:
                         store.update(**{augmented_key: state.get(original_key)})
                         print(

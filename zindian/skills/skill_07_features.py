@@ -24,7 +24,6 @@ import tabula.skill_state_autopatch  # noqa
 
 import json
 import os
-import tempfile
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,13 +54,6 @@ NO_NETWORK = bool(os.environ.get("ZINDIAN_DISABLE_NETWORK", False))
 
 
 # -- State helpers -------------------------------------------------------------
-
-
-def _write_state(state: dict, path: Path) -> None:
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
-        json.dump(state, tmp, indent=2)
-        tmp_path = tmp.name
-    os.replace(tmp_path, path)
 
 
 # -- Default feature engineering config (empty — all values come from config) --
@@ -665,7 +657,6 @@ def _dispatch_variant_training(
             raise RuntimeError(
                 "train/test/feature_cols must be resolved before training"
             )
-        feature_cols = cast(list[str], feature_cols)
         params: dict[str, Any] = {"learning_rate": 0.05, "num_leaves": 31, "seed": seed}
         params.update(hyperparams)
         if family == "dart":
@@ -1180,7 +1171,7 @@ def _run_multi_target_variant(
             store,
             branch_name=f"{variant_name}_{target_name}{branch_suffix}",
             scores=oof_1d.tolist(),
-            cv_strategy_id=state.get("anchor_cv_strategy_id", "stratified_5fold"),
+            cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=42,
             model_config={"target_name": target_name, "variant": variant_name},
         )

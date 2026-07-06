@@ -591,7 +591,6 @@ def run_phase(
             state,
             [
                 "anchor_oof_score",
-                "anchor_oof_f1",
                 "best_variant_features",
                 "submissions_used_total",
                 "cv_strategy_type",

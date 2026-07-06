@@ -382,7 +382,7 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
     if config:
         scraped.setdefault("competition_intel", {})
         competition_intel = scraped.setdefault("competition_intel", {})
-        for key, default_value in (
+        items: list[tuple[str, Any]] = [
             ("metric", None),
             ("use_probabilities", False),
             ("external_banned", False),
@@ -397,7 +397,8 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
             ("prizes", {}),
             ("deadline", None),
             ("external_sources_on_data_page", []),
-        ):
+        ]
+        for key, default_value in items:
             scraped.setdefault(key, default_value)
         if config.get("metric"):
             scraped["metric"] = config.get("metric")
@@ -942,7 +943,12 @@ def update_state(
         # Get anchor OOF score from generic key (fallback to metric-specific keys)
         oof_score = state.get("anchor_oof_score")
         if oof_score is None:
+            # Deprecated fallback
             oof_score = state.get("anchor_oof_f1") or state.get("anchor_oof_rmse")
+            if oof_score is not None:
+                print(
+                    "  [WARN] [skill_00] Stale fallback used: legacy anchor keys are deprecated. Transition to anchor_oof_score."
+                )
 
         lb_score = sub_intel.get("best_score")
 

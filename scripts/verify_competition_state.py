@@ -24,11 +24,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 reconfigure = getattr(sys.stdout, "reconfigure", None)
 if callable(reconfigure):
     reconfigure(encoding="utf-8")
-
-import pandas as pd
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -139,10 +139,7 @@ else:
 
     dag_phase = state.get("dag_phase")
     branch = state.get("current_git_branch")
-    anchor_score = state.get("anchor_oof_score")
-    anchor_rmse = state.get("anchor_oof_rmse")
-    anchor_auc = state.get("anchor_oof_auc")
-    anchor_f1 = state.get("anchor_oof_f1")
+    anchor_oof_score = state.get("anchor_oof_score")
     anchor_lb = state.get("anchor_lb_score")
     subs_today = state.get("submissions_used_today")
     subs_total = state.get("submissions_used_total")
@@ -152,25 +149,15 @@ else:
 
     print(f"\n  dag_phase            : {dag_phase}")
     print(f"  current_git_branch   : {branch}")
-    print(f"  anchor_oof_score     : {anchor_score}")
-    print(f"  anchor_oof_rmse      : {anchor_rmse}")
-    print(f"  anchor_oof_auc       : {anchor_auc}")
-    print(f"  anchor_oof_f1        : {anchor_f1}")
+    print(f"  anchor_oof_score     : {anchor_oof_score}")
     print(f"  anchor_lb_score      : {anchor_lb}")
     print(f"  submissions_today    : {subs_today}")
     print(f"  submissions_total    : {subs_total}")
     print(f"  remaining            : {remaining}")
     print(f"  selected_submissions : {selected}")
 
-    effective_anchor = (
-        anchor_score
-        if anchor_score is not None
-        else (anchor_rmse if anchor_rmse is not None else anchor_f1)
-    )
-    if effective_anchor is None:
-        warn(
-            "anchor_oof_score (or legacy baseline keys) is null — Phase 2 not completed in state"
-        )
+    if anchor_oof_score is None:
+        warn("anchor_oof_score is null — Phase 2 not completed in state")
     if anchor_lb is None:
         warn("anchor_lb_score is null — update after Zindi scores submission")
     if not selected:

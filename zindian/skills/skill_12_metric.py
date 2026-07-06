@@ -97,14 +97,11 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                         )
                         if eda_std <= 0.0:
                             eda_std = float(
-                                state.get("eda", {}).get("total_goals_std", 1.0) or 1.0
+                                state.get("eda", {}).get("target_std", 1.0) or 1.0
                             )
-                        normalized_rmse = (
-                            raw_score / eda_std if eda_std > 0 else raw_score
-                        )
-                        score_val = max(0.0, 1.0 - normalized_rmse)
+                        score_val = raw_score / eda_std if eda_std > 0 else raw_score
                     else:
-                        score_val = raw_score
+                        score_val = 1.0 - raw_score
 
                     weighted_sum += score_val * weight
                     total_weight += weight

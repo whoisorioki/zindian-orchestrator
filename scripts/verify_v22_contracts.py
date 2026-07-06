@@ -122,5 +122,5 @@ if failures:
     print("Failures:")
     for failure in failures:
         print(f"  - {failure}")
-print(f'\nOverall: {"ALL PASS ✅" if all_pass else "SOME FAILED ❌"}')
+print(f"\nOverall: {'ALL PASS ✅' if all_pass else 'SOME FAILED ❌'}")
 sys.exit(0 if all_pass else 1)

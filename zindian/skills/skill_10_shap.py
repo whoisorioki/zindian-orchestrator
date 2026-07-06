@@ -550,10 +550,12 @@ def run(n_splits: int = 5, seed: int | None = None) -> dict:
         else:
             pruning_delta = float(pruned_cv.oof_rmse - full_cv.oof_rmse)
         target_std = float(state.get("eda", {}).get("target_std", 1.0))
-        pruning_pass = pruning_delta >= -0.01 * target_std
+        pruning_threshold = float(config.get("pruning_delta_min_improvement") or -0.01)
+        pruning_pass = pruning_delta >= pruning_threshold * target_std
     else:
         pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
-        pruning_pass = pruning_delta >= 0.005
+        pruning_threshold = float(config.get("pruning_delta_min_improvement") or 0.005)
+        pruning_pass = pruning_delta >= pruning_threshold
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -763,11 +765,23 @@ def _run_multi_target_shap(paths, config, state, n_splits, seed) -> dict:
 
         if target_task == "regression":
             pruning_delta = float(full_cv.oof_rmse - pruned_cv.oof_rmse)
-            pruning_pass = pruning_delta >= -0.01
+            target_std = float(
+                state.get("eda", {}).get(
+                    f"{target_name}_std", state.get("eda", {}).get("target_std", 1.0)
+                )
+                or 1.0
+            )
+            pruning_threshold = float(
+                config.get("pruning_delta_min_improvement") or -0.01
+            )
+            pruning_pass = pruning_delta >= pruning_threshold * target_std
         elif len(np.unique(frame_with_target[target_name])) == 2:
             # Binary classification
             pruning_delta = float(pruned_cv.oof_f1 - full_cv.oof_f1)
-            pruning_pass = pruning_delta >= 0.005
+            pruning_threshold = float(
+                config.get("pruning_delta_min_improvement") or 0.005
+            )
+            pruning_pass = pruning_delta >= pruning_threshold
         else:
             # Multiclass - skip pruning comparison (complex AUC calculation)
             pruning_delta = 0.0
