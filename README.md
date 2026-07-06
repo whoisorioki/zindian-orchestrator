@@ -1,23 +1,19 @@
 # Zindian Orchestrator
 
-An **autonomous ML competition agent framework** for Zindi Africa competitions.
+An **autonomous multi-phase ML competition framework** for tabular supervised learning competitions on the Zindi Africa platform. Reads competition schemas, target definitions, and evaluation rules dynamically from a locked configuration contract — zero hardcoded competition literals.
 
-> **Framework, not specific competition** — Designed specifically for tabular machine learning competitions on the Zindi platform, reading rules and target schemas dynamically.
+## What Is This
 
-This framework manages end-to-end competition pipelines autonomously with human oversight at 5 critical checkpoints.
+Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. It enforces reproducible execution through atomic state writes, fixed random seeds, per-fold CV oversight, and five mandatory human approval gates. The system is designed around the **Source of Truth** (`docs/source_of_truth.md` v2.3), which is the single architectural authority. When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
 
-## What Is This?
-
-Think of Zindian Orchestrator as an intelligent co-pilot for data science hackathons. It systematically cleans raw data, engineers features, trains baseline models, audits validation folds for target leaks (using SHAP), and blends predictions using advanced ensemble fusion—all while adhering to a strict, reproducible execution contract.
-
-
-**Key Features:**
-- **5 Human Gates** - Stops for approval at critical points
-- **100% Reproducible** - Same data = identical results
-- **Zero Hardcoding** - Reads competition rules dynamically
-- **Carbon Tracking** - Measures environmental impact (R5)
-- **Multi-Target Support** - Handles multiple prediction targets
-- **Zindi Compliant** - No AutoML, full audit trail
+**System properties:**
+- **Phase-gated execution** — 4 phases with 5 human gates; state transitions recorded atomically in `SKILL_STATE.json`
+- **Deterministic CV factory** — single `make_cv_splitter()` entry point; no skill instantiates its own splitter
+- **OOF contract enforcement** — every out-of-fold generator calls `write_oof_record()` with `cv_strategy_id` tagging; augmented runs write to `_augmented`-suffixed keys only
+- **Two-mode feature contract** — target-dependent features enforce fold restriction in CV mode; structural features computed on full data
+- **Zero competition literals in skill bodies** — column names, targets, metrics, coordinates resolved from config at runtime (A5)
+- **No AutoML** — static preflight scan rejects `auto-sklearn`, `flaml`, `tpot`, `h2o`, `pycaret`, `optuna.integration`
+- **No cross-skill imports** — documented shim exception for `skill_13` only
 
 ## Architecture Overview
 
