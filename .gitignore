@@ -47,7 +47,9 @@ opencode_output.txt
 *.swp
 *.swo
 *~
-docs/logs/
+docs/
+logs/
+package-lock.json
 
 ## OS
 .DS_Store

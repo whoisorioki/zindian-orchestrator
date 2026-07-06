@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "firecrawl": "^4.29.2",
+    "zod": "^4.4.3"
+  }
+}

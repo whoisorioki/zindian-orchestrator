@@ -45,7 +45,6 @@ Every decision is evaluated through three simultaneous perspectives:
 | **Specific** | What does THIS data show? | "This dataset has severe class imbalance" |
 | **Generalization** | Will this work on new data? | "Will this pattern hold on unseen test data?" |
 
-**Real-world analogy:** Like a doctor who considers medical literature (general), your specific symptoms (specific), and long-term treatment effectiveness (generalization).
 
 ---
 
@@ -53,7 +52,6 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ### Phase 1: Understanding the Competition [SEARCH]
 **What happens:** Reads competition rules, examines data structure, locks configuration
-**Analogy:** Detective documenting a crime scene before touching anything
 **Duration:** ~5 minutes
 **Output:** Locked `challenge_config.json` (the rulebook)
 
@@ -68,7 +66,6 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ### Phase 2: Building the Baseline [ANCHOR]
 **What happens:** Creates a simple, reliable model as starting point
-**Analogy:** Chef making basic version before trying fancy variations
 **Duration:** ~15-30 minutes
 **Output:** Anchor model with baseline score
 
@@ -82,7 +79,6 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ### Phase 3: Testing & Validation [TEST]
 **What happens:** Checks for data leakage, tests stability, validates predictions
-**Analogy:** Quality inspector checking products before shipping
 **Duration:** ~30-60 minutes
 **Output:** Approved models that passed all safety checks
 
@@ -98,7 +94,6 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ### Phase 4: Final Submission [SUBMIT]
 **What happens:** Format predictions, submit, document everything
-**Analogy:** Preparing legal document - everything must be traceable
 **Duration:** ~10 minutes
 **Output:** Competition submission + complete audit trail
 
