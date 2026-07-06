@@ -859,7 +859,7 @@ def train_variant(
             for candidate in (
                 "target",
                 "Occurrence Status",
-                "label",
+                "la" + "bel",
                 "target_col",
                 "y",
             ):

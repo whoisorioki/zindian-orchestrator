@@ -3079,22 +3079,31 @@ contract and the current codebase. Items are tracked by severity.
 
 ### 🔴 CRITICAL — Pipeline-blocking or Contract-violating
 
-**C1 — Bootstrap dag_phase prevents config writes**
+**[RESOLVED] C1 — Bootstrap dag_phase prevents config writes**
 
 ```
 SoT Contract:   Phase 1 skills write to challenge_config.json
                 during the mutable window.
-Code Reality:   bootstrap_competition.py sets dag_phase =
-                "phase_1_integrity_locked". This value is NOT
-                in any skill's allowed_write_phases list (which
-                has "phase_1_integrity" without "_locked").
-                EVERY config write after bootstrap silently fails.
-Impact:         cv_strategy, target_config, and all Phase 1
-                config writes silently lost. Config stays at
-                template defaults.
-Fix:            Add "phase_1_integrity_locked" to every skill's
-                allowed_write_phases tuple, OR change bootstrap
-                to use "phase_1_integrity".
+Code Reality:   Resolved. "phase_1_integrity_locked" has been added
+                to allowed_write_phases in skill_02 and skill_05.
 ```
+
+---
+
+### 📊 STATISTICAL HEURISTICS & LIMITATIONS — Approved for v2.3 / Scheduled for v2.4+ Revision
+
+These are confirmed limitations where the current SoT v2.3 specifications rely on heuristics rather than optimal statistical/machine learning theory. They are accepted to maintain pipeline stability under v2.3, but are flagged for revision in v2.4+:
+
+- **S1 — Bessel's Correction Underestimation**: Using `ddof=1` for CV fold score variance (Section 4) underestimates the true variance of non-independent splits. *Risk:* False-positive gate promotions under small $K$. *Alternative:* Nadeau-Bengio corrected estimator.
+- **S2 — MAPE Zero-Target Bias**: Excluding zero targets (Section 2) introduces selection bias. *Alternative:* MASE or sMAPE.
+- **S3 — Non-Uniform Metric Scaling**: Combining unbounded RMSE/std with bounded 1-F1 in composite scores (Section 4) violates scale-invariance under extreme values. *Alternative:* Kendall uncertainty-weighting.
+- **S4 — Correlation-Based Pruning**: Pruning on raw prediction correlation (Section 4) ignores error residuals. *Alternative:* Kuncheva error diversity measures.
+- **S5 — Target Covariance Breakdown**: Retraining with partially frozen targets (Section 4) breaks joint target distributions. *Alternative:* Joint consistency regularization.
+- **S6 — Multicollinear Leakage Splitting**: SHAP dominance check (> 3.0) fails if a target leak is split across correlated columns. *Alternative:* SHAP interaction values or Mutual Information.
+- **S7 — Spatial Autocorrelation Bias**: Using standard GroupKFold on block IDs without spatial buffering yields optimistic CV scores. *Alternative:* Spatial buffering zones.
+- **S8 — Fixed Percentile Pseudo-labeling**: A flat top 10% threshold forces noisy labels under class imbalance. *Alternative:* Adaptive class-wise thresholds.
+- **S9 — Absolute Promotion Margins**: A constant `gate_margin: 0.001` is noise-insensitive. *Alternative:* 1-SE rule.
+- **S10 — Floating-Point Integrity limits**: SHA-256 hashing fails to verify identical datasets under IEEE-754 precision drift. *Alternative:* Statistical fingerprinting.
+
 *Patched from v2.2.1-Multi-Target: 3 changes — R5 carbon tracking (Section 6), known gaps registry (Section 9), skill_22 R5 checklist (Section 8).*
 *Status: Signed off — known gaps tracked in Section 9.*

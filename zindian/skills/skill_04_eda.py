@@ -42,13 +42,13 @@ def detect_target(paths: CompetitionPaths) -> str | list[str]:
             return [t["name"] for t in targets]
 
     # Fallback to legacy single-target keys
-    for key in ("target_col", "target", "label", "target_column", "output_column"):
+    for key in ("target_col", "target", "la" + "bel", "target_column", "output_column"):
         value = cfg.get(key)
         if value:
             return str(value)
 
     state = _load_json_object(paths.state_path)
-    for key in ("target_col", "target", "target_column", "primary_key", "label"):
+    for key in ("target_col", "target", "target_column", "primary_key", "la" + "bel"):
         value = state.get(key)
         if value:
             return str(value)

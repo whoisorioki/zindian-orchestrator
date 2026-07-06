@@ -47,6 +47,7 @@ opencode_output.txt
 *.swp
 *.swo
 *~
+docs/logs/
 
 ## OS
 .DS_Store
@@ -58,3 +59,4 @@ docs/session_logs/
 docs/refactor_reports/
 archives/
 .kiro/
+node_modules/

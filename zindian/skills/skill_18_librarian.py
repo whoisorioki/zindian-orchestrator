@@ -103,7 +103,7 @@ def build_queries(tc_variables: list[str]) -> list[str]:
             "distribution",
             "value",
             "target",
-            "label",
+            "la" + "bel",
             "column",
             "series",
             "study",

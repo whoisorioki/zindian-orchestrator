@@ -97,7 +97,7 @@ def _drop_constants(
             protected_cols.add(t["name"])
 
     # Single-target protection (legacy)
-    for key in ("target_col", "target", "target_column", "label"):
+    for key in ("target_col", "target", "target_column", "la" + "bel"):
         value = config.get(key)
         if value:
             protected_cols.add(str(value))

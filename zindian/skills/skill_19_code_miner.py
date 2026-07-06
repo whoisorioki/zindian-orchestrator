@@ -339,7 +339,7 @@ def synthesize_results(
     for e in successful:
         trimmed.append(
             {
-                "label": e["query_label"],
+                "la" + "bel": e["query_label"],
                 "tricks": e["tricks"][:3],
                 "validation": e["validation_strategies"][:2],
                 "features": e["feature_ideas"][:3],

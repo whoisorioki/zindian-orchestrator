@@ -5,13 +5,8 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document does not pin a single
-SoT version number because the SoT has moved across multiple
-versions (v2.1-Canonical → v2.2-Generalized-Regression →
-v2.2.1-Multi-Target-Proposed, with a v2.3 roadmap also in progress)
-faster than this file has been re-verified against it. Treat any
-version number elsewhere in this document as informational, not
-load-bearing — the SoT file itself is the version of record.
+version-specific claim below. This document is aligned with
+SoT version v2.3.
 **Last updated:** June 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
@@ -119,61 +114,6 @@ find zindian/skills -name "skill_*.py" | sort
 and reading the actual result. This file will not be correct here
 until that command has been run and the result pasted back into this
 table by whoever next touches this section.
-
-### On the `anchor_oof_score` claim — read this before writing any gate logic
-
-A prior draft of this document asserted flatly: *"the canonical
-anchor baseline is `anchor_oof_score`... code that reads
-`anchor_oof_rmse`, `anchor_oof_f1`, or `anchor_oof_auc` as the
-primary gating key is wrong."*
-
-**This is not yet confirmed and may be actively wrong for existing
-competitions.** Direct inspection of at least one real, working
-competition (EY-frogs) found `anchor_oof_f1` to be the actual,
-correct, currently-used gate key — not a bug, not a legacy artifact
-to "fix," but the real field every skill in that competition's
-pipeline (`skill_07`, `skill_08`, `skill_11`, `skill_13`) reads and
-writes correctly.
-
-The most defensible current reading is:
-
-```
-anchor_oof_score may be a v2.3 SCHEMA TARGET that existing
-competitions have not been migrated to. Until verified otherwise:
-
-1. Do NOT assume anchor_oof_score exists in any given competition's
-   SKILL_STATE.json. Check directly:
-
-     python -c "
-     import json
-     s = json.load(open('competitions/<slug>/SKILL_STATE.json'))
-     print('anchor_oof_score:', s.get('anchor_oof_score'))
-     print('anchor_oof_f1:', s.get('anchor_oof_f1'))
-     print('anchor_oof_rmse:', s.get('anchor_oof_rmse'))
-     "
-
-2. If anchor_oof_score is genuinely absent and a metric-specific key
-   IS present and is what the gate logic actually reads — that is
-   the real, correct key for THIS competition. Do not "fix" it to
-   match this document's aspirational claim. Flag the discrepancy
-   between this doc and reality instead, and ask before changing
-   anything.
-
-3. If you are implementing a NEW competition from scratch, prefer
-   anchor_oof_score going forward only if the SoT version you are
-   building against confirms this is the current target schema.
-   Otherwise default to the metric-specific key pattern that is
-   demonstrably already working elsewhere in this repo.
-```
-
-The legacy-key warning in this document still has a real, separate
-purpose: it is meant to catch a SPECIFIC failure mode — confusing
-`anchor_oof_rmse` (a stale field from an earlier pipeline iteration)
-with the actually-active metric key for a competition, which has
-caused real, time-costly debugging sessions before. That specific
-warning is correct and should be kept. What's not yet confirmed is
-whether `anchor_oof_score` is the right *replacement* name, or
-whether this document is simply ahead of where the code actually is.
 
 ---
 

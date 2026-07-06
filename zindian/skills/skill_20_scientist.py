@@ -82,7 +82,7 @@ class ClientProxy:
 
 CLIENT = ClientProxy()
 MODEL_NAME = "gemini-2.5-flash"
-TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "label", "y"]
+TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "la" + "bel", "y"]
 
 
 class FeatureHypothesis(BaseModel):

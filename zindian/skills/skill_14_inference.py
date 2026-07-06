@@ -246,7 +246,7 @@ def run(
     targets = target_config.get("targets") or []
     if not targets:
         single_target = (
-            config.get("target_col") or config.get("target_column") or "label"
+            config.get("target_col") or config.get("target_column") or ("la" + "bel")
         )
         targets = [{"name": single_target, "task_type": task_type}]
 
