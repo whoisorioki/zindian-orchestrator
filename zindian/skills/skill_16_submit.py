@@ -292,23 +292,41 @@ def _branch_from_state(state: dict[str, Any]) -> str:
 
 
 def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
-    # Try calibration_candidate_oof_key first (multi-target uses branch_name_target format)
+    # Resolve using git_branch first
+    git_branch = state.get("current_git_branch")
+    if git_branch:
+        for k, v in state.items():
+            if (
+                k.startswith(f"branch_{git_branch}_")
+                and k.endswith("_oof")
+                and isinstance(v, dict)
+            ):
+                mc = v.get("model_config") or {}
+                fc = mc.get("feature_count")
+                if isinstance(fc, (int, float)):
+                    return int(fc)
+
+    # Try calibration_candidate_oof_key
     calib_key = state.get("calibration_candidate_oof_key")
     if calib_key:
         oof = state.get(calib_key)
         if isinstance(oof, dict):
             mc = oof.get("model_config") or {}
             fc = mc.get("feature_count")
-            if isinstance(fc, int):
-                return fc
+            if isinstance(fc, (int, float)):
+                return int(fc)
 
-    # Fallback to branch_{branch}_oof
-    oof = state.get(f"branch_{branch}_oof")
-    if isinstance(oof, dict):
-        mc = oof.get("model_config") or {}
-        fc = mc.get("feature_count")
-        if isinstance(fc, int):
-            return fc
+    # Fallback to branch_{branch}_oof (with target matching)
+    for k, v in state.items():
+        if (
+            k.startswith(f"branch_{branch}")
+            and k.endswith("_oof")
+            and isinstance(v, dict)
+        ):
+            mc = v.get("model_config") or {}
+            fc = mc.get("feature_count")
+            if isinstance(fc, (int, float)):
+                return int(fc)
 
     # Final fallbacks
     for key in (
@@ -317,8 +335,8 @@ def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
         "last_ensemble_feature_count",
     ):
         v = state.get(key)
-        if isinstance(v, int):
-            return v
+        if isinstance(v, (int, float)):
+            return int(v)
     return "?"
 
 
@@ -530,7 +548,7 @@ Type YES to submit or NO to abort.
         print(f"[WARN]  Failed to append submission log: {exc}")
 
     print(f"\n[OK] Submitted. Result: {result}")
-    print(f"[OK] Logged → {log_path}")
+    print(f"[OK] Logged -> {log_path}")
 
     print(f"\n{'=' * 60}")
     print("POST-SUBMISSION RESULTS")

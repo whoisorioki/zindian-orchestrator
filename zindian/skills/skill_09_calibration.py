@@ -214,7 +214,11 @@ def _fit_calibrator_foldwise(
     return calibrated_oof, None
 
 
-def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
+def run(
+    method: str | None = None,
+    dry_run: bool = False,
+    variant_name: str | None = None,
+) -> Dict[str, object]:
     print("\n" + "=" * 60)
     print("SKILL 09 — Probability Calibration")
     print("=" * 60 + "\n")
@@ -235,9 +239,16 @@ def run(method: str | None = None, dry_run: bool = False) -> Dict[str, object]:
 
     # Check if multi-target via target_config
     target_config = config.get("target_config")
-    if target_config and len(target_config.get("targets", [])) > 1:
+    if target_config and target_config.get("targets"):
         return _run_multi_target(
-            cast(str, method), dry_run, paths, config, store, state, target_config
+            cast(str, method),
+            dry_run,
+            paths,
+            config,
+            store,
+            state,
+            target_config,
+            variant_name=variant_name,
         )
 
     # Skip for regression
@@ -393,6 +404,7 @@ def _run_multi_target(
     store: SkillStateStore,
     state: dict[str, Any],
     target_config: dict[str, Any],
+    variant_name: str | None = None,
 ) -> Dict[str, object]:
     print("Multi-target mode detected")
 
@@ -406,26 +418,29 @@ def _run_multi_target(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
     )
 
-    # For multi-target, find branch from actual OOF keys
-    candidate_branch = None
-    for target_spec in targets:
-        target_name = target_spec.get("name")
-        # Look for OOF keys for this target
-        for key in state.keys():
-            if (
-                key.startswith("branch_")
-                and f"_{target_name}_" in key
-                and key.endswith("_oof")
-            ):
-                # Extract branch name
-                parts = key.removeprefix("branch_").removesuffix("_oof")
-                if retraining_active and parts.endswith("_augmented"):
-                    candidate_branch = parts.removesuffix(f"_{target_name}_augmented")
-                else:
-                    candidate_branch = parts.removesuffix(f"_{target_name}")
+    # For multi-target, find branch from actual OOF keys or use variant_name directly
+    candidate_branch = variant_name
+    if not candidate_branch:
+        for target_spec in targets:
+            target_name = target_spec.get("name")
+            # Look for OOF keys for this target
+            for key in state.keys():
+                if (
+                    key.startswith("branch_")
+                    and f"_{target_name}" in key
+                    and key.endswith("_oof")
+                ):
+                    # Extract branch name
+                    parts = key.removeprefix("branch_").removesuffix("_oof")
+                    if retraining_active and parts.endswith("_augmented"):
+                        candidate_branch = parts.removesuffix(
+                            f"_{target_name}_augmented"
+                        )
+                    else:
+                        candidate_branch = parts.removesuffix(f"_{target_name}")
+                    break
+            if candidate_branch:
                 break
-        if candidate_branch:
-            break
 
     if not candidate_branch:
         candidate_branch = _resolve_candidate_branch(
@@ -456,19 +471,53 @@ def _run_multi_target(
             skipped_targets.append(target_name)
             continue
 
-        # Load OOF file with probabilities
-        oof_file = paths.data_raw_dir / "oof_anchor_multi.csv"
+        # Resolve OOF file for this candidate branch
+        oof_suffix = "_augmented" if retraining_active else ""
+        anchor_branch = state.get("anchor_git_branch") or "anchor-baseline"
+        if candidate_branch == anchor_branch:
+            oof_file = paths.data_raw_dir / "oof_anchor_multi.csv"
+        else:
+            oof_file = (
+                paths.data_processed_dir
+                / f"oof_{candidate_branch}_{target_name}{oof_suffix}.csv"
+            )
+
         if not oof_file.exists():
-            print("Warning: OOF file not found, skipping actual calibration")
-            skipped_targets.append(target_name)
-            continue
+            # Try fallback to anchor oof
+            oof_file = paths.data_raw_dir / "oof_anchor_multi.csv"
+            if not oof_file.exists():
+                print("Warning: OOF file not found, skipping actual calibration")
+                skipped_targets.append(target_name)
+                continue
 
         oof_df = pd.read_csv(oof_file)
 
-        # Check for probability columns in OOF
+        # Check for probability columns in OOF (handling multiclass prefix, binary oof_prob, or target_pred)
         prob_cols = [
             c for c in oof_df.columns if c.startswith(f"{target_name}_prob_class_")
         ]
+        if not prob_cols:
+            for fallback_col in (
+                "oof_prob",
+                f"{target_name}_pred",
+                f"{target_name}_prob",
+            ):
+                if fallback_col in oof_df.columns:
+                    # Found binary classification class 1 prob column
+                    oof_probs_1d = np.asarray(
+                        oof_df[fallback_col].values, dtype=np.float64
+                    )
+                    oof_probs_matrix = np.column_stack(
+                        [1.0 - oof_probs_1d, oof_probs_1d]
+                    )
+                    prob_cols = [
+                        f"{target_name}_prob_class_0",
+                        f"{target_name}_prob_class_1",
+                    ]
+                    break
+        else:
+            oof_probs_matrix = np.asarray(oof_df[prob_cols].values, dtype=np.float64)
+
         if not prob_cols:
             print(f"Warning: No probability columns for {target_name} in OOF, skipping")
             skipped_targets.append(target_name)
@@ -494,9 +543,6 @@ def _run_multi_target(
             print(f"Warning: No OOF record at {oof_key}, skipping")
             skipped_targets.append(target_name)
             continue
-
-        # Extract probability matrix from OOF file
-        oof_probs_matrix = np.asarray(oof_df[prob_cols].values, dtype=np.float64)
 
         if len(oof_probs_matrix) != len(y):
             print(f"Warning: OOF length mismatch for {target_name}, skipping")
@@ -598,12 +644,32 @@ def _run_multi_target(
         df_test = pd.read_csv(test_path)
         id_col = config.get("id_col") or config.get("id_column") or "ID"
 
-        # Check if test file has probability columns
+        # Check if test file has probability columns (handling multiclass prefix, binary test_prob, or target_prob)
         test_prob_cols = [
             c
             for c in df_test.columns
             if c.startswith(f"{target_name}_prob_class_") or c.startswith("prob_class_")
         ]
+        if not test_prob_cols:
+            for fallback_col in ("test_prob", f"{target_name}_prob", "oof_prob"):
+                if fallback_col in df_test.columns:
+                    # Found binary classification class 1 prob column
+                    test_probs_1d = np.asarray(
+                        df_test[fallback_col].values, dtype=np.float64
+                    )
+                    test_probs_matrix = np.column_stack(
+                        [1.0 - test_probs_1d, test_probs_1d]
+                    )
+                    test_prob_cols = [
+                        f"{target_name}_prob_class_0",
+                        f"{target_name}_prob_class_1",
+                    ]
+                    break
+        else:
+            test_probs_matrix = np.asarray(
+                df_test[test_prob_cols].values, dtype=np.float64
+            )
+
         if not test_prob_cols:
             print(
                 f"Warning: No probability columns in test file for {target_name}, skipping"
@@ -611,7 +677,6 @@ def _run_multi_target(
             skipped_targets.append(target_name)
             continue
 
-        test_probs_matrix = np.asarray(df_test[test_prob_cols].values, dtype=np.float64)
         calibrated_test_matrix = np.zeros_like(test_probs_matrix)
 
         for class_idx in range(len(prob_cols)):

@@ -25,7 +25,6 @@ from google.genai import types
 from zindian.paths import resolve_competition_paths
 from zindian.config import get_seed, ChallengeConfig
 from zindian.state import SkillStateStore
-from zindian.constants import TC_VARIABLES
 
 load_dotenv(override=False)
 _api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -101,29 +100,32 @@ class FeatureHypothesis(BaseModel):
     confidence: float = Field(description="Confidence score between 0.0 and 1.0")
 
 
-def get_available_columns() -> list[str]:
-    cols = []
-    for var in TC_VARIABLES:
-        for stat in ["mean", "std", "min", "max"]:
-            cols.append(f"{var}_{stat}")
-        cols.append(f"{var}_last3mo_mean")
-        cols.append(f"{var}_range")
-        cols.append(f"{var}_cv")
-    return cols
+def get_available_columns(feature_frame: pd.DataFrame | None = None) -> list[str]:
+    """Get available columns either from the actual feature matrix or config.
+
+    For competitions with an actual feature matrix, returns the real columns.
+    """
+    if feature_frame is not None:
+        return [
+            c
+            for c in feature_frame.columns
+            if c not in TARGET_COL_CANDIDATES and c != "ID"
+        ]
+    return []
 
 
 SCIENTIST_SYSTEM = """
-You are a feature engineering scientist for species distribution modelling.
-You will receive ecological hypotheses and ML prior art, plus a list of AVAILABLE feature columns.
+You are a feature engineering scientist for machine learning competitions.
+You will receive domain hypotheses and ML prior art, plus a list of AVAILABLE feature columns.
 
-Your job: identify which features or transformations are most likely to predict the target occurrence,
+Your job: identify which features or transformations are most likely to predict the target,
 using ONLY the available columns provided.
 
 Output a JSON array. Each element must follow this exact schema:
 {
     "hypothesis_id":     "hyp_001",
     "source_paper_id":   "paper_id_or_domain_knowledge",
-    "rationale":         "one sentence explaining the ecological signal",
+    "rationale":         "one sentence explaining the predictive signal",
     "feature_columns":   ["exact_column_name_from_available_columns"],
     "transformation":    "raw | interaction_product | ratio | threshold_binary | polynomial_2",
     "expected_signal":   "positive | negative | nonlinear",
@@ -328,32 +330,15 @@ def run_scientist(
     if competition_dir is None:
         raise RuntimeError("Competition directory is not available")
 
-    # Load config dynamically to generalise the prompt context
-    comp_name = "species distribution modelling"
-    try:
-        config = ChallengeConfig.load()
-        if config.get("name"):
-            comp_name = config.get("name")
-    except Exception:
-        pass
+    # Load config dynamically to generalise prompt context
+    config = ChallengeConfig.load()
+    comp_name = config.get("name") or "unknown competition"
+    target_text = config.get("target_col") or "target"
 
-    is_frog_comp = any(
-        k in comp_name.lower() for k in ["frog", "amphibian", "biodiversity"]
-    )
-    if is_frog_comp:
-        scientist_system_text = SCIENTIST_SYSTEM
-    else:
-        scientist_system_text = (
-            SCIENTIST_SYSTEM.replace(
-                "species distribution modelling", f"machine learning for {comp_name}"
-            )
-            .replace(
-                "predict the target occurrence",
-                f"predict the target column in {comp_name}",
-            )
-            .replace("predict frog presence", "predict the target")
-            .replace("ecological", "predictive")
-        )
+    # Build competition-appropriate system prompt
+    scientist_system_text = SCIENTIST_SYSTEM.replace(
+        "machine learning competitions", f"the {comp_name} competition"
+    ).replace("predict the target", f"predict '{target_text}'")
 
     domain_hypotheses = load_json(Path(hypotheses_path))
     prior_art = load_json(Path(priorart_path))
@@ -442,7 +427,13 @@ Generate feature engineering hypotheses as a raw JSON array now.
         avail_set = set(available_columns)
 
         def map_var_to_col(var: str) -> str | None:
-            # prefer last3mo_mean, then mean, then std/min/max, then cv/range
+            # Try SAR band column patterns first (e.g., VH_01, VH_02)
+            var_upper = var.upper()
+            for month in range(1, 13):
+                col = f"{var_upper}_{month:02d}"
+                if col in avail_set:
+                    return col
+            # Try TerraClimate-style patterns (e.g., ppt_mean, tmax_std)
             candidates = [
                 f"{var}_last3mo_mean",
                 f"{var}_mean",
@@ -484,6 +475,27 @@ Generate feature engineering hypotheses as a raw JSON array now.
     if not feature_frame_path.exists():
         raise FileNotFoundError(f"Missing feature matrix: {feature_frame_path}")
     feature_frame = pd.read_csv(feature_frame_path)
+
+    # Load the raw train file to merge the target column — the pre-processed
+    # features_train.csv often omits the target column.
+    raw_train_path = paths.data_raw_dir / "Train.csv"
+    if raw_train_path.exists():
+        raw_train = pd.read_csv(raw_train_path)
+        target_col_present = resolve_target_column(raw_train)
+        if target_col_present not in feature_frame.columns:
+            feature_frame[target_col_present] = raw_train[target_col_present]
+    else:
+        # Fallback: try to find target column already in feature_frame
+        try:
+            resolve_target_column(feature_frame)
+        except ValueError:
+            print(
+                "[Scientist] WARNING: No target column found in features_train.csv "
+                "and no Train.csv available. Empirical validation will be skipped."
+            )
+            # Return empty validated list rather than crash
+            Path(hypothesis_path).write_text("[]", encoding="utf-8")
+            return []
 
     failed_path = (
         Path(failed_hypotheses_path)
@@ -538,12 +550,12 @@ if __name__ == "__main__":
     from zindian.paths import resolve_competition_paths
 
     paths = resolve_competition_paths(require_competition=False)
-    comp_dir = (
-        paths.competition_dir
-        if paths.competition_dir
-        else Path("competitions/ey-frogs")
-    )
-    reports_dir = comp_dir / "reports"
+    if paths.competition_dir is None:
+        raise RuntimeError(
+            "No competition directory configured. Set ZINDIAN_COMPETITION_SLUG "
+            "in .env or run from within a competition directory."
+        )
+    reports_dir = paths.competition_dir / "reports"
     run_scientist(
         hypotheses_path=str(reports_dir / "domain_hypotheses.json"),
         priorart_path=str(reports_dir / "ml_priorart.json"),

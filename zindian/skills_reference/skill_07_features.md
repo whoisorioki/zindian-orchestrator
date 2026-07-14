@@ -66,7 +66,7 @@ Current behavior notes
 - Feature extraction is fully delegated to the configured plugin.
 - Builds isolated variants rather than stacking untested feature changes.
 - Hypothesis-derived features (polynomials, interactions, ratios, conditions, target-dependent bins) are built from config.
-- Target-dependent feature engineering functions must enforce the two-mode contract (fold-restricted during CV, full-train during inference). Structural features are computed globally.
+- Target-dependent feature engineering functions must enforce the two-mode contract (fold-restricted during CV, full-train during inference). Structural features are computed globally, but if they fit parameters (like PCA or StandardScaler), they must fit strictly on the training fold during CV and on the full train dataset during inference to prevent validation/test leakage.
 - Multi-seed averaging (default 3 seeds) for robust variant evaluation.
 
 Audit findings & resolution status

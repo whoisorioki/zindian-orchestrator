@@ -207,51 +207,22 @@ Handles competitions predicting multiple targets simultaneously.
 
 ## What Makes This Valuable?
 
-### For Data Scientists
 -  **Consistency:** Same rigorous process every time
 -  **Safety:** Multiple checkpoints prevent costly mistakes
 -  **Efficiency:** Automates repetitive tasks
 -  **Learning:** Captures knowledge from past competitions
-
-### For Managers
--  **Transparency:** Every decision documented
--  **Compliance:** Built to follow competition rules
--  **Risk Reduction:** Prevents common mistakes (leakage, overfitting)
--  **Audit Trail:** Complete documentation for review
-
-### For Organizations
--  **Scalability:** Same framework for multiple competitions
--  **Knowledge Capture:** Cross-competition learning
--  **Cost Tracking:** Carbon and compute monitoring
--  **Quality Assurance:** Reproducible results
 
 ---
 
 ## What It's NOT
 
 -  **Not magic AI** - Doesn't solve everything automatically
--  **Not autonomous** - Requires human approval at key points
+-  **Not autonomous** - Requires human approval/intervention at key points
 -  **Not a replacement** - Tool for data scientists, not replacement
 -  **Not a black box** - Everything is traceable and explainable
 
 ---
 
-## Simple Metaphor
-
-Think of it as a **highly organized research lab**:
-
-| Lab Component | Orchestrator Equivalent |
-|---------------|-------------------------|
-| Protocols | Phases and rules |
-| Quality control | Gates and validation |
-| Lab notebooks | State and config files |
-| Safety inspectors | Human gates |
-| Standard procedures | Skills (22 modules) |
-| Equipment | LightGBM, scikit-learn |
-
-The lab runs experiments efficiently, but a human scientist must approve all major decisions and sign off on results.
-
----
 
 ## Success Metrics
 

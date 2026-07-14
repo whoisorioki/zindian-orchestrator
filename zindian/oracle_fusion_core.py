@@ -266,7 +266,7 @@ def _check_test_files(
             mapping[name] = test_path
 
     if missing:
-        print(f"\n❌ Missing test prob files: {missing}")
+        print(f"\n[FAIL] Missing test prob files: {missing}")
         print("   Rerun those variants with --force-save before blending.")
         return None
 
@@ -367,7 +367,7 @@ def _run_multi_target_fusion(
     dry_run: bool,
 ) -> dict:
     """Multi-target fusion with dynamic target isolation (A11)."""
-    print("\n🎯 MULTI-TARGET FUSION MODE (A11)\n")
+    print("\n[TARGET] MULTI-TARGET FUSION MODE (A11)\n")
     target_config = config_obj.get("target_config", {})
     targets = target_config.get("targets", [])
     print(f"Targets: {[t['name'] for t in targets]}\n")
@@ -414,9 +414,9 @@ def _run_multi_target_fusion(
     for target_spec in targets:
         target_name = target_spec["name"]
         task_type = target_spec["task_type"]
-        print(f"\n{'─' * 60}")
+        print(f"\n{'-' * 60}")
         print(f"Fusion: {target_name} ({task_type})")
-        print(f"{'─' * 60}")
+        print(f"{'-' * 60}")
 
         # Dynamic config override (A5)
         target_config_override = ChallengeConfig(
@@ -468,7 +468,7 @@ def _run_multi_target_fusion(
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             out_path = subs_dir / f"sub_ensemble_multi_{timestamp}.csv"
             combined_sub.to_csv(out_path, index=False)
-            print(f"\n✅ Multi-target submission saved: {out_path}")
+            print(f"\n[OK] Multi-target submission saved: {out_path}")
 
             if not in_memory:
                 store = SkillStateStore(paths.state_path)

@@ -588,13 +588,14 @@ def compute_group_target_aggregation(X, y, group_col, train_idx=None,
 ```
 
 **Structural features** (Haversine distance, nearest-neighbour
-arrays, non-target group counts, PCA components fit on the full
-feature matrix without referencing the target, temporal trend/delta
+arrays, non-target group counts, PCA components/StandardScaler fit
+on the feature matrix without referencing the target, temporal trend/delta
 features derived purely from feature columns) do not require
-two-mode treatment and may be computed on the full dataset at any
-time — provided any train/test transform (e.g. PCA) is still fit on
-train only and merely *transformed* on test, which is a separate
-leakage concern from the two-mode contract but equally important.
+target-dependent two-mode treatment. However, if they fit parameters (like PCA or
+StandardScaler), they must respect the training/validation partition: fit strictly
+on the training fold during cross-validation (`mode="cv"` with `train_idx`) or the
+full train dataset during inference (`mode="inference"`), and then transform
+validation and test sets, preventing validation/test statistics contamination (leakage).
 
 ---
 

@@ -434,15 +434,29 @@ def build_hypothesis_features(
                 n_components = min(n_components, len(pca_feature_cols))
 
                 _scaler = _SS()
-                X_tr = _scaler.fit_transform(
-                    train[pca_feature_cols].fillna(train[pca_feature_cols].median())
-                )
-                X_te = _scaler.transform(
-                    test[pca_feature_cols].fillna(train[pca_feature_cols].median())
-                )
+                if mode == "cv" and train_idx is not None:
+                    # Fit Standard Scaler and PCA strictly on the training fold rows
+                    train_fold_data = train.iloc[train_idx][pca_feature_cols]
+                    medians = train_fold_data.median()
+                    X_tr_fit = train_fold_data.fillna(medians)
 
-                _pca = _PCA(n_components=n_components)
-                _pca.fit(X_tr)  # fit on train ONLY — no leakage
+                    X_tr_fold_scaled = _scaler.fit_transform(X_tr_fit)
+                    X_tr = _scaler.transform(train[pca_feature_cols].fillna(medians))
+                    X_te = _scaler.transform(test[pca_feature_cols].fillna(medians))
+
+                    _pca = _PCA(n_components=n_components)
+                    _pca.fit(X_tr_fold_scaled)
+                else:
+                    # Inference mode: Fit Standard Scaler and PCA on the entire train dataset
+                    medians = train[pca_feature_cols].median()
+                    X_tr_fit = train[pca_feature_cols].fillna(medians)
+
+                    X_tr = _scaler.fit_transform(X_tr_fit)
+                    X_te = _scaler.transform(test[pca_feature_cols].fillna(medians))
+
+                    _pca = _PCA(n_components=n_components)
+                    _pca.fit(X_tr)
+
                 tr_pca = _pca.transform(X_tr)
                 te_pca = _pca.transform(X_te)
 
@@ -450,6 +464,8 @@ def build_hypothesis_features(
                 for i, col_name in enumerate(pca_cols):
                     train[col_name] = tr_pca[:, i]
                     if col_name not in test.columns:
+                        test[col_name] = te_pca[:, i]
+                    else:
                         test[col_name] = te_pca[:, i]
                 new_cols.extend(pca_cols)
 
@@ -499,7 +515,7 @@ def _resolve_variant_model_config(variant_name: str, paths, cfg: dict) -> dict:
 
     sidecar_model: dict | None = None
     comp_slug = cfg.get("slug") or cfg.get("competition_slug") or ""
-    if comp_slug and paths is not None:
+    if comp_slug:
         try:
             sidecar_path = (
                 Path(__file__).parent.parent.parent
@@ -616,6 +632,14 @@ def _build_single_model(family: str, hyperparams: dict, seed: int):
             verbosity=0,
             eval_metric="logloss",
             n_jobs=-1,
+            **hp,
+        )
+    elif family == "lr":
+        from sklearn.linear_model import LogisticRegression
+
+        return LogisticRegression(
+            random_state=seed,
+            max_iter=hp.pop("max_iter", 1000),
             **hp,
         )
     raise ValueError(f"Unknown model family: {family!r}")
@@ -736,6 +760,19 @@ def _dispatch_variant_training(
     fold_scores_list: list[float] = []
 
     for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
+        # Impute NaNs for models that do not support them (e.g. lr)
+        needs_impute = (family == "lr") or (
+            ensemble_spec and any(m.get("family") == "lr" for m in ensemble_spec)
+        )
+        if needs_impute:
+            train_medians = np.nanmedian(X[tr_idx], axis=0)
+            train_medians = np.nan_to_num(train_medians, nan=0.0)
+            X_tr_fold = np.where(np.isnan(X), train_medians, X)
+            X_te_fold = np.where(np.isnan(X_test), train_medians, X_test)
+        else:
+            X_tr_fold = X
+            X_te_fold = X_test
+
         if ensemble_spec:
             # Weighted ensemble of heterogeneous models
             val_preds = np.zeros(len(val_idx))
@@ -747,12 +784,22 @@ def _dispatch_variant_training(
                 m_weight = float(member.get("weight", 1.0))
                 m_model = _build_single_model(m_family, m_hp, seed)
                 _fit_model(
-                    m_model, m_family, X, y, tr_idx, val_idx, seed, early_stopping
+                    m_model,
+                    m_family,
+                    X_tr_fold,
+                    y,
+                    tr_idx,
+                    val_idx,
+                    seed,
+                    early_stopping,
                 )
                 val_preds += (
-                    m_weight * np.asarray(m_model.predict_proba(X[val_idx]))[:, 1]
+                    m_weight
+                    * np.asarray(m_model.predict_proba(X_tr_fold[val_idx]))[:, 1]
                 )
-                test_preds += m_weight * np.asarray(m_model.predict_proba(X_test))[:, 1]
+                test_preds += (
+                    m_weight * np.asarray(m_model.predict_proba(X_te_fold))[:, 1]
+                )
                 total_weight += m_weight
             if total_weight > 0:
                 val_preds /= total_weight
@@ -761,9 +808,15 @@ def _dispatch_variant_training(
             test_probs_acc += test_preds / n_splits
         else:
             model = _build_single_model(family, dict(hyperparams), seed)
-            _fit_model(model, family, X, y, tr_idx, val_idx, seed, early_stopping)
-            oof_probs[val_idx] = np.asarray(model.predict_proba(X[val_idx]))[:, 1]
-            test_probs_acc += np.asarray(model.predict_proba(X_test))[:, 1] / n_splits
+            _fit_model(
+                model, family, X_tr_fold, y, tr_idx, val_idx, seed, early_stopping
+            )
+            oof_probs[val_idx] = np.asarray(model.predict_proba(X_tr_fold[val_idx]))[
+                :, 1
+            ]
+            test_probs_acc += (
+                np.asarray(model.predict_proba(X_te_fold))[:, 1] / n_splits
+            )
 
         fold_scores_list.append(float(roc_auc_score(y[val_idx], oof_probs[val_idx])))
         print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
@@ -926,7 +979,7 @@ def train_variant(
     print(f"\n  {'=' * 50}")
     print(f"  {variant_name}")
     print(f"  OOF F1   : {result['oof_f1']:.5f}  (baseline: {baseline_score:.5f})")
-    print(f"  Delta    : {result['delta']:+.5f}  → {result['gate']}")
+    print(f"  Delta    : {result['delta']:+.5f}  -> {result['gate']}")
     if result.get("oof_auc"):
         print(f"  ROC-AUC  : {result['oof_auc']:.5f}")
 
@@ -1041,7 +1094,7 @@ def write_round_report(
     report_path = paths.reports_dir / f"feature_round_{round_num:02d}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n  [OK] Round report → {report_path}")
+    print(f"\n  [OK] Round report -> {report_path}")
 
 
 # -- Entry Point ---------------------------------------------------------------
@@ -1060,6 +1113,7 @@ def _run_multi_target_variant(
     cv_strategy,
     train_feat,
     test_feat,
+    feature_cols=None,
 ):
     """Train variant across multiple targets per SoT v2.2.1 A11."""
     from zindian.state import write_oof_record, SkillStateStore
@@ -1080,7 +1134,11 @@ def _run_multi_target_variant(
     lat_col = cols_cfg.get("latitude", "Latitude")
     lon_col = cols_cfg.get("longitude", "Longitude")
     DROP = {id_col, lat_col, lon_col, "ID", "target"}
-    all_features = [c for c in train_feat.columns if c not in DROP]
+
+    if feature_cols is not None:
+        all_features = [c for c in feature_cols if c not in DROP]
+    else:
+        all_features = [c for c in train_feat.columns if c not in DROP]
 
     all_metrics = {}
     all_oof = {}
@@ -1111,6 +1169,15 @@ def _run_multi_target_variant(
 
         train_with_target[target_name] = target_series
 
+        # Resolve target-specific baseline score for correct delta reporting
+        if config.get("metric") == "composite":
+            if target_task == "classification":
+                t_baseline = 1.0 - baseline_score
+            else:
+                t_baseline = baseline_score
+        else:
+            t_baseline = baseline_score
+
         # Override config for this target
         target_config_override = ChallengeConfig(
             path=config.path,
@@ -1135,7 +1202,7 @@ def _run_multi_target_variant(
                 test_feat,
                 all_features,
                 variant_name,
-                baseline_score,
+                t_baseline,
                 None,
                 seed=s,
                 config=target_config_override,
@@ -1176,6 +1243,33 @@ def _run_multi_target_variant(
             model_config={"target_name": target_name, "variant": variant_name},
         )
 
+        # Save OOF and test probabilities to CSV files dynamically
+        try:
+            proc_dir = paths.data_processed_dir
+            proc_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save OOF probabilities
+            oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": mean_oof})
+            oof_path = proc_dir / f"oof_{variant_name}_{target_name}{branch_suffix}.csv"
+            oof_df.to_csv(oof_path, index=False)
+            print(f"  [OK] OOF probabilities saved -> {oof_path}")
+
+            # Save Test probabilities
+            raw_test = pd.read_csv(
+                paths.data_raw_dir / input_files.get("test", "Test.csv")
+            )
+            mean_test = np.mean([r["test_probs"] for r in seed_results], axis=0)
+            test_prob_df = pd.DataFrame(
+                {id_col: raw_test[id_col], "test_prob": mean_test}
+            )
+            test_prob_path = (
+                proc_dir / f"test_probs_{variant_name}_{target_name}{branch_suffix}.csv"
+            )
+            test_prob_df.to_csv(test_prob_path, index=False)
+            print(f"  [OK] Test probabilities saved -> {test_prob_path}")
+        except Exception as e:
+            print(f"  [WARN] Failed to save OOF/test probability CSVs: {e}")
+
     # Compute composite score from the loaded target definitions.
     regression_targets = [t for t in targets if t["task_type"] == "regression"]
     classification_targets = [t for t in targets if t["task_type"] == "classification"]
@@ -1191,15 +1285,35 @@ def _run_multi_target_variant(
         else 0
     )
 
-    target_name = regression_targets[0]["name"] if regression_targets else ""
-    if regression_targets and target_name in raw_train.columns:
-        target_std = float(np.asarray(raw_train[target_name], dtype=float).std())
-    else:
-        target_std = 1.0
-    normalized_rmse = rmse / target_std if target_std > 0 else rmse
-    regression_score = max(0.0, 1.0 - normalized_rmse)
+    # Compute weighted composite distance score (lower is better) per SoT v2.2.1 A11
+    # distance = 1.0 - f1 for classification; rmse / target_std for regression
+    weighted_distances = []
+    for t in targets:
+        t_name = t["name"]
+        task_type = t["task_type"]
+        weight = t.get("weight", 0.5)
 
-    composite = 0.6 * f1 + 0.4 * regression_score
+        if task_type == "classification":
+            t_f1 = all_metrics[t_name]["oof_f1"]
+            distance = 1.0 - t_f1
+            weighted_distances.append(distance * weight)
+        elif task_type == "regression":
+            t_rmse = float(all_metrics[t_name]["oof_rmse"])
+            # Get target std from eda block, falling back to raw train standard deviation
+            eda_block = state.get("eda", {}) if state else {}
+            target_std = float(
+                eda_block.get(f"{t_name}_std", eda_block.get("target_std", 0.0))
+                or np.asarray(raw_train[t_name], dtype=float).std()
+            )
+            distance = t_rmse / target_std if target_std > 0 else t_rmse
+            weighted_distances.append(distance * weight)
+
+    total_weight = sum(t.get("weight", 0.5) for t in targets)
+    composite = (
+        sum(weighted_distances) / total_weight
+        if total_weight > 0
+        else sum(weighted_distances)
+    )
 
     # Log to DuckDB ledger
     from zindian.ledger import Ledger
@@ -1211,6 +1325,10 @@ def _run_multi_target_variant(
             if c not in {config.get("id_col", "ID"), "target"}
         ]
     )
+    # Direction is minimize for composite distance metric
+    delta = baseline_score - composite
+    gate_result = "PASS" if delta >= 0.0 else "PRUNE"
+
     with Ledger() as ledger:
         exp_id = ledger.log_experiment(
             branch_name=variant_name,
@@ -1218,8 +1336,8 @@ def _run_multi_target_variant(
             metric="composite_f1_rmse",
             feature_count=feature_count,
             calibration_method="none",
-            gate_result="PASS",
-            gate_reason=f"Multi-target variant: {len(targets)} targets trained",
+            gate_result=gate_result,
+            gate_reason=f"Multi-target variant: delta={delta:+.6f} -> {gate_result}",
             dag_phase="phase_3_variant_training",
             notes=f"composite={composite:.6f}; rmse={rmse:.4f}; f1={f1:.4f}; targets={[t['name'] for t in targets]}",
         )
@@ -1227,10 +1345,8 @@ def _run_multi_target_variant(
     print(f"\n{'=' * 60}")
     print(f"VARIANT {variant_name} COMPOSITE: {composite:.6f}")
     print(f"  RMSE: {rmse:.4f} | F1: {f1:.4f}")
-    print(
-        f"  Baseline: {baseline_score:.6f} | Delta: {composite - baseline_score:+.6f}"
-    )
-    print(f"[OK] Experiment logged → DuckDB exp_id={exp_id}")
+    print(f"  Baseline: {baseline_score:.6f} | Delta: {delta:+.6f} -> {gate_result}")
+    print(f"[OK] Experiment logged -> DuckDB exp_id={exp_id}")
     print(f"{'=' * 60}")
 
     return {"status": "OK", "composite_score": composite, "metrics": all_metrics}
@@ -1454,21 +1570,6 @@ def run(
             print("\n[OK] Extraction complete. Pass --variant <name> to run a variant.")
         return {"status": "extracted"}
 
-    # -- Multi-target detection --------------------------------
-    target_config = config.get("target_config")
-    if target_config and target_config.get("targets"):
-        return _run_multi_target_variant(
-            variant_name,
-            config,
-            state,
-            paths,
-            baseline_score,
-            effective_gate_margin,
-            cv_strategy,
-            train_feat,
-            test_feat,
-        )
-
     # -- Phase C: Build VARIANTS dict from config --------------
     # All column names come from config — no competition-specific strings here.
     cols_cfg = config.get("columns", {}) or {}
@@ -1514,14 +1615,43 @@ def run(
         "variant-11": clean_features + interaction_cols,
     }
 
+    # Load sidecar-declared feature_columns for any variant that has them.
+    # This is the generic mechanism — no variant names are hardcoded here.
+    # Any sidecar JSON may declare a "feature_columns" list to restrict training
+    # to a specific column subset (e.g. SAR-only, optical-only, PCA-only).
+    _sidecar_feature_columns: dict[str, list[str]] = {}
+    _comp_slug_fc = config.get("slug") or config.get("competition_slug") or ""
+    if _comp_slug_fc:
+        _variants_dir_fc = (
+            Path(__file__).parent.parent.parent
+            / "competitions"
+            / _comp_slug_fc
+            / "variants"
+        )
+        if _variants_dir_fc.exists():
+            for _sc_path in _variants_dir_fc.glob("*.json"):
+                try:
+                    _sc_data = json.loads(_sc_path.read_text())
+                    _sc_cols = _sc_data.get("feature_columns")
+                    if _sc_cols and isinstance(_sc_cols, list):
+                        _sidecar_feature_columns[_sc_path.stem] = _sc_cols
+                except Exception:
+                    pass
+
     def _resolve_variant_features(vid: str) -> list[str]:
         """
         Resolve feature columns for any variant name.
 
-        Explicit overrides (variant-10, variant-11, etc.) are checked first.
-        All other variant names fall back to a deterministic bucket scheme
-        based on the last character of the variant ID — no hardcoded list of
-        variant names is required.
+        Resolution priority (highest first):
+        1. Sidecar "feature_columns" list — explicit column selection declared
+           in competitions/<slug>/variants/<vid>.json. Filtered to columns that
+           actually exist in train_feat after feature engineering. This allows
+           any variant sidecar to declare its own column subset without touching
+           Python source.
+        2. Explicit Python overrides (variant-10, variant-11, etc.) — derived
+           from config values (clean_features, interaction_cols).
+        3. Deterministic bucket scheme based on the last character of the
+           variant ID — no hardcoded list of variant names is required.
 
         Bucket scheme (last character of variant ID):
           "0", "7"  → first_half  (first 50% of all_features)
@@ -1529,8 +1659,19 @@ def run(
           "2", "9"  → even_feats  (every other feature)
           "anchor" / anything else → all_features
         """
+        # Priority 1: sidecar-declared feature_columns
+        _sidecar_cols = _sidecar_feature_columns.get(vid)
+        if _sidecar_cols:
+            # Filter to columns that exist in the dataframe after FE
+            _available = [c for c in _sidecar_cols if c in train_feat.columns]
+            if _available:
+                return _available
+
+        # Priority 2: explicit Python-registered overrides
         if vid in _explicit_variants:
             return _explicit_variants[vid]
+
+        # Priority 3: bucket scheme
         last_char = vid[-1] if vid else ""
         if last_char in ("7", "0"):
             return first_half
@@ -1543,6 +1684,22 @@ def run(
     feature_cols = _resolve_variant_features(variant_name)
     if not feature_cols:
         raise ValueError(f"Feature column list for '{variant_name}' is empty.")
+
+    # -- Multi-target detection --------------------------------
+    target_config = config.get("target_config")
+    if target_config and target_config.get("targets"):
+        return _run_multi_target_variant(
+            variant_name,
+            config,
+            state,
+            paths,
+            baseline_score,
+            effective_gate_margin,
+            cv_strategy,
+            train_feat,
+            test_feat,
+            feature_cols=feature_cols,
+        )
 
     # -- Phase C: Train (multi-seed averaging) -----------------
     SEEDS = [SEED, SEED + 1, SEED + 2]
@@ -1623,13 +1780,13 @@ def run(
     print(f"  {variant_name} — MULTI-SEED SUMMARY ({len(SEEDS)} seeds)")
     if task_type == "regression":
         print(f"  Mean {metric_name.upper()} : {mean_metric:.5f}  ±{std_metric:.5f}")
-        print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
+        print(f"  Mean Delta   : {mean_delta:+.5f}  -> {gate}")
         print(
             f"  Seed {metric_name.upper()}s: {[round(r[primary_key], 5) for r in seed_results]}"
         )
     else:
         print(f"  Mean ROC-AUC : {mean_auc:.5f}  ±{std_auc:.5f}")
-        print(f"  Mean Delta   : {mean_delta:+.5f}  → {gate}")
+        print(f"  Mean Delta   : {mean_delta:+.5f}  -> {gate}")
         print(f"  Mean F1-Score: {mean_f1:.5f}  (threshold: {mean_thr:.2f})")
         print(f"  Seed ROC-AUCs: {[round(r['oof_auc'], 5) for r in seed_results]}")
 

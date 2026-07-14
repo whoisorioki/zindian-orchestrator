@@ -164,6 +164,19 @@ def _resolve_test_probs_path(paths, branch_name: str, target_name: str) -> Path:
     Locate the test probability CSV written by skill_08 or skill_07 variant trainers.
     Tries the multi-target pattern first, then the single-target fallback.
     """
+    # If branch_name starts with calibration_, look for calib_test_probs_...
+    if branch_name.startswith("calibration_"):
+        base_branch = branch_name.removeprefix("calibration_")
+        mt_path = (
+            paths.data_processed_dir
+            / f"calib_test_probs_{base_branch}_{target_name}.csv"
+        )
+        if mt_path.exists():
+            return mt_path
+        st_path = paths.data_processed_dir / f"calib_test_probs_{base_branch}.csv"
+        if st_path.exists():
+            return st_path
+
     # Multi-target pattern (skill_08 _run_multi_target)
     mt_path = paths.data_processed_dir / f"test_probs_{branch_name}_{target_name}.csv"
     if mt_path.exists():
@@ -380,7 +393,7 @@ def run(
                 last_inference_at=datetime.now(timezone.utc).isoformat(),
                 last_updated=datetime.now(timezone.utc).isoformat(),
             )
-        print(f"\n[OK] Submission written → {out_path}")
+        print(f"\n[OK] Submission written -> {out_path}")
         print(f"     Rows: {len(out_df)} | Columns: {list(out_df.columns)}")
 
     return {"status": "OK", "out_path": str(out_path), "branch": branch_name}

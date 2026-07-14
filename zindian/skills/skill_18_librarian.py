@@ -1,6 +1,21 @@
 """
 Skill 18 — The Librarian
-Canonical librarian implementation for literature mining and prior-art tracking.
+========================
+Literature mining and prior-art tracking using Semantic Scholar web search.
+
+Reads competition name, domain, and keywords from challenge_config.json at
+runtime to generate relevant search queries. No hardcoded competition-specific
+strings — fully competition-agnostic.
+
+Pipeline flow:
+  skill_18 (this) → skill_19 (Code Miner / Gemini synthesis) → skill_20 (Scientist / validation)
+
+Outputs (to competitions/{slug}/reports/):
+  literature_cache.json    — raw search results with URLs, titles, snippets
+  domain_hypotheses.json   — feature hypotheses extracted from literature signals
+
+Usage:
+  python -m zindian.skills.skill_18_librarian
 """
 
 from __future__ import annotations
@@ -10,81 +25,75 @@ import json
 import re
 import time
 from typing import Any
-import requests
 from pathlib import Path
+
+from dotenv import load_dotenv
 from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
+from zindian.clients.semantic_scholar import SemanticScholarClient
 
-from zindian.constants import TC_VARIABLES as _CANONICAL_TC
+load_dotenv()
 
-# Allow challenge config to override the canonical values if provided
-TC_VARIABLES: list[str] = _CANONICAL_TC
-try:
-    cfg = ChallengeConfig.load()
-    tc_conf = cfg.get("tc_variables")
-    if isinstance(tc_conf, list) and tc_conf:
-        TC_VARIABLES = tc_conf
-except Exception:
-    pass
+# --- Constants ---
 
-SEMANTIC_SCHOLAR_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
-FIELDS = "paperId,title,abstract,year,authors,tldr"
-MAX_RETRIES = 5
-BASE_BACKOFF = 2
+MAX_RETRIES = 3
+REQUEST_DELAY = 1.0  # seconds between Semantic Scholar API calls (rate-limit friendly)
 
-QUERY_TEMPLATES = [
-    "TerraClimate species distribution modelling",
-    "TerraClimate species occurrence prediction",
-    "{var} climate variable species distribution",
-    "monthly climate features species distribution machine learning",
-    "TerraClimate temporal features species modelling",
-    "precipitation temperature species suitability",
-]
+# --- Module-level Semantic Scholar client ---
 
 _SS_CLIENT: Any = None
 try:
-    from zindian.clients.semantic_scholar import SemanticScholarClient
-
-    try:
-        _SS_CLIENT = SemanticScholarClient()
-    except Exception:
-        _SS_CLIENT = None
+    _SS_CLIENT = SemanticScholarClient()
 except Exception:
     _SS_CLIENT = None
 
 
-def build_queries(tc_variables: list[str]) -> list[str]:
-    keywords = []
-    comp_name = "Species distribution modelling"
-    _comp_domain = "biodiversity"
-    target_col = "Occurrence Status"
-    slug = ""
+# ---------------------------------------------------------------------------
+# Query generation
+# ---------------------------------------------------------------------------
+
+
+def build_queries() -> list[str]:
+    """Build web search queries dynamically from competition config.
+
+    Generates competition-specific queries by reading name, domain,
+    target column, and slug from challenge_config.json.
+
+    Supports:
+      - Remote sensing / SAR / optical / aquaculture competitions
+      - Climate / biodiversity competitions
+      - Generic tabular competitions
+    """
+    cfg_data: dict[str, Any] = {}
     try:
         cfg = ChallengeConfig.load()
-        if cfg.get("domain_keywords"):
-            keywords = cfg.get("domain_keywords")
-        if cfg.get("name"):
-            comp_name = cfg.get("name")
-        if cfg.get("domain"):
-            pass  # domain captured via config.get at call time
-        if cfg.get("target_col"):
-            target_col = cfg.get("target_col")
-        if cfg.get("slug"):
-            slug = cfg.get("slug")
+        cfg_data = {
+            "name": cfg.get("name", ""),
+            "domain": cfg.get("domain", ""),
+            "domain_keywords": cfg.get("domain_keywords", []),
+            "target_col": cfg.get("target_col", ""),
+            "slug": cfg.get("slug", ""),
+        }
     except Exception:
         pass
 
-    # 1. Fallback cascade if no explicit keywords are defined
-    if not isinstance(keywords, list) or not keywords:
-        sources = [comp_name, target_col, slug]
+    comp_name = cfg_data.get("name", "") or "competition"
+    domain_str = str(cfg_data.get("domain", "") or "")
+    target_col = cfg_data.get("target_col", "")
+    slug = cfg_data.get("slug", "")
+
+    # Extract keywords
+    keywords: list[str] = list(cfg_data.get("domain_keywords") or [])
+    if not keywords:
+        sources = [s for s in [comp_name, target_col, slug, domain_str] if s]
         try:
             paths = resolve_competition_paths()
             sources.append(paths.config_path.parent.name)
         except Exception:
             pass
 
-        found = []
+        found: list[str] = []
         stopwords = {
             "the",
             "and",
@@ -112,28 +121,26 @@ def build_queries(tc_variables: list[str]) -> list[str]:
             "volume",
             "forecasting",
             "transaction",
+            "geoai",
         }
-        for source_str in sources:
-            if source_str:
-                # Find all alphabetical words of length >= 3
-                for w in re.findall(r"\b[a-zA-Z]{3,}\b", source_str.lower()):
-                    if w not in stopwords:
-                        found.append(w)
-                # also split by separators (dashes, underscores)
-                for part in re.split(r"[-_ ]", source_str.lower()):
-                    w_clean = re.sub(r"[^a-z]", "", part)
-                    if len(w_clean) >= 3 and w_clean not in stopwords:
-                        found.append(w_clean)
-        keywords = sorted(list(set(found)))
+        for src in sources:
+            if not src:
+                continue
+            for w in re.findall(r"\b[a-zA-Z]{3,}\b", src.lower()):
+                if w not in stopwords:
+                    found.append(w)
+            for part in re.split(r"[-_ ]", src.lower()):
+                wc = re.sub(r"[^a-z]", "", part)
+                if len(wc) >= 3 and wc not in stopwords:
+                    found.append(wc)
+        keywords = sorted(set(found))
 
-    # 2. Ultimate fallback to prevent empty keywords
     if not keywords:
-        keywords = ["biodiversity", "species"]
+        keywords = ["machine learning", "feature engineering"]
 
-    # 3. Generate query set dynamically using the keywords
-    queries = []
+    queries: list[str] = []
 
-    # Base generic ML queries
+    # Base queries using competition name
     if comp_name:
         queries.extend(
             [
@@ -144,56 +151,80 @@ def build_queries(tc_variables: list[str]) -> list[str]:
             ]
         )
 
-    # Dynamic queries based on extracted/configured domain keywords
-    for kw in keywords:
-        queries.extend(
-            [
-                f"TerraClimate {kw} occurrence prediction",
-                f"precipitation temperature {kw} suitability",
-                f"TerraClimate temporal features {kw} modelling",
-            ]
-        )
-        for var in ["ppt", "tmax", "tmin", "aet", "pdsi"]:
-            queries.append(f"{var} climate variable {kw} distribution")
+    # Domain-specific queries
+    domain_lower = domain_str.lower()
+    is_remote_sensing = any(
+        kw in domain_lower or kw in " ".join(keywords).lower()
+        for kw in [
+            "sar",
+            "radar",
+            "sentinel",
+            "remote sensing",
+            "satellite",
+            "optical",
+            "multispectral",
+            "aquaculture",
+            "pond",
+            "geospatial",
+            "agriculture",
+        ]
+    )
 
-    return sorted(list(set(queries)))
+    if is_remote_sensing:
+        for kw in keywords[:3]:
+            queries.extend(
+                [
+                    f"SAR satellite imagery {kw} classification feature engineering",
+                    f"remote sensing {kw} machine learning winning solution",
+                    f"geospatial {kw} ensemble stacking Kaggle",
+                ]
+            )
+    else:
+        for kw in keywords[:3]:
+            queries.extend(
+                [
+                    f"machine learning {kw} predictive modeling",
+                    f"winning solution {kw} feature engineering",
+                ]
+            )
+
+    # Generic queries that apply to all competition types
+    queries.extend(
+        [
+            "binary classification threshold optimization F1 score imbalanced dataset",
+            "cross validation strategy leakage prevention out-of-fold predictions ensemble",
+            "LightGBM XGBoost hyperparameter optimization tabular competition",
+        ]
+    )
+
+    return sorted(set(q for q in queries if len(q) > 10))
 
 
-def fetch_papers(query: str, limit: int = 5) -> list[dict]:
-    """Fetch papers using Semantic Scholar client if available, otherwise fallback to requests."""
-    # Prefer the Semantic Scholar client if available (reads API key and rate-limits)
-    if _SS_CLIENT is not None:
-        try:
-            resp = _SS_CLIENT.search_papers(query, limit=limit)
-            if isinstance(resp, dict):
-                return resp.get("data", [])
-        except Exception as e:
-            print(f"[Librarian] SemanticScholar client error: {e}")
-
-    params: dict[str, Any] = {"query": query, "limit": limit, "fields": FIELDS}
-    time.sleep(3.0)
-    for attempt in range(MAX_RETRIES):
-        try:
-            r = requests.get(SEMANTIC_SCHOLAR_SEARCH, params=params, timeout=15)
-            if r.status_code == 429:
-                wait = (attempt + 1) * 15
-                print(
-                    f"[Librarian] Rate limited. Cooled down requirement triggered. Waiting {wait}s..."
-                )
-                time.sleep(wait)
-                continue
-            r.raise_for_status()
-            return r.json().get("data", [])
-        except requests.RequestException as e:
-            print(f"[Librarian] Request error ({query[:40]}): {e}")
-            time.sleep(5)
-    return []
+# ---------------------------------------------------------------------------
+# Semantic Scholar search
+# ---------------------------------------------------------------------------
 
 
-def extract_abstract(paper: dict) -> str | None:
-    if paper.get("tldr") and paper["tldr"].get("text"):
-        return paper["tldr"]["text"]
-    return paper.get("abstract")
+def _fetch_papers(query: str, limit: int = 5) -> list[dict]:
+    """Search Semantic Scholar for papers matching query."""
+    if _SS_CLIENT is None:
+        return []
+    try:
+        result = _SS_CLIENT.search_papers(query, limit=limit)
+        return result.get("data", [])
+    except Exception as e:
+        print(f"  [Librarian] SS error: {e}")
+        return []
+
+
+def _extract_abstract(paper: dict) -> str:
+    abstract = paper.get("abstract") or paper.get("title") or ""
+    return abstract[:240]
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis building
+# ---------------------------------------------------------------------------
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
@@ -207,83 +238,163 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
 
 
 def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
+    """Build domain hypotheses from search result entries.
+
+    Detects relevant signal keywords from result titles/descriptions
+    and maps them to feature variables based on the competition domain.
+    """
     hypotheses = []
     seen_signatures = set()
-    fallback_variables = [
-        "ppt",
-        "tmax",
-        "tmin",
-        "aet",
-        "def",
-        "pdsi",
-        "pet",
-        "q",
-        "soil",
-        "srad",
-        "vap",
-        "vpd",
-    ]
 
+    # Generic signal detection — works for any domain
     keyword_map = [
-        ("precipitation", ["precip", "rain", "rainfall", "wet"], ["ppt"]),
-        ("temperature", ["temp", "thermal", "heat", "cold"], ["tmax", "tmin", "pet"]),
         (
-            "moisture stress",
-            ["moisture", "soil", "drought", "arid", "dry"],
-            ["soil", "aet", "def", "pdsi", "q"],
-        ),
-        ("radiation", ["radiation", "solar", "insolation", "sun"], ["srad"]),
-        (
-            "atmospheric demand",
-            ["vapour", "vapor", "vpd", "evap", "evapotranspiration"],
-            ["vap", "vpd", "aet", "pet"],
+            "temporal patterns",
+            ["temporal", "time series", "monthly", "season", "lag", "trend"],
         ),
         (
-            "seasonality",
-            ["season", "monthly", "temporal", "lag"],
-            ["ppt", "tmax", "tmin", "srad"],
+            "spatial patterns",
+            [
+                "spatial",
+                "geographic",
+                "location",
+                "distance",
+                "proximity",
+                "neighbour",
+                "neighbor",
+            ],
+        ),
+        ("texture", ["texture", "glcm", "haralick", "edge", "gradient", "shape"]),
+        (
+            "spectral indices",
+            ["spectral", "index", "ndvi", "ndwi", "mndwi", "evi", "savi"],
         ),
         (
-            "habitat suitability",
-            ["habitat", "occurrence", "distribution", "suitability", "species"],
-            ["ppt", "tmax", "tmin", "srad", "vap", "vpd"],
+            "polarimetry",
+            ["polarim", "vh", "vv", "polarization", "backscatter", "radar"],
+        ),
+        (
+            "feature fusion",
+            [
+                "fusion",
+                "multi-modal",
+                "multi modal",
+                "cross modal",
+                "ensemble",
+                "stack",
+            ],
+        ),
+        (
+            "dimensionality reduction",
+            ["pca", "umap", "tsne", "embedding", "autoencoder", "manifold"],
+        ),
+        (
+            "augmentation",
+            ["augment", "synthetic", "pseudo label", "self train", "semi supervised"],
+        ),
+        (
+            "cross validation",
+            [
+                "cross validation",
+                "cv strategy",
+                "stratified",
+                "temporal cv",
+                "spatial cv",
+            ],
+        ),
+        (
+            "domain adaptation",
+            ["domain adaptation", "transfer", "fine tune", "pretrain", "pre train"],
         ),
     ]
 
-    for paper in entries:
-        text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
-        signals = []
-        variables = []
-        for signal_name, keywords, tc_variables in keyword_map:
-            if any(keyword in text for keyword in keywords):
-                signals.append(signal_name)
-                variables.extend(tc_variables)
+    # Read competition config to determine domain
+    is_sar_domain = False
+    try:
+        cfg = ChallengeConfig.load()
+        domain_str = str(cfg.get("domain", "")).lower()
+        is_sar_domain = any(
+            d in domain_str for d in ["agriculture", "geospatial", "aquaculture"]
+        ) or any(
+            kw in (cfg.get("domain_keywords") or [])
+            for kw in ["SAR", "sar", "radar", "sentinel"]
+        )
+    except Exception:
+        pass
 
-        variables = [
-            variable
-            for variable in _dedupe_preserve_order(variables)
-            if variable in TC_VARIABLES
-        ]
+    fallback_variables = ["feature1", "feature2", "feature3", "feature4"]
+
+    for entry in entries:
+        text = (f"{entry.get('title', '')} {entry.get('abstract', '')}").lower()
+
+        signals: list[str] = []
+        variables: list[str] = []
+
+        if is_sar_domain:
+            sar_signal_map = [
+                ("backscatter", ["backscatter", "radar", "vh", "vv", "polarization"]),
+                (
+                    "spectral reflectance",
+                    ["reflectance", "nir", "swir", "optical", "multispectral"],
+                ),
+                ("water index", ["water", "mndwi", "ndwi", "pond", "aquaculture"]),
+                ("vegetation", ["vegetation", "ndvi", "evi", "savi", "green"]),
+                (
+                    "texture analysis",
+                    ["texture", "glcm", "edge", "haralick", "spatial"],
+                ),
+                (
+                    "temporal analysis",
+                    ["temporal", "time series", "monthly", "seasonal"],
+                ),
+                ("feature ratio", ["ratio", "vh/vv", "index", "normalized difference"]),
+                (
+                    "sar-optical fusion",
+                    ["fusion", "combined", "multi sensor", "sar optical"],
+                ),
+            ]
+            for signal_name, signal_kws in sar_signal_map:
+                if any(kw in text for kw in signal_kws):
+                    signals.append(signal_name)
+                    if signal_name == "backscatter":
+                        variables.extend(["vh", "vv"])
+                    elif signal_name == "spectral reflectance":
+                        variables.extend(["nir", "swir1", "red", "green", "blue"])
+                    elif signal_name in ("water index", "vegetation"):
+                        variables.extend(["nir", "swir1", "green", "red"])
+                    elif signal_name == "temporal analysis":
+                        variables.extend(["vh", "vv", "nir", "swir1"])
+                    elif signal_name == "feature ratio":
+                        variables.extend(["vh", "vv", "nir", "swir1"])
+
+        if not signals:
+            for signal_name, signal_kws in keyword_map:
+                if any(kw in text for kw in signal_kws):
+                    signals.append(signal_name)
+
+        if not signals:
+            signals = ["feature engineering"]
+
         if not variables:
             variables = fallback_variables[:4]
 
-        if not signals:
-            signals = ["climate variability"]
-
+        variables = _dedupe_preserve_order(variables)
         signal = ", ".join(_dedupe_preserve_order(signals))
         signature = (signal, tuple(variables))
+
         if signature in seen_signatures:
             continue
         seen_signatures.add(signature)
 
-        abstract = paper.get("abstract") or paper.get("title") or "Domain evidence"
+        rationale = entry.get("abstract") or entry.get("title") or "Domain evidence"
         hypotheses.append(
             {
                 "signal": signal,
-                "rationale": abstract[:240],
+                "rationale": rationale[:240],
                 "variables_needed": variables,
-                "paper_title": paper.get("title"),
-                "year": paper.get("year"),
+                "source_paper_id": entry.get("paperId"),
+                "paper_title": entry.get("title"),
+                "year": entry.get("year"),
             }
         )
 
@@ -291,34 +402,51 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
             break
 
     if not hypotheses:
-        hypotheses = [
+        hypotheses.append(
             {
-                "signal": "climate variability",
-                "rationale": "Fallback domain signal derived from TerraClimate-only competition constraints.",
-                "variables_needed": ["ppt", "tmax", "tmin", "aet"],
+                "signal": "feature engineering",
+                "rationale": "Fallback hypothesis derived from competition domain metadata. No relevant search results returned.",
+                "variables_needed": fallback_variables,
+                "source_paper_id": None,
                 "paper_title": None,
                 "year": None,
             }
-        ]
+        )
 
     return hypotheses
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 
 def run_librarian(
     config_path: str | None = None, cache_path: str | None = None
 ) -> dict:
-    queries = build_queries(TC_VARIABLES)
-    seen_ids = set()
-    entries = []
+    """Run the librarian: search Semantic Scholar for competition-relevant prior art.
+
+    Writes:
+      - literature_cache.json — raw search results
+      - domain_hypotheses.json — extracted feature hypotheses
+    """
+    if _SS_CLIENT is None:
+        print(
+            "[Librarian] WARNING: Semantic Scholar client not initialized. "
+            "No search will be performed."
+        )
+
+    queries = build_queries()
+    print(f"[Librarian] Running {len(queries)} searches via Semantic Scholar...")
+
+    seen_ids: set[str] = set()
+    entries: list[dict] = []
 
     for q in queries:
-        papers = fetch_papers(q)
+        papers = _fetch_papers(q, limit=5)
         for p in papers:
-            pid = p.get("paperId")
+            pid = p.get("paperId") or p.get("title")
             if not pid or pid in seen_ids:
-                continue
-            abstract = extract_abstract(p)
-            if not abstract:
                 continue
             seen_ids.add(pid)
             entries.append(
@@ -327,20 +455,34 @@ def run_librarian(
                     "title": p.get("title"),
                     "year": p.get("year"),
                     "query": q,
-                    "abstract": abstract,
+                    "abstract": _extract_abstract(p),
                 }
             )
-        time.sleep(1.2)
+        time.sleep(REQUEST_DELAY)
+
+    # Read competition config for metadata
+    comp_name = "unknown"
+    domain_str = "unknown"
+    slug = "unknown"
+    try:
+        cfg = ChallengeConfig.load()
+        comp_name = cfg.get("name") or "unknown"
+        domain_str = cfg.get("domain") or "unknown"
+        slug = cfg.get("slug") or "unknown"
+    except Exception:
+        pass
 
     cache = {
         "status": "COMPLETE",
-        "tc_variables": TC_VARIABLES,
-        "region": "southeastern Australia",
-        "temporal_window": "2017-11 to 2019-11",
+        "source": "semantic_scholar",
+        "competition": comp_name,
+        "domain": domain_str,
+        "slug": slug,
         "query_count": len(queries),
         "paper_count": len(entries),
         "entries": entries,
     }
+
     if cache_path is None:
         paths = resolve_competition_paths(require_competition=True)
         cache_path = str(paths.reports_dir / "literature_cache.json")
@@ -354,7 +496,8 @@ def run_librarian(
         json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
     )
     print(
-        f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses → {domain_hypotheses_path}"
+        f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses "
+        f"→ {domain_hypotheses_path}"
     )
 
     return cache
@@ -363,11 +506,14 @@ def run_librarian(
 def run(config: dict, state_store: SkillStateStore) -> None:
     """Standard entry point wrapper that logs a warning or executes librarian."""
     print(
-        "WARNING: Standard skill_18 entry point run() called. This skill utilizes run_librarian() instead."
+        "WARNING: Standard skill_18 entry point run() called. "
+        "This skill utilizes run_librarian() instead."
     )
-    # Log a "Not Implemented" warning through the state store as requested
     state_store.update(
-        librarian_warning="skill_18 run() called but is not implemented in the standard loop; execute via run_librarian() instead."
+        librarian_warning=(
+            "skill_18 run() called but is not implemented in the standard loop; "
+            "execute via run_librarian() instead."
+        )
     )
 
 

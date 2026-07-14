@@ -358,6 +358,293 @@ def run_skill(
     return result_dict
 
 
+def prompt_human_gate(
+    gate_name: str,
+    store: Any,
+    state: Dict[str, Any],
+    config: Any,
+    variant_name: Optional[str] = None,
+    non_interactive: bool = False,
+) -> bool:
+    import json
+    import sys
+    from pathlib import Path
+    from datetime import datetime, timezone
+
+    # 1. Non-interactive check
+    if non_interactive or not sys.stdin.isatty():
+        if gate_name == "Gate 1":
+            return bool(state.get("human_gate_1_approved"))
+        elif gate_name == "Gate 2":
+            return bool(state.get(f"human_gate_2_{variant_name}_approved"))
+        elif gate_name == "Gate 3":
+            return bool(state.get("human_gate_3_approved"))
+        elif gate_name == "Gate 4":
+            return bool(state.get("human_gate_4_approved"))
+        return False
+
+    # 2. Check if already approved
+    if gate_name == "Gate 1" and state.get("human_gate_1_approved"):
+        return True
+    if gate_name == "Gate 2" and state.get(f"human_gate_2_{variant_name}_approved"):
+        return True
+    if gate_name == "Gate 3" and state.get("human_gate_3_approved"):
+        return True
+    if gate_name == "Gate 4" and state.get("human_gate_4_approved"):
+        return True
+
+    # 3. Interactive prompt
+    print("\n============================================================")
+    print(f"HUMAN GATE CONTROL: {gate_name.upper()}")
+    if variant_name:
+        print(f"Variant: {variant_name}")
+    print("============================================================\n")
+
+    if gate_name == "Gate 1":
+        auto_strategy = config._data.get("cv_strategy", {}).get("type", "unknown")
+        supports_d = auto_strategy in ("TimeSeriesSplit", "GroupKFold")
+        print(f"Auto-selected CV strategy: {auto_strategy}")
+        print(
+            "Please review the anchor fold scores in the DuckDB ledger / status command."
+        )
+        print()
+        while True:
+            print("  [A] APPROVE  — accept auto-selected strategy")
+            print("  [B] REJECT   — reject anchor, regenerate")
+            print("  [C] CHALLENGE — override anchor inputs")
+            if supports_d:
+                print("  [D] CHALLENGE CV STRATEGY — comparison run")
+            print()
+            try:
+                choice = input("Enter choice: ").strip().upper()
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted by user.")
+                sys.exit(0)
+
+            if choice == "A":
+                store.update(human_gate_1_approved=True)
+                print("✓ Gate 1 approved.")
+                return True
+            elif choice == "B":
+                print("✗ Anchor rejected.")
+                return False
+            elif choice == "C":
+                override_path = input("Enter path to JSON override file: ").strip()
+                if not override_path:
+                    print("❌ Override path cannot be empty.")
+                    continue
+                override_file = Path(override_path)
+                if not override_file.exists():
+                    print(f"❌ Override file not found: {override_file}")
+                    continue
+                try:
+                    overrides = json.loads(override_file.read_text(encoding="utf-8"))
+                except Exception as e:
+                    print(f"❌ Failed to parse override JSON: {e}")
+                    continue
+
+                # Run challenge anchor
+                original_oof = state.get("anchor_oof_score")
+                model_family = (
+                    overrides.get("model_family")
+                    or overrides.get("framework")
+                    or "lightgbm"
+                )
+                params = overrides.get("params") or overrides.get("hyperparams") or {}
+                n_splits = overrides.get("n_splits") or config._data.get(
+                    "cv_strategy", {}
+                ).get("n_splits", 5)
+
+                challenge_meta = {
+                    "active": True,
+                    "model_family": model_family,
+                    "params": params,
+                    "n_splits": n_splits,
+                    "modification": f"Hyperparameters overridden from {override_file.name}",
+                    "original_oof": original_oof,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                store.update(anchor_challenge=challenge_meta)
+
+                # Execute challenge run
+                print("\nRunning challenge anchor training...")
+                result = run_skill("skill_08")
+
+                fresh_state = store.read()
+                challenged_oof = fresh_state.get("anchor_oof_score")
+
+                challenge_meta["challenged_oof"] = challenged_oof
+                challenge_meta["approved_by"] = "human_gate_1"
+
+                print("\n--- CHALLENGE RUN COMPLETE ---")
+                print(f"Original Anchor OOF Score : {original_oof}")
+                print(f"Challenged Anchor OOF Score: {challenged_oof}")
+                print()
+
+                while True:
+                    sel = (
+                        input(
+                            "Choose which anchor to keep ([O]riginal / [C]hallenged): "
+                        )
+                        .strip()
+                        .upper()
+                    )
+                    if sel == "C":
+                        challenge_meta["active"] = True
+                        challenge_meta["rationale"] = "User chose challenged anchor"
+                        store.update(
+                            anchor_oof_score=challenged_oof,
+                            anchor_oof_score_challenged=challenged_oof,
+                            anchor_challenge=challenge_meta,
+                            human_gate_1_approved=True,
+                        )
+                        print("✓ Challenged anchor accepted. Gate 1 approved.")
+                        return True
+                    elif sel == "O":
+                        challenge_meta["active"] = False
+                        challenge_meta["rationale"] = "User retained original anchor"
+                        store.update(
+                            anchor_oof_score=original_oof,
+                            anchor_challenge=challenge_meta,
+                            human_gate_1_approved=True,
+                        )
+                        print("✓ Original anchor retained. Gate 1 approved.")
+                        return True
+                    else:
+                        print("❌ Invalid selection. Enter 'O' or 'C'.")
+            elif choice == "D" and supports_d:
+                task_type = config._data.get("task_type", "regression")
+                override_strategy = (
+                    "StratifiedKFold" if task_type == "classification" else "KFold"
+                )
+                original_oof = state.get("anchor_oof_score")
+
+                override_meta = {
+                    "active": True,
+                    "original_strategy": auto_strategy,
+                    "override_strategy": override_strategy,
+                    "original_oof": original_oof,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                store.update(cv_strategy_override=override_meta)
+
+                print(
+                    f"\nRunning comparison CV strategy training using {override_strategy}..."
+                )
+                result = run_skill("skill_08")
+
+                fresh_state = store.read()
+                override_oof = fresh_state.get("anchor_oof_score")
+
+                override_meta["override_oof"] = override_oof
+                override_meta["approved_by"] = "human_gate_1"
+
+                print("\n--- CV Strategy COMPARISON RUN COMPLETE ---")
+                print(f"Original Strategy ({auto_strategy}) OOF: {original_oof}")
+                print(f"Override Strategy ({override_strategy}) OOF: {override_oof}")
+                print()
+
+                while True:
+                    sel = (
+                        input(
+                            "Choose which CV strategy to use ([O]riginal / [C]omparison): "
+                        )
+                        .strip()
+                        .upper()
+                    )
+                    if sel == "C":
+                        override_meta["active"] = True
+                        override_meta["rationale"] = "User chose comparison CV strategy"
+                        store.update(
+                            anchor_oof_score=override_oof,
+                            cv_strategy_override=override_meta,
+                            human_gate_1_approved=True,
+                        )
+                        print(
+                            f"✓ CV strategy override ({override_strategy}) accepted. Gate 1 approved."
+                        )
+                        return True
+                    elif sel == "O":
+                        override_meta["active"] = False
+                        override_meta["rationale"] = (
+                            "User retained original CV strategy"
+                        )
+                        store.update(
+                            anchor_oof_score=original_oof,
+                            cv_strategy_override=override_meta,
+                            human_gate_1_approved=True,
+                        )
+                        print("✓ Original CV strategy retained. Gate 1 approved.")
+                        return True
+                    else:
+                        print("❌ Invalid selection. Enter 'O' or 'C'.")
+            else:
+                print("❌ Invalid selection.")
+
+    elif gate_name == "Gate 2":
+        while True:
+            try:
+                choice = (
+                    input(f"Approve variant branch '{variant_name}'? [YES/NO]: ")
+                    .strip()
+                    .upper()
+                )
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted by user.")
+                sys.exit(0)
+            if choice == "YES":
+                store.update(**{f"human_gate_2_{variant_name}_approved": True})
+                print(f"✓ Variant '{variant_name}' approved.")
+                return True
+            elif choice == "NO":
+                print(f"✗ Variant '{variant_name}' rejected.")
+                return False
+            else:
+                print("❌ Enter YES or NO.")
+
+    elif gate_name == "Gate 3":
+        while True:
+            try:
+                choice = (
+                    input("Approve entering oracle fusion? [YES/NO]: ").strip().upper()
+                )
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted by user.")
+                sys.exit(0)
+            if choice == "YES":
+                store.update(human_gate_3_approved=True)
+                print("✓ Gate 3 approved.")
+                return True
+            elif choice == "NO":
+                print("✗ Fusion rejected.")
+                return False
+            else:
+                print("❌ Enter YES or NO.")
+
+    elif gate_name == "Gate 4":
+        while True:
+            try:
+                choice = (
+                    input("Approve generating inference predictions? [YES/NO]: ")
+                    .strip()
+                    .upper()
+                )
+            except (KeyboardInterrupt, EOFError):
+                print("\nAborted by user.")
+                sys.exit(0)
+            if choice == "YES":
+                store.update(human_gate_4_approved=True)
+                print("✓ Gate 4 approved.")
+                return True
+            elif choice == "NO":
+                print("✗ Inference prediction generation rejected.")
+                return False
+            else:
+                print("❌ Enter YES or NO.")
+
+    return False
+
+
 def run_phase(
     phase: str,
     **kwargs: Any,
@@ -474,7 +761,66 @@ def run_phase(
 
     results = {}
     for skill_name in skills:
+        variant_arg = kwargs.get("variant_name")
+        if phase == "2B" and variant_arg and skill_name == "skill_08":
+            print(
+                f"\nSkipping {skill_name} (anchor baseline training) for variant run: {variant_arg}\n"
+            )
+            continue
+
         if skill_name in SKILL_REGISTRY or "." in skill_name:
+            # --- Human Gates Intercepts ---
+            non_interactive = kwargs.get("non_interactive", False)
+
+            if store:
+                try:
+                    state = store.read()
+                except Exception:
+                    pass
+
+            # Gate 1 Check: at start of variant run, check Gate 1
+            if (
+                phase == "2B"
+                and variant_arg
+                and skill_name == "skill_07"
+                and not state.get("human_gate_1_approved")
+            ):
+                approved = prompt_human_gate(
+                    "Gate 1",
+                    store,
+                    state,
+                    config,
+                    variant_name=variant_arg,
+                    non_interactive=non_interactive,
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 2B variant execution blocked: Gate 1 not approved",
+                    }
+
+            # Gate 3 Check: before skill_13 runs
+            if phase == "3B" and skill_name == "skill_13":
+                approved = prompt_human_gate(
+                    "Gate 3", store, state, config, non_interactive=non_interactive
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 3B fusion execution blocked: Gate 3 not approved",
+                    }
+
+            # Gate 4 Check: before skill_14 runs
+            if phase == "4" and skill_name == "skill_14":
+                approved = prompt_human_gate(
+                    "Gate 4", store, state, config, non_interactive=non_interactive
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 4 inference execution blocked: Gate 4 not approved",
+                    }
+
             print(f"\nRunning {skill_name}...")
             # Pass config and state to skills that need them
             skill_kwargs = kwargs.copy()
@@ -542,6 +888,40 @@ def run_phase(
 
             result = run_skill(skill_name, **skill_kwargs)
             results[skill_name] = result
+
+            # --- Post-Skill human gate checks ---
+            if store:
+                try:
+                    state = store.read()
+                except Exception:
+                    pass
+
+            # Gate 1 Check: after skill_08 completes in anchor run (no variant)
+            if phase == "2B" and not variant_arg and skill_name == "skill_08":
+                approved = prompt_human_gate(
+                    "Gate 1", store, state, config, non_interactive=non_interactive
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": "Phase 2B anchor execution blocked: Gate 1 not approved",
+                    }
+
+            # Gate 2 Check: after skill_08 completes in variant run
+            if phase == "2B" and variant_arg and skill_name == "skill_08":
+                approved = prompt_human_gate(
+                    "Gate 2",
+                    store,
+                    state,
+                    config,
+                    variant_name=variant_arg,
+                    non_interactive=non_interactive,
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": f"Phase 2B variant '{variant_arg}' execution blocked: Gate 2 not approved",
+                    }
 
             # Print telemetry
             telemetry = result.get("telemetry", {})

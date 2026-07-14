@@ -55,7 +55,7 @@ class ZindiClient:
             "token": self._auth_token,
         }
         self._challenge_id = None
-        print(f"✅ Logged in as: {os.getenv('ZINDI_USERNAME')}")
+        print(f"  [OK] Logged in as: {os.getenv('ZINDI_USERNAME')}")
 
     # ── Competition Discovery ──────────────────────────────────────
 

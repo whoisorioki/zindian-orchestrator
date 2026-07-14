@@ -113,7 +113,7 @@ def sync_all() -> dict[str, Any]:
         state = sync_leaderboard(client, state)
         state["remaining_submissions"] = client.remaining_submissions
     except Exception as e:
-        print(f"⚠️  Could not sync Zindi data: {e}")
+        print(f"  [WARN]  Could not sync Zindi data: {e}")
 
     # Timestamp
     state["last_updated"] = datetime.now(timezone.utc).isoformat()

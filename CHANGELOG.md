@@ -2,6 +2,26 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.4 - 2026-07-14]
+
+### Added
+- **Competition-agnostic research sidecar pipeline (skills 18 → 19 → 20):**
+  - `skill_18_librarian.py`: Reverted from Firecrawl (proprietary, Zindi non-compliant) to Semantic Scholar free API. Dynamic query generation reads competition domain/keywords from `challenge_config.json` instead of hardcoded TerraClimate/biodiversity strings.
+  - `skill_19_code_miner.py`: Replaced hardcoded `SEARCH_TEMPLATES` with dynamic `build_queries()` reading from config. Removed `is_frog_comp`, `relevance_to_geospatial_species`, "52 TerraClimate variables", and TerraClimate-specific synthesis prompt.
+  - `skill_20_scientist.py`: Removed hardcoded `species distribution modelling`, `is_frog_comp`, `ey-frogs` fallback path, and TerraClimate column patterns. Reads competition name/target dynamically from config.
+- `scripts/validate_sar_variants.py`: SAR variant validation script.
+- `scripts/write_sidecars.py`: Sidecar writing helper script.
+
+### Changed
+- All 3 research skills now satisfy **Architectural Principle A5**: no hardcoded competition-specific strings; all values read from `challenge_config.json` at runtime.
+- `skill_18` domain detection supports SAR/remote sensing, biodiversity, and generic tabular competitions with appropriate query templates.
+- `skill_18/_build_domain_hypotheses`: Replaced Firecrawl-specific search result parsing (url/description/snippet) with Semantic Scholar schema (paperId/title/abstract/year).
+- `skill_19/_build_synthesis_prompt`: Dynamically synthesizes competition context from config instead of hardcoded TerraClimate/EY-frogs values.
+- `skill_20` fallback path raises `RuntimeError` if no competition directory configured instead of silently defaulting to `competitions/ey-frogs`.
+
+### Fixed
+- **Compliance violation**: skill_18 was using Firecrawl commercial API in violation of Zindi competition rules (only free/open tools allowed). Reverted to free Semantic Scholar API.
+
 ## [Reconciled - 2026-07-06]
 
 ### Added

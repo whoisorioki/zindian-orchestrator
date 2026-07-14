@@ -475,7 +475,7 @@ def run(
                 training_target_col: np.asarray(train[training_target_col].values),
             }
         ).to_csv(oof_path, index=False)
-    print(f"[OK] OOF predictions saved → {oof_path}")
+    print(f"[OK] OOF predictions saved -> {oof_path}")
 
     # Submission formatting removed — Phase 2B writes probabilities only.
     # skill_14 (Phase 4) reads test_probs from data/processed/ and produces
@@ -809,7 +809,7 @@ def _run_multi_target(
                 all_metrics[target_name]["oof_f1_macro"] = _macro_f1
                 all_metrics[target_name]["oof_f1_weighted"] = _weighted_f1
 
-    print(f"\n[OK] Multi-target OOF saved → {oof_path}")
+    print(f"\n[OK] Multi-target OOF saved -> {oof_path}")
 
     # Save multi-target submission
     test_file = input_files.get("test", "Test.csv")
@@ -837,7 +837,7 @@ def _run_multi_target(
             paths.data_processed_dir / f"test_probs_anchor-baseline_{target_name}.csv"
         )
         test_prob_df.to_csv(test_prob_path, index=False)
-        print(f"[OK] Test probabilities saved → {test_prob_path}")
+        print(f"[OK] Test probabilities saved -> {test_prob_path}")
 
     # Submission formatting removed from Phase 2B — skill_14 (Phase 4) reads
     # test_probs_anchor-baseline_<target>.csv from data/processed/ and produces

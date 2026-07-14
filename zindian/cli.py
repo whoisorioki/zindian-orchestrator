@@ -112,6 +112,9 @@ def main():
         "--verbose", "-v", action="store_true", help="Show detailed skill output"
     )
     phase_parser.add_argument("--variant", help="Variant name to pass to phase skills")
+    phase_parser.add_argument(
+        "--non-interactive", action="store_true", help="Run phase non-interactively"
+    )
 
     # ---------------------------------------------------------
     # Utility Commands
@@ -138,6 +141,9 @@ def main():
     )
     preflight_parser.add_argument(
         "--competition", help="Competition folder path (e.g., competitions/ey-frogs)"
+    )
+    preflight_parser.add_argument(
+        "--non-interactive", action="store_true", help="Run preflight non-interactively"
     )
 
     subparsers.add_parser(
@@ -308,6 +314,24 @@ def main():
 
     elif args.command == "phase":
         try:
+            # Run preflight verification first
+            root = Path(__file__).resolve().parent.parent
+            cmd = [sys.executable, str(root / "scripts" / "preflight_enforce.py")]
+            try:
+                from zindian.paths import resolve_competition_paths
+
+                paths = resolve_competition_paths(require_competition=False)
+                if paths.competition_dir:
+                    cmd.extend(["--competition", str(paths.competition_dir)])
+            except Exception:
+                pass
+            if args.non_interactive:
+                cmd.append("--non-interactive")
+
+            proc = subprocess.run(cmd, cwd=str(root))
+            if proc.returncode != 0:
+                sys.exit(proc.returncode)
+
             from zindian.orchestrator import run_phase
 
             print(f"\n{'=' * 60}")
@@ -315,7 +339,9 @@ def main():
             print(f"{'=' * 60}\n")
 
             results = run_phase(
-                args.phase_id, variant_name=getattr(args, "variant", None)
+                args.phase_id,
+                variant_name=getattr(args, "variant", None),
+                non_interactive=args.non_interactive,
             )
 
             print(f"\n{'=' * 60}")
@@ -323,17 +349,27 @@ def main():
             print(f"{'=' * 60}")
 
             all_success = True
-            for skill_name, result in results.items():
-                status = result.get("status", "UNKNOWN")
-                print(f"\n{skill_name}: {status}")
+            if isinstance(results, dict) and results.get("status") == "ERROR":
+                print(f"Phase Error: {results.get('message', 'Unknown error')}")
+                all_success = False
+            elif isinstance(results, dict):
+                for skill_name, result in results.items():
+                    if isinstance(result, dict):
+                        status = result.get("status", "UNKNOWN")
+                        print(f"\n{skill_name}: {status}")
 
-                if status == "ERROR":
-                    all_success = False
-                    print(f"  Error: {result.get('message', 'Unknown error')}")
-                    if args.verbose and "traceback" in result:
-                        print(f"\n{result['traceback']}")
-                elif status == "GO" and args.verbose:
-                    print(f"  {result.get('message', '')}")
+                        if status == "ERROR":
+                            all_success = False
+                            print(f"  Error: {result.get('message', 'Unknown error')}")
+                            if args.verbose and "traceback" in result:
+                                print(f"\n{result['traceback']}")
+                        elif status == "GO" and args.verbose:
+                            print(f"  {result.get('message', '')}")
+                    else:
+                        print(f"\n{skill_name}: {result}")
+            else:
+                print(f"Unexpected phase execution result: {results}")
+                all_success = False
 
             if not all_success:
                 sys.exit(1)
@@ -377,6 +413,8 @@ def main():
             cmd = [sys.executable, str(root / "scripts" / "preflight_enforce.py")]
             if args.competition:
                 cmd.extend(["--competition", args.competition])
+            if args.non_interactive:
+                cmd.append("--non-interactive")
             proc = subprocess.run(cmd, cwd=str(root))
             if proc.returncode != 0:
                 sys.exit(proc.returncode)
