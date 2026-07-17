@@ -224,7 +224,9 @@ def run() -> dict:
     branch_name = str(best_variant or "unknown")
 
     if human_gate_approved:
-        print(f"  [Human Gate Override] Automated gate checks bypassed because human gate '{human_gate_key}' is APPROVED. Promoting branch.")
+        print(
+            f"  [Human Gate Override] Automated gate checks bypassed because human gate '{human_gate_key}' is APPROVED. Promoting branch."
+        )
         variants_passed = max(variants_passed, 1)
         shap_pass = True
         # Set dummy values to satisfy early gate failures
@@ -411,7 +413,9 @@ def _run_multi_target_gate(config, store, state) -> dict:
     )
 
     if human_gate_approved:
-        print(f"  [Human Gate Override] Automated gate failed, but manual override '{human_gate_key}' is APPROVED. Promoting branch.")
+        print(
+            f"  [Human Gate Override] Automated gate failed, but manual override '{human_gate_key}' is APPROVED. Promoting branch."
+        )
         all_pass = True
 
     if not all_pass:
@@ -469,6 +473,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
     try:
         import shutil
         from zindian.paths import resolve_competition_paths
+
         comp_paths = resolve_competition_paths()
         proc_dir = comp_paths.data_processed_dir
 

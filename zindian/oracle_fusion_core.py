@@ -358,7 +358,7 @@ def run(
         if sample_path.exists():
             sample = pd.read_csv(sample_path)
             id_col = str(sample.columns[0])
-            
+
             input_files = config_obj.get("input_files", {}) or {}
             train_file = input_files.get("train", "Train.csv")
             raw_train = pd.read_csv(raw_dir / train_file)
@@ -371,15 +371,19 @@ def run(
 
             # Save OOF probs
             if blend_probs is not None:
-                oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": blend_probs})
-                oof_path = proc_dir / f"oof_ensemble.csv"
+                oof_df = pd.DataFrame(
+                    {id_col: raw_train[id_col], "oof_prob": blend_probs}
+                )
+                oof_path = proc_dir / "oof_ensemble.csv"
                 oof_df.to_csv(oof_path, index=False)
                 print(f"  [OK] Ensemble OOF probabilities saved -> {oof_path}")
 
             # Save Test probs
             if submission_values is not None:
-                test_prob_df = pd.DataFrame({id_col: sample[id_col], "test_prob": submission_values})
-                test_prob_path = proc_dir / f"test_probs_ensemble.csv"
+                test_prob_df = pd.DataFrame(
+                    {id_col: sample[id_col], "test_prob": submission_values}
+                )
+                test_prob_path = proc_dir / "test_probs_ensemble.csv"
                 test_prob_df.to_csv(test_prob_path, index=False)
                 print(f"  [OK] Ensemble Test probabilities saved -> {test_prob_path}")
 
@@ -389,7 +393,9 @@ def run(
                     store,
                     branch_name="ensemble",
                     scores=blend_probs.tolist(),
-                    cv_strategy_id=resolve_active_cv_strategy_id(state_obj, config_obj._data),
+                    cv_strategy_id=resolve_active_cv_strategy_id(
+                        state_obj, config_obj._data
+                    ),
                     seed=42,
                     model_config={"target_name": "target", "variant": "ensemble"},
                 )
@@ -534,13 +540,17 @@ def _run_multi_target_fusion(
                 target_result = fusion_results[target_name]
                 blend_probs = target_result.get("blend_probs")
                 if blend_probs is not None:
-                    oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": blend_probs})
+                    oof_df = pd.DataFrame(
+                        {id_col: raw_train[id_col], "oof_prob": blend_probs}
+                    )
                     oof_path = proc_dir / f"oof_ensemble_{target_name}.csv"
                     oof_df.to_csv(oof_path, index=False)
                     print(f"  [OK] Ensemble OOF probabilities saved -> {oof_path}")
 
                 # Save Test probs
-                test_prob_df = pd.DataFrame({id_col: sample[id_col], "test_prob": values})
+                test_prob_df = pd.DataFrame(
+                    {id_col: sample[id_col], "test_prob": values}
+                )
                 test_prob_path = proc_dir / f"test_probs_ensemble_{target_name}.csv"
                 test_prob_df.to_csv(test_prob_path, index=False)
                 print(f"  [OK] Ensemble Test probabilities saved -> {test_prob_path}")
@@ -551,9 +561,14 @@ def _run_multi_target_fusion(
                         store,
                         branch_name=f"ensemble_{target_name}",
                         scores=blend_probs.tolist(),
-                        cv_strategy_id=resolve_active_cv_strategy_id(state_obj, config_obj._data),
+                        cv_strategy_id=resolve_active_cv_strategy_id(
+                            state_obj, config_obj._data
+                        ),
                         seed=42,
-                        model_config={"target_name": target_name, "variant": "ensemble"},
+                        model_config={
+                            "target_name": target_name,
+                            "variant": "ensemble",
+                        },
                     )
 
             # Remove ndarrays from fusion_results to prevent JSON serialization crash

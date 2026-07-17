@@ -45,12 +45,19 @@ from zindian.state import write_oof_record
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
-def _load_train_frame(paths: CompetitionPaths, variant_name: str | None = None) -> pd.DataFrame:
+def _load_train_frame(
+    paths: CompetitionPaths, variant_name: str | None = None
+) -> pd.DataFrame:
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")
 
     if variant_name:
-        variant_file = paths.competition_dir / "data" / "processed" / f"features_train_{variant_name}.csv"
+        variant_file = (
+            paths.competition_dir
+            / "data"
+            / "processed"
+            / f"features_train_{variant_name}.csv"
+        )
         if variant_file.exists():
             return pd.read_csv(variant_file)
 
@@ -74,12 +81,17 @@ def _load_train_frame(paths: CompetitionPaths, variant_name: str | None = None) 
     if variant_name:
         try:
             import json
-            variant_json_path = paths.competition_dir / "variants" / f"{variant_name}.json"
+
+            variant_json_path = (
+                paths.competition_dir / "variants" / f"{variant_name}.json"
+            )
             if not variant_json_path.exists() and "_" in variant_name:
                 # Fallback: strip target name suffix if present (e.g. sar_threshold_aligned_label -> sar_threshold_aligned)
                 base_name = variant_name.rsplit("_", 1)[0]
-                variant_json_path = paths.competition_dir / "variants" / f"{base_name}.json"
-                
+                variant_json_path = (
+                    paths.competition_dir / "variants" / f"{base_name}.json"
+                )
+
             if variant_json_path.exists():
                 var_data = json.loads(variant_json_path.read_text())
                 if "feature_columns" in var_data:
@@ -87,10 +99,14 @@ def _load_train_frame(paths: CompetitionPaths, variant_name: str | None = None) 
                     config = ChallengeConfig.load()
                     target = config.get("target_col") or config.get("target_column")
                     cols_cfg = config.get("columns", {}) or {}
-                    id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
+                    id_col = (
+                        config.get("id_col")
+                        or config.get("id_column")
+                        or cols_cfg.get("id", "ID")
+                    )
                     lat_col = cols_cfg.get("latitude", "Latitude")
                     lon_col = cols_cfg.get("longitude", "Longitude")
-                    
+
                     keep_cols = []
                     for col in df.columns:
                         col_lower = col.lower()
@@ -344,7 +360,9 @@ def _compute_shap_audit(
                     metric_name = "Pearson |r|"
                     threshold_val = 0.98
                 else:
-                    mi_score = float(mutual_info_classif(x_mi, y_mi.values, random_state=42)[0])
+                    mi_score = float(
+                        mutual_info_classif(x_mi, y_mi.values, random_state=42)[0]
+                    )
                     probs = y_mi.value_counts(normalize=True)
                     target_entropy = float(-np.sum(probs * np.log(probs)))
                     score_val = mi_score / target_entropy if target_entropy > 0 else 0.0
@@ -466,7 +484,9 @@ def _write_outputs(
     print(f"OK SHAP summary written -> {summary_path}")
 
 
-def run(n_splits: int = 5, seed: int | None = None, variant_name: str | None = None) -> dict:
+def run(
+    n_splits: int = 5, seed: int | None = None, variant_name: str | None = None
+) -> dict:
     if not SHAP_AVAILABLE:
         return {
             "status": "SKIPPED",
@@ -484,7 +504,9 @@ def run(n_splits: int = 5, seed: int | None = None, variant_name: str | None = N
     # Multi-target detection
     target_config = config.get("target_config")
     if target_config and target_config.get("targets"):
-        return _run_multi_target_shap(paths, config, state, n_splits, seed, variant_name=variant_name)
+        return _run_multi_target_shap(
+            paths, config, state, n_splits, seed, variant_name=variant_name
+        )
 
     frame = _load_train_frame(paths, variant_name=variant_name)
     target = config.get("target_col") or config.get("target_column")
@@ -762,7 +784,9 @@ def run(n_splits: int = 5, seed: int | None = None, variant_name: str | None = N
     return report
 
 
-def _run_multi_target_shap(paths, config, state, n_splits, seed, variant_name: str | None = None) -> dict:
+def _run_multi_target_shap(
+    paths, config, state, n_splits, seed, variant_name: str | None = None
+) -> dict:
     """Multi-target SHAP analysis per SoT v2.2.1 A11."""
     print("\n[TARGET] MULTI-TARGET SHAP MODE\n")
     target_config = config.get("target_config", {})

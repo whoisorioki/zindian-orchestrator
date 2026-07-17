@@ -1248,8 +1248,12 @@ def _run_multi_target_variant(
             proc_dir = paths.data_processed_dir
             proc_dir.mkdir(parents=True, exist_ok=True)
             # Save fully engineered feature matrices for downstream skills (e.g. SHAP audit)
-            train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
-            test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)
+            train_feat.to_csv(
+                proc_dir / f"features_train_{variant_name}.csv", index=False
+            )
+            test_feat.to_csv(
+                proc_dir / f"features_test_{variant_name}.csv", index=False
+            )
 
             # Save OOF probabilities
             oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": mean_oof})
