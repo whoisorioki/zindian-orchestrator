@@ -1247,6 +1247,9 @@ def _run_multi_target_variant(
         try:
             proc_dir = paths.data_processed_dir
             proc_dir.mkdir(parents=True, exist_ok=True)
+            # Save fully engineered feature matrices for downstream skills (e.g. SHAP audit)
+            train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
+            test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)
 
             # Save OOF probabilities
             oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": mean_oof})
@@ -1810,6 +1813,10 @@ def run(
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
+        # Save fully engineered feature matrices for downstream skills (e.g. SHAP audit)
+        train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
+        test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)
+
         oof_df = pd.DataFrame(
             {id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])}
         )
@@ -1818,7 +1825,7 @@ def run(
             {id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])}
         )
         test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
-        print("  [OK] Saved OOF / test probs")
+        print("  [OK] Saved OOF / test probs and feature matrices")
     except Exception as e:
         print(f"  [WARN]  Failed to save OOF/test probs: {e}")
 

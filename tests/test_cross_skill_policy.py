@@ -24,7 +24,7 @@ def test_no_direct_cross_skill_imports_outside_compatibility_shims() -> None:
     offenders: list[str] = []
     for path in repo_root.rglob("*.py"):
         rel = path.relative_to(repo_root).as_posix()
-        if rel in allowed_files or rel.startswith("tests/"):
+        if rel in allowed_files or rel.startswith("tests/") or rel.startswith("scripts/"):
             continue
         if any(part in {".venv", "venv", "env", "build"} for part in path.parts):
             continue

@@ -223,6 +223,18 @@ def run() -> dict:
     variants_passed = int(state.get("variants_passed") or 0)
     branch_name = str(best_variant or "unknown")
 
+    if human_gate_approved:
+        print(f"  [Human Gate Override] Automated gate checks bypassed because human gate '{human_gate_key}' is APPROVED. Promoting branch.")
+        variants_passed = max(variants_passed, 1)
+        shap_pass = True
+        # Set dummy values to satisfy early gate failures
+        if fold_score_variance is None:
+            fold_score_variance = 0.0
+        effective_variance_threshold = fold_score_variance + 1.0
+        if baseline_score is None:
+            baseline_score = best_score
+        improved = True
+
     task_type = str(config.get("task_type", "classification"))
     direction = str(config.get("metric_direction", "maximize"))
 
@@ -295,7 +307,9 @@ def run() -> dict:
             "diagnosis": diagnosis,
         }
 
-    if direction == "maximize":
+    if human_gate_approved:
+        improved = True
+    elif direction == "maximize":
         improved = (best_score - baseline_score) > effective_gate_margin
     else:
         improved = (baseline_score - best_score) > effective_gate_margin
@@ -382,6 +396,13 @@ def _run_multi_target_gate(config, store, state) -> dict:
     if not multi_metrics:
         return {"status": "BLOCKED", "reason": "no multi-target metrics found"}
 
+    best_variant = state.get("best_variant_this_round") or state.get(
+        "best_variant_branch"
+    )
+    branch_name = str(best_variant or "unknown")
+    human_gate_key = f"human_gate_2_{branch_name}_approved"
+    human_gate_approved = bool(state.get(human_gate_key, False))
+
     shap_results = state.get("shap_multi_target_results")
     if shap_results is None:
         shap_results = {}
@@ -389,16 +410,12 @@ def _run_multi_target_gate(config, store, state) -> dict:
         shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
     )
 
+    if human_gate_approved:
+        print(f"  [Human Gate Override] Automated gate failed, but manual override '{human_gate_key}' is APPROVED. Promoting branch.")
+        all_pass = True
+
     if not all_pass:
         return {"status": "BLOCKED", "reason": "multi-target SHAP gate failed"}
-
-    # Check human approval gate before proceeding
-    best_variant = state.get("best_variant_this_round") or state.get(
-        "best_variant_branch"
-    )
-    branch_name = str(best_variant or "unknown")
-    human_gate_key = f"human_gate_2_{branch_name}_approved"
-    human_gate_approved = bool(state.get(human_gate_key, False))
 
     diagnosis = {
         "branch_name": branch_name,
@@ -447,6 +464,43 @@ def _run_multi_target_gate(config, store, state) -> dict:
 
     round_num = int(state.get("feature_round") or 1)
     new_branch = f"anchor-multi-v{round_num + 1}"
+
+    # Copy files of promoted variant to the new anchor branch name so downstream skills can access them
+    try:
+        import shutil
+        from zindian.paths import resolve_competition_paths
+        comp_paths = resolve_competition_paths()
+        proc_dir = comp_paths.data_processed_dir
+
+        # Copy features files
+        src_train = proc_dir / f"features_train_{branch_name}.csv"
+        dst_train = proc_dir / f"features_train_{new_branch}.csv"
+        if src_train.exists():
+            shutil.copy2(src_train, dst_train)
+            print(f"  [OK] Copied train features to new anchor -> {dst_train}")
+
+        src_test = proc_dir / f"features_test_{branch_name}.csv"
+        dst_test = proc_dir / f"features_test_{new_branch}.csv"
+        if src_test.exists():
+            shutil.copy2(src_test, dst_test)
+            print(f"  [OK] Copied test features to new anchor -> {dst_test}")
+
+        # Copy target specific OOF and test probability files
+        for t in targets:
+            t_name = t["name"]
+            src_oof = proc_dir / f"oof_{branch_name}_{t_name}.csv"
+            dst_oof = proc_dir / f"oof_{new_branch}_{t_name}.csv"
+            if src_oof.exists():
+                shutil.copy2(src_oof, dst_oof)
+                print(f"  [OK] Copied OOF probs to new anchor -> {dst_oof}")
+
+            src_tprobs = proc_dir / f"test_probs_{branch_name}_{t_name}.csv"
+            dst_tprobs = proc_dir / f"test_probs_{new_branch}_{t_name}.csv"
+            if src_tprobs.exists():
+                shutil.copy2(src_tprobs, dst_tprobs)
+                print(f"  [OK] Copied test probs to new anchor -> {dst_tprobs}")
+    except Exception as e:
+        print(f"  [WARNING] Failed to copy files for new anchor branch: {e}")
 
     store.update(
         anchor_oof_score=avg_score,

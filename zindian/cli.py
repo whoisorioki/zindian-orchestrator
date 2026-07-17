@@ -71,6 +71,16 @@ def _run_shell_script(script_path: str, args: list[str] | None = None) -> None:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="Zindian CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

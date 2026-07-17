@@ -340,7 +340,7 @@ def run(
         return {"status": "FAILED", "reason": "Train file missing"}
 
     train = pd.read_csv(train_path)
-    return _run_single_target_fusion(
+    result = _run_single_target_fusion(
         config_obj,
         state_obj,
         paths,
@@ -353,6 +353,66 @@ def run(
         dry_run,
         None,
     )
+    if not dry_run and result.get("status") == "OK":
+        sample_path = raw_dir / "SampleSubmission.csv"
+        if sample_path.exists():
+            sample = pd.read_csv(sample_path)
+            id_col = str(sample.columns[0])
+            
+            input_files = config_obj.get("input_files", {}) or {}
+            train_file = input_files.get("train", "Train.csv")
+            raw_train = pd.read_csv(raw_dir / train_file)
+
+            store = SkillStateStore(paths.state_path)
+            from zindian.state import write_oof_record, resolve_active_cv_strategy_id
+
+            blend_probs = result.get("blend_probs")
+            submission_values = result.get("submission_column")
+
+            # Save OOF probs
+            if blend_probs is not None:
+                oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": blend_probs})
+                oof_path = proc_dir / f"oof_ensemble.csv"
+                oof_df.to_csv(oof_path, index=False)
+                print(f"  [OK] Ensemble OOF probabilities saved -> {oof_path}")
+
+            # Save Test probs
+            if submission_values is not None:
+                test_prob_df = pd.DataFrame({id_col: sample[id_col], "test_prob": submission_values})
+                test_prob_path = proc_dir / f"test_probs_ensemble.csv"
+                test_prob_df.to_csv(test_prob_path, index=False)
+                print(f"  [OK] Ensemble Test probabilities saved -> {test_prob_path}")
+
+            # Write OOF record to state
+            if blend_probs is not None:
+                write_oof_record(
+                    store,
+                    branch_name="ensemble",
+                    scores=blend_probs.tolist(),
+                    cv_strategy_id=resolve_active_cv_strategy_id(state_obj, config_obj._data),
+                    seed=42,
+                    model_config={"target_name": "target", "variant": "ensemble"},
+                )
+
+            # Update anchor_git_branch to ensemble
+            if not in_memory:
+                store.update(
+                    anchor_git_branch="ensemble",
+                    last_ensemble_path=str(test_prob_path),
+                    last_ensemble_oof_metric=result.get("blend_oof_metric"),
+                    last_ensemble_metric_name=result.get("metric"),
+                    last_ensemble_threshold=result.get("threshold"),
+                    last_ensemble_variants=result.get("variants"),
+                    last_ensemble_dropped_collinear=result.get("dropped_collinear"),
+                    last_updated=datetime.now(timezone.utc).isoformat(),
+                )
+            else:
+                state_obj["anchor_git_branch"] = "ensemble"
+
+    # Remove ndarrays from result to prevent JSON serialization crash
+    result.pop("submission_column", None)
+    result.pop("blend_probs", None)
+    return result
 
 
 def _run_multi_target_fusion(
@@ -454,33 +514,67 @@ def _run_multi_target_fusion(
         if result["status"] == "OK" and "submission_column" in result:
             submission_columns[target_name] = result["submission_column"]
 
-    # Combine multi-target submissions
+    # Save target-specific ensembled probabilities
     if not dry_run and submission_columns:
         sample_path = raw_dir / "SampleSubmission.csv"
         if sample_path.exists():
             sample = pd.read_csv(sample_path)
             id_col = str(sample.columns[0])
-            combined_sub = pd.DataFrame({id_col: sample[id_col]})
+
+            # Load raw train data for target alignment
+            input_files = config_obj.get("input_files", {}) or {}
+            train_file = input_files.get("train", "Train.csv")
+            raw_train = pd.read_csv(raw_dir / train_file)
+
+            store = SkillStateStore(paths.state_path)
+            from zindian.state import write_oof_record, resolve_active_cv_strategy_id
+
             for target_name, values in submission_columns.items():
-                combined_sub[target_name] = values
+                # Save OOF probs
+                target_result = fusion_results[target_name]
+                blend_probs = target_result.get("blend_probs")
+                if blend_probs is not None:
+                    oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": blend_probs})
+                    oof_path = proc_dir / f"oof_ensemble_{target_name}.csv"
+                    oof_df.to_csv(oof_path, index=False)
+                    print(f"  [OK] Ensemble OOF probabilities saved -> {oof_path}")
 
-            subs_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            out_path = subs_dir / f"sub_ensemble_multi_{timestamp}.csv"
-            combined_sub.to_csv(out_path, index=False)
-            print(f"\n[OK] Multi-target submission saved: {out_path}")
+                # Save Test probs
+                test_prob_df = pd.DataFrame({id_col: sample[id_col], "test_prob": values})
+                test_prob_path = proc_dir / f"test_probs_ensemble_{target_name}.csv"
+                test_prob_df.to_csv(test_prob_path, index=False)
+                print(f"  [OK] Ensemble Test probabilities saved -> {test_prob_path}")
 
+                # Write OOF record to state
+                if blend_probs is not None:
+                    write_oof_record(
+                        store,
+                        branch_name=f"ensemble_{target_name}",
+                        scores=blend_probs.tolist(),
+                        cv_strategy_id=resolve_active_cv_strategy_id(state_obj, config_obj._data),
+                        seed=42,
+                        model_config={"target_name": target_name, "variant": "ensemble"},
+                    )
+
+            # Remove ndarrays from fusion_results to prevent JSON serialization crash
+            for r in fusion_results.values():
+                if isinstance(r, dict):
+                    r.pop("submission_column", None)
+                    r.pop("blend_probs", None)
+
+            # Update anchor_git_branch to ensemble so Phase 4 knows to format the ensemble
             if not in_memory:
-                store = SkillStateStore(paths.state_path)
                 store.update(
-                    last_ensemble_path=str(out_path),
+                    anchor_git_branch="ensemble",
                     last_ensemble_multi_target_results=fusion_results,
                     last_updated=datetime.now(timezone.utc).isoformat(),
                 )
+            else:
+                state_obj["anchor_git_branch"] = "ensemble"
+                state_obj["last_ensemble_multi_target_results"] = fusion_results
 
             return {
                 "status": "OK",
-                "submission_path": str(out_path),
                 "multi_target": True,
                 "results": fusion_results,
             }
@@ -680,66 +774,16 @@ def _run_single_target_fusion(
         )
         return {"status": "FAILED", "reason": "Row count mismatch"}
 
-    # For multi-target, return submission column instead of saving
-    if target_name:
-        return {
-            "status": "OK",
-            "blend_oof_metric": float(blend_score),
-            "metric": metric_name,
-            "threshold": (None if blend_threshold is None else float(blend_threshold)),
-            "variants": names,
-            "dropped_collinear": dropped_pairs,
-            "submission_column": submission_values,
-        }
-
-    # Save submission (single-target path)
-    target_out_col = str(sample.columns[-1])
-    id_col_name = str(sample.columns[0])
-
-    if config_obj.get("submission_log1p", False):
-        print(
-            "Applying log1p transformation to ensembled submission values per platform config"
-        )
-        submission_values = np.log1p(submission_values)
-
-    sub = pd.DataFrame(
-        {id_col_name: sample[id_col_name], target_out_col: submission_values}
-    )
-    sub = sub.set_index(id_col_name).reindex(sample[id_col_name]).reset_index()
-
-    subs_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out_path = subs_dir / f"sub_ensemble_v1_{timestamp}.csv"
-    sub.to_csv(out_path, index=False)
-    print(f"\nSaved: {out_path}")
-
-    # Update state without writing human gate keys.
-    updates = {
-        "last_ensemble_path": str(out_path),
-        "last_ensemble_oof_metric": float(blend_score),
-        "last_ensemble_metric_name": metric_name,
-        "last_ensemble_threshold": (
-            None if blend_threshold is None else round(float(blend_threshold), 2)
-        ),
-        "last_ensemble_variants": names,
-        "last_ensemble_dropped_collinear": dropped_pairs,
-        "last_ensemble_retraining_active": retraining_active,
-        "last_updated": datetime.now(timezone.utc).isoformat(),
-    }
-    if not in_memory:
-        store = SkillStateStore(paths.state_path)
-        store.update(**updates)
-    else:
-        state_obj.update(updates)
-
+    # Return ensembled predictions and metrics to the caller
     return {
         "status": "OK",
-        "submission_path": str(out_path),
         "blend_oof_metric": float(blend_score),
         "metric": metric_name,
         "threshold": (None if blend_threshold is None else float(blend_threshold)),
         "variants": names,
         "dropped_collinear": dropped_pairs,
+        "submission_column": submission_values,
+        "blend_probs": blend_probs,
     }
 
 
