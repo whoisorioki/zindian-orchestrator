@@ -4,6 +4,8 @@
     "current_git_branch": "main",
     "anchor_git_branch": null,
     "anchor_oof_score": null,
+    "anchor_oof_score_augmented": null,
+    "anchor_oof_score_per_target": null,
     "anchor_lb_score": null,
     "feature_round": 0,
     "variants_tested": 0,
@@ -49,6 +51,7 @@
     "cv_strategy_type": null,
     "cv_strategy_selection_reason": null,
     "cv_group_col": null,
+    "cv_strategy_override": null,
     "last_submission_comment": null,
     "last_submission_at": null,
     "best_variant_threshold": 0.0,
@@ -73,6 +76,8 @@
     "shap_feature_count": null,
     "shap_top_feature": null,
     "shap_top_features": [],
+    "leaked_features": [],
+    "shap_audit_skipped_reason": null,
     "high_corr_pairs_count": 0,
     "pruning_delta_f1": 0.0,
     "pruning_pass": null,
@@ -82,6 +87,8 @@
         "timestamp": null
     },
     "metadata_warnings": [],
+    "preflight_confirmed": null,
+    "anchor_challenge": null,
     "phase_1_complete": false,
     "phase_2a_complete": false,
     "phase_2b_complete": false,
@@ -108,8 +115,10 @@
         "guard_condition_flags": {}
     },
     "shap_multi_target_results": null,
-    "anchor_oof_f1": null,
-    "anchor_oof_rmse": null,
     "anchor_multi_target_metrics": null,
-    "phase_3_gate_diagnosis": null
+    "phase_3_gate_diagnosis": null,
+    "data_patch_detected": null,
+    "budget_warning": null,
+    "submission_blocked": null,
+    "sidecar_recommendations": []
 }

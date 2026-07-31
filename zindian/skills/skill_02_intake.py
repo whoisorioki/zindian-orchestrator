@@ -684,6 +684,19 @@ def run(
         except Exception as e:
             print(f"Multi-target detection skipped: {e}")
 
+    # R5: Add infrastructure block if missing (must happen before write_config
+    # below, otherwise the block only ever exists in the in-memory dict and
+    # is never persisted to challenge_config.json)
+    if "infrastructure" not in final_to_write:
+        final_to_write["infrastructure"] = {
+            "hardware_type": "cpu",
+            "region": "us-east-1",
+            "tdp_watts": 15.0,
+            "pue": 1.0,
+            "carbon_intensity_gco2_per_kwh": 494.0,
+        }
+        print("\n[R5] Added infrastructure block for carbon tracking")
+
     if dry_run:
         print("\n--- DRY RUN: challenge_config.json that WOULD be written ---\n")
         print(json.dumps(final_to_write, indent=2))
@@ -754,17 +767,6 @@ def run(
     print("\nCompliance notes:")
     for note in final_to_write.get("compliance_notes", []):
         print(f"  [WARN]  {note}")
-
-    # R5: Add infrastructure block if missing
-    if "infrastructure" not in final_to_write:
-        final_to_write["infrastructure"] = {
-            "hardware_type": "cpu",
-            "region": "us-east-1",
-            "tdp_watts": 15.0,
-            "pue": 1.0,
-            "carbon_intensity_gco2_per_kwh": 494.0,
-        }
-        print("\n[R5] Added infrastructure block for carbon tracking")
 
     return {"status": "OK", "config": final_to_write}
 

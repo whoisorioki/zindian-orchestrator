@@ -662,7 +662,7 @@ def main():
     )
     args = parser.parse_args()
 
-    root = Path.cwd()
+    root = Path(__file__).resolve().parent.parent
     skills_dir = root / "zindian" / "skills"
 
     is_interactive = not args.non_interactive and sys.stdin.isatty()

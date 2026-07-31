@@ -20,7 +20,7 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
 
-ROOT = Path.cwd()
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def md5(path: Path) -> str:

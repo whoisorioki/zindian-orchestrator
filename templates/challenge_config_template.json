@@ -9,6 +9,8 @@
         "min": null,
         "max": null
     },
+    "target_distribution": null,
+    "minority_ratio": null,
     "metric": null,
     "metric_direction": null,
     "submission_format": "csv",
@@ -47,13 +49,41 @@
         "n_test": 0,
         "n_cols": 0
     },
+    "temporal_signal": {
+        "present": false,
+        "col": null
+    },
+    "group_signal": {
+        "present": false,
+        "col": null,
+        "type": null
+    },
+    "spatial_signal": {
+        "present": false,
+        "lat_col": null,
+        "lon_col": null,
+        "group_col": null
+    },
+    "missingness_level": null,
+    "infrastructure": {
+        "hardware_type": "cpu",
+        "region": "unknown",
+        "tdp_watts": 15.0,
+        "pue": 1.0,
+        "carbon_intensity_gco2_per_kwh": 494.0
+    },
+    "file_manifest": {
+        "train": "Train.csv",
+        "test": "Test.csv",
+        "sample": "SampleSubmission.csv"
+    },
     "phase_skill_map": {
         "1": ["skill_01", "skill_02", "skill_03.policy_writer", "skill_04", "skill_05", "skill_15"],
         "2A": ["skill_03.policy_gate", "skill_06"],
         "2B": ["skill_07", "skill_08", "skill_07"],
         "3A": ["skill_10", "skill_09", "skill_12"],
         "3B": ["skill_11", "skill_21", "skill_13"],
-        "4": ["skill_14", "skill_16", "skill_22"]
+        "4": ["skill_14", "skill_16", "skill_17", "skill_22"]
     },
     "shap_leak_threshold": 3.0,
     "variance_gate_threshold": 0.01,
