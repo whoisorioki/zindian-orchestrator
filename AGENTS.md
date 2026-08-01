@@ -261,7 +261,9 @@ else:
 **EDA target_std — skill_11, skill_12:**
 ```python
 target_std = float(
-    (SKILL_STATE.get("eda", {}) or {}).get("target_std") or 0.0
+    (SKILL_STATE.get("eda", {}) or {}).get(f"{target_name}_std")
+    or (SKILL_STATE.get("eda", {}) or {}).get("target_std")
+    or 0.0
 )
 ```
 
@@ -659,27 +661,78 @@ them.
 
 ---
 
+## SKILL_STATE.json vs reports/ — Design Boundary
+
+**Established convention (verified by reading skill_03, skill_10, skill_15):**
+
+`SKILL_STATE.json` holds **only what downstream skills or automated gates need
+to make a decision**: booleans, counts, OOF scores, short column-name lists,
+phase/gate flags, file hashes, and small scalar summaries.
+
+Anything that is a diagnostic artifact for human review — per-feature dicts,
+per-band dicts, per-row arrays, or anything whose size scales with feature/row/band
+count rather than staying roughly constant — belongs in `reports/` as JSON or
+Markdown, with at most a short pointer or a single derived scalar/flag left in state.
+
+**Before adding a new key to SKILL_STATE.json, ask:** "Does any downstream skill's
+decision logic (not a human reading a report) need this value?" If no, it goes to
+`reports/`.
+
+**Confirmed boundary examples (direct code inspection, not claims):**
+
+| Skill | Heavy output (→ reports/) | Lean output (→ SKILL_STATE) |
+|-------|--------------------------|------------------------------|
+| skill_03 (L374–387) | `reports/feature_policy.json`, `reports/legality_report.md` | `legality_status`, `feature_policy_written`, `last_legality_checked` |
+| skill_10 (L749–761) | `reports/shap_analysis.json`, `reports/shap_summary.md` | `shap_top_features` (10-name list), `shap_feature_count`, `pruning_delta_f1`, `pruning_pass` |
+| skill_15 (L555) | `reports/phase_*.md`, `reports/phase_1_summary.json` | `last_reported` (timestamp only) |
+| skill_04 (v2.3 fix) | `reports/eda_report.json` (band_summary_stats, seasonal_amplitude, temporal_trends, target_correlation_per_feature, class_separability_index) | `temporal_index_confirmed`, `group_structure_confirmed` (booleans), `outlier_columns` (short list), `target_skew` (float) |
+
+`skill_04` was the only skill violating this convention — previously writing five
+large per-band/per-feature dicts directly into `SKILL_STATE.json["eda"]`. Fixed in
+v2.3. If you find another skill doing this, treat it as the same class of bug.
+
+---
+
 ## Budget Guard in skill_16
 
-The budget guard has three tiers:
+**[CORRECTED]** The budget guard has two tiers (verified by reading
+`skill_16_submit.py` L435–472):
 
 ```python
-if live_remaining <= 0:
-    state_store.update(submission_blocked=True, reason="budget_exhausted")
-    raise HardAbortException("Submission budget exhausted.")
+# Tier 1 — live budget from Zindi platform (L435–436)
+if live_remaining != -1 and live_remaining <= 0:
+    raise HardAbortException("Zindi reports zero remaining submissions today.")
+    # NOTE: NO state write of submission_blocked. HardAbortException is raised
+    # immediately. The incorrect AGENTS.md claim that
+    # state_store.update(submission_blocked=True, reason="budget_exhausted")
+    # is called here was WRONG — confirmed by reading the actual code.
 
+# Tier 2 — budget warning (live) for live_remaining == 1 (L437–449)
 if live_remaining == 1:
-    from datetime import datetime, timezone
-    state_store.update(budget_warning={
+    store.update(budget_warning={
         "remaining_submissions": 1,
         "source": "live",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
-    # The input() confirmation prompt follows — no code between
-    # the state write and the prompt.
+    # WARN message printed; input() confirmation prompt follows.
 
-# live_remaining >= 2: proceed normally
+# Tier 3 — state-side guard from cached remaining_submissions (L459–472)
+if cached_remaining <= 0:
+    raise HardAbortException("State-side budget guard: zero submissions remaining.")
+    # Again: NO submission_blocked state write.
+
+if cached_remaining == 1:
+    store.update(budget_warning={
+        "remaining_submissions": 1,
+        "source": "cached",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    # WARN message printed; input() confirmation prompt follows.
 ```
+
+The key correction: `submission_blocked` is never written by the budget guard.
+The `budget_warning` key is the only state write, and only on a `== 1` warning,
+not on a budget-exhausted abort. The abort path raises hard and writes nothing.
 
 Do not use `datetime.utcnow()` — deprecated in Python 3.12. Always
 use `datetime.now(timezone.utc)`.
@@ -819,6 +872,25 @@ before it is resolved in code.
 - test_multi_target_composite_variance.py — Weighted composite variance
 - test_r5_carbon_tracking.py — Carbon telemetry schema
 - test_plugin_contract.py — ABC inheritance verification
+- test_skill04_eda.py (expanded) — temporal/group detection path coverage
+
+**GAP-4 (temporal/group CV signal detection — FIXED in v2.3):**
+`skill_04_eda.py` was missing `temporal_index_confirmed` and
+`group_structure_confirmed` from its `eda_updates` dict. Both were
+specified in the SoT (L921–940) but never written — meaning
+`skill_05_cv`'s TimeSeriesSplit branch could never fire (Step 1 always
+read `False`), and `three_lens.py`'s governance sanity check was always
+a no-op. **Now fixed**: both fields are derived from competition-agnostic
+structural signals:
+- `temporal_index_confirmed`: True if BAND_MM pattern detected OR any
+  column round-trips cleanly through `pd.to_datetime` (no hardcoded names)
+- `group_structure_confirmed`: True if any feature column has
+  unique_count/len(df) < 0.05 (low-cardinality repeating structure)
+  — declared as a judgment call; no existing convention was found in
+  skill_02, skill_05, or skill_07 to reuse
+Also added `outlier_columns` and `target_skew` to match the full SoT
+field list, and updated `templates/SKILL_STATE_template.json` to include
+all SoT-specified eda sub-block fields with correct defaults.
 
 ---
 

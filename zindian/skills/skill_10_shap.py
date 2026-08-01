@@ -118,7 +118,7 @@ def _load_train_frame(
                             or (lon_col and col_lower == lon_col.lower())
                         ):
                             keep_cols.append(col)
-                    df = df[keep_cols]
+                    df = df.loc[:, keep_cols]
         except Exception as e:
             print(f"[WARN] Failed to filter columns for variant '{variant_name}': {e}")
 
@@ -345,20 +345,68 @@ def _compute_shap_audit(
             top_feature = str(ranking.iloc[0]["feature"])
             # Evaluate target leak using Mutual Information (classification) or Pearson correlation (regression)
             is_leak = True
+            is_mi_advisory_leak = False
+            mi_advisory_feature_names: list[str] = []
             try:
-                from sklearn.feature_selection import mutual_info_classif
+                from sklearn.feature_selection import (
+                    mutual_info_classif,
+                    mutual_info_regression,
+                )
                 from scipy.stats import pearsonr
 
                 valid_mask = frame[top_feature].notna() & frame[target].notna()
                 x_mi = frame.loc[valid_mask, [top_feature]]
                 y_mi = frame.loc[valid_mask, target]
 
+                _pearson_thresh = (
+                    float(_cfg_shap.get("leak_pearson_threshold") or 0.98)
+                    if "_cfg_shap" in locals()
+                    else 0.98
+                )
+                _nmi_thresh = (
+                    float(_cfg_shap.get("leak_nmi_threshold") or 0.90)
+                    if "_cfg_shap" in locals()
+                    else 0.90
+                )
+                _enable_mi_subsample = (
+                    bool(
+                        _cfg_shap.get("enable_mi_regression_subsample")
+                        or _cfg_shap.get("enable_mi_regression", False)
+                    )
+                    if "_cfg_shap" in locals()
+                    else False
+                )
+
                 if task_type == "regression":
                     r_val, _ = pearsonr(frame.loc[valid_mask, top_feature], y_mi)
                     score_val = abs(r_val)
-                    is_leak = score_val >= 0.98
+                    is_leak = score_val >= _pearson_thresh
                     metric_name = "Pearson |r|"
-                    threshold_val = 0.98
+                    threshold_val = _pearson_thresh
+
+                    # Optional advisory MI regression check on subsample (non-blocking)
+                    if not is_leak and _enable_mi_subsample:
+                        try:
+                            n_samples = min(len(x_mi), 2000)
+                            sub_idx = np.random.choice(
+                                len(x_mi), size=n_samples, replace=False
+                            )
+                            x_sub = x_mi.iloc[sub_idx]
+                            y_sub = y_mi.iloc[sub_idx]
+                            mi_reg = float(
+                                mutual_info_regression(
+                                    x_sub, y_sub.values, random_state=42
+                                )[0]
+                            )
+                            var_y = float(np.var(y_sub.values))
+                            score_mi = mi_reg / var_y if var_y > 0 else 0.0
+                            if score_mi >= _nmi_thresh:
+                                is_mi_advisory_leak = True
+                                mi_advisory_feature_names.append(top_feature)
+                        except Exception as mi_err:
+                            print(
+                                f"[WARN] MI regression advisory check failed: {mi_err}"
+                            )
                 else:
                     mi_score = float(
                         mutual_info_classif(x_mi, y_mi.values, random_state=42)[0]
@@ -366,9 +414,9 @@ def _compute_shap_audit(
                     probs = y_mi.value_counts(normalize=True)
                     target_entropy = float(-np.sum(probs * np.log(probs)))
                     score_val = mi_score / target_entropy if target_entropy > 0 else 0.0
-                    is_leak = score_val >= 0.90
+                    is_leak = score_val >= _nmi_thresh
                     metric_name = "NMI"
-                    threshold_val = 0.90
+                    threshold_val = _nmi_thresh
             except Exception as e:
                 is_leak = True
                 score_val = 0.0
@@ -384,6 +432,11 @@ def _compute_shap_audit(
                     f"is {score_val:.4f} (< {threshold_val:.2f}), proving it is a valid physical signal "
                     f"rather than a 1:1 target copy. Leak check passed."
                 )
+                if is_mi_advisory_leak:
+                    print(
+                        f"  [SHAP Audit Advisory] Feature '{top_feature}' flagged by advisory MI regression "
+                        f"(non-blocking, surfaced at Human Gate 2)."
+                    )
 
     if task_type == "regression":
         from sklearn.metrics import root_mean_squared_error

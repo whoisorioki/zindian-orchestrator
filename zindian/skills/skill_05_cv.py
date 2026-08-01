@@ -65,6 +65,57 @@ def _build_sphere_projection(coords: np.ndarray) -> np.ndarray:
     return np.column_stack([x, y, z]).astype(np.float64)
 
 
+def _haversine_distances(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
+    """Compute pairwise Haversine distances in km between coords1 and coords2."""
+    R = 6371.0  # Earth radius in km
+    lat1, lon1 = np.radians(coords1[:, 0]), np.radians(coords1[:, 1])
+    lat2, lon2 = np.radians(coords2[:, 0]), np.radians(coords2[:, 1])
+
+    dlat = lat2[None, :] - lat1[:, None]
+    dlon = lon2[None, :] - lon1[:, None]
+
+    a = (
+        np.sin(dlat / 2.0) ** 2
+        + np.cos(lat1[:, None]) * np.cos(lat2[None, :]) * np.sin(dlon / 2.0) ** 2
+    )
+    c = 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    return R * c
+
+
+def _apply_spatial_buffer(
+    splits: list[tuple[np.ndarray, np.ndarray]],
+    coords: np.ndarray,
+    spatial_buffer_km: float,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Remove training samples within spatial_buffer_km of any validation sample."""
+    if spatial_buffer_km <= 0.0 or len(coords) == 0:
+        return splits
+
+    buffered_splits = []
+    for train_idx, val_idx in splits:
+        val_coords = coords[val_idx]
+        train_coords = coords[train_idx]
+
+        min_dists = []
+        chunk_size = 500
+        for i in range(0, len(train_coords), chunk_size):
+            chunk = train_coords[i : i + chunk_size]
+            dists = _haversine_distances(chunk, val_coords)
+            min_d = dists.min(axis=1)
+            min_dists.append(min_d)
+
+        all_min_dists = np.concatenate(min_dists)
+        valid_train_mask = all_min_dists >= spatial_buffer_km
+        filtered_train_idx = train_idx[valid_train_mask]
+
+        if len(filtered_train_idx) < 10:
+            buffered_splits.append((train_idx, val_idx))
+        else:
+            buffered_splits.append((filtered_train_idx, val_idx))
+
+    return buffered_splits
+
+
 def build_spatial_splits(
     X: np.ndarray,
     y: np.ndarray,
@@ -72,18 +123,22 @@ def build_spatial_splits(
     n_splits: int = N_SPLITS,
     n_clusters: int | None = None,
     task_type: str = "classification",
+    spatial_buffer_km: float = 0.0,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
     """
     Strategy B — Spatial Block CV.
     Clusters observations into geographic blocks using KMeans on Lat/Lon.
     GroupKFold holds out one block at a time — no geographic leakage.
+    Optionally applies spatial buffer zone exclusion when spatial_buffer_km > 0.0.
 
     Args:
-        X:          Feature matrix
-        y:          Labels
-        coords:     (n, 2) array of [Latitude, Longitude]
-        n_clusters: Number of geographic blocks (default = 3 × n_splits, capped by sample count)
-        task_type:  'classification' or 'regression'
+        X:                  Feature matrix
+        y:                  Labels
+        coords:             (n, 2) array of [Latitude, Longitude]
+        n_splits:           Number of folds
+        n_clusters:         Number of geographic blocks
+        task_type:          'classification' or 'regression'
+        spatial_buffer_km:  Geographic exclusion buffer around validation set in km
 
     Returns:
         (splits, geo_groups) — splits for CV, geo_groups for inspection
@@ -135,6 +190,12 @@ def build_spatial_splits(
     gkf = GroupKFold(n_splits=n_splits)
     splits = list(gkf.split(X, y, groups=geo_groups))
 
+    if spatial_buffer_km > 0.0:
+        print(
+            f"  [Spatial Buffer] Applying {spatial_buffer_km:.2f} km exclusion buffer to training folds."
+        )
+        splits = _apply_spatial_buffer(splits, coords, spatial_buffer_km)
+
     return splits, geo_groups
 
 
@@ -167,7 +228,11 @@ def _resolve_decision(
             "selection_reason": "temporal_index_confirmed",
         }
 
-    if group_confirmed or spatial_signal or group_signal:
+    has_group_col = bool(
+        (raw_config.get("group_signal", {}) or {}).get("col")
+        or (raw_config.get("spatial_signal", {}) or {}).get("group_col")
+    )
+    if spatial_signal or group_signal or (group_confirmed and has_group_col):
         group_col = None
         if group_signal:
             group_col = (raw_config.get("group_signal", {}) or {}).get("col")

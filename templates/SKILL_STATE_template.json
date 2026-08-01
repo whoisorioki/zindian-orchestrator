@@ -62,8 +62,12 @@
         "dead_features": [],
         "high_corr_pairs_count": 0,
         "target_std": null,
+        "target_skew": 0.0,
         "mnar_columns": [],
-        "mcar_columns": []
+        "mcar_columns": [],
+        "outlier_columns": [],
+        "group_structure_confirmed": false,
+        "temporal_index_confirmed": false
     },
     "metric_analysis": {
         "generated_at": null,

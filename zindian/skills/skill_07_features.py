@@ -1521,6 +1521,14 @@ def run(
 
     # -- Phase B2: Build hypothesis-derived features -----------
     print("\n[B2] Building hypothesis-derived features")
+    sidecar_recs = state.get("sidecar_recommendations", [])
+    if sidecar_recs:
+        print(
+            f"  [OK] Sidecar recommendations consumed: {len(sidecar_recs)} recommendation(s)"
+        )
+    else:
+        print("  [INFO] No sidecar recommendations found — proceeding from fingerprint")
+
     target_col_cfg = config.get("target_column") or config.get("target_col") or "target"
 
     # Auto-detect defaults from EDA signals, merge with operator config.

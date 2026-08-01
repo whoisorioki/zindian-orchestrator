@@ -164,8 +164,22 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
 
     # Ensure numeric array
     arr = np.asarray(fold_scores, dtype=np.float64)
-    # Unbiased sample variance (ddof=1) per SoT
-    fold_score_variance = float(np.var(arr, ddof=1))
+    # Unbiased sample variance (ddof=1)
+    fold_score_variance_sample = float(np.var(arr, ddof=1))
+
+    # Nadeau-Bengio Corrected Variance (v2.4 S1): Var_NB = Var_sample(ddof=1) * (1/K + n_val/n_train)
+    # For K-fold CV: n_val/n_train = 1/(K-1)
+    K = len(arr)
+    if K > 1:
+        nb_factor = (1.0 / K) + (1.0 / (K - 1))
+        fold_score_variance_nb = float(fold_score_variance_sample * nb_factor)
+        se_oof = float(np.sqrt(fold_score_variance_nb / K))
+    else:
+        fold_score_variance_nb = fold_score_variance_sample
+        se_oof = 0.0
+
+    # Primary fold_score_variance reports Nadeau-Bengio corrected variance per v2.4 spec
+    fold_score_variance = fold_score_variance_nb
 
     # Calculate oof_vs_lb_delta if possible
     # Use provided config dict if available; fallback to ChallengeConfig only if needed.
@@ -200,7 +214,10 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
     metric_analysis.update(
         {
             "fold_scores": fold_scores,
+            "fold_score_variance_sample": fold_score_variance_sample,
+            "fold_score_variance_nb": fold_score_variance_nb,
             "fold_score_variance": fold_score_variance,
+            "se_oof": se_oof,
             "recommended_threshold": float(recommended_threshold),
             "oof_vs_lb_delta": oof_vs_lb_delta,
         }

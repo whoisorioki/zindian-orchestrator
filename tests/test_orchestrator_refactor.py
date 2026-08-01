@@ -232,11 +232,18 @@ class TestPhaseArchitectureAlignment:
 
     def test_sub_phase_notation_supported(self):
         """Orchestrator must accept sub-phase strings (1, 2A, 2B, 3A, 3B, 4)"""
-        # Action: Call run_phase with string phases
-        for phase in ["1", "2A", "2B", "3A", "3B", "4"]:
-            result = run_phase(phase)
-            # Should not raise error for valid phase notation
-            assert result is not None
+        import pandas as pd
+
+        # Action: Call run_phase with string phases, mocking skill execution & pandas read_csv
+        with patch("zindian.orchestrator.run_skill") as mock_run, patch(
+            "pandas.read_csv"
+        ) as mock_read_csv:
+            mock_run.return_value = {"status": "GO", "message": "Mocked success"}
+            mock_read_csv.return_value = pd.DataFrame({"ID": [1, 2], "target": [0, 1]})
+            for phase in ["1", "2A", "2B", "3A", "3B", "4"]:
+                result = run_phase(phase)
+                # Should not raise error for valid phase notation
+                assert result is not None
 
 
 class TestPluginContractImplementation:

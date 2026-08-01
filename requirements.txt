@@ -46,12 +46,6 @@ cligj==0.7.2
     # via rasterio
 cloudpickle==3.1.2
     # via shap
-colorama==0.4.6
-    # via
-    #   build
-    #   click
-    #   pytest
-    #   tqdm
 cryptography==49.0.0
     # via google-auth
 distlib==0.4.3
@@ -125,6 +119,8 @@ numpy==2.4.6
     #   shap
     #   xarray
     #   xgboost
+nvidia-nccl-cu12==2.30.7
+    # via xgboost
 packaging==26.2
     # via
     #   black
@@ -281,8 +277,6 @@ typing-extensions==4.15.0
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic
-tzdata==2026.2
-    # via pandas
 urllib3==2.7.0
     # via requests
 virtualenv==21.5.1

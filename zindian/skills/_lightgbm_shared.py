@@ -316,8 +316,8 @@ def train_lightgbm_cv(
             ],
         )
 
-        val_pred_raw = np.asarray(model.predict(X[val_idx]), dtype=np.float64)
-        test_pred_raw = np.asarray(model.predict(X_test), dtype=np.float64)
+        val_pred_raw = np.asarray(model.predict(X[val_idx]), dtype=np.float64)  # type: ignore[arg-type]
+        test_pred_raw = np.asarray(model.predict(X_test), dtype=np.float64)  # type: ignore[arg-type]
 
         # Store predictions based on task type and number of classes
         if task_type == "regression":

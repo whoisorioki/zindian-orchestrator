@@ -8,6 +8,7 @@ data/raw/
 data/processed/
 /SKILL_STATE.json
 /challenge_config.json
+reports/
 
 ## Competition outputs
 submissions/
@@ -47,7 +48,6 @@ opencode_output.txt
 *.swp
 *.swo
 *~
-docs/
 logs/
 package-lock.json
 

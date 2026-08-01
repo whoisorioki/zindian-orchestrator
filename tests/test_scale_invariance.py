@@ -80,7 +80,14 @@ def test_skill_12_variance_ddof():
     updated_state = run_skill_12(config, state)
 
     scores = np.array(state["eda"]["fold_scores"], dtype=np.float64)
-    expected_variance = np.var(scores, ddof=1)
+    expected_sample_variance = np.var(scores, ddof=1)
+    K = len(scores)
+    expected_nb_variance = expected_sample_variance * ((1.0 / K) + (1.0 / (K - 1)))
 
-    actual_variance = float(updated_state["metric_analysis"]["fold_score_variance"])
-    assert np.isclose(actual_variance, expected_variance)
+    actual_nb_variance = float(updated_state["metric_analysis"]["fold_score_variance"])
+    actual_sample_variance = float(
+        updated_state["metric_analysis"]["fold_score_variance_sample"]
+    )
+
+    assert np.isclose(actual_sample_variance, expected_sample_variance)
+    assert np.isclose(actual_nb_variance, expected_nb_variance)

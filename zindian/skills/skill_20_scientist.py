@@ -36,7 +36,7 @@ def _get_client():
     if _client is not None:
         return _client
     _api_key_env = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    http_config = types.HttpOptions(
+    http_config = types.HttpOptions(  # type: ignore[call-arg]
         client_args={
             "timeout": 60.0,
             "proxy": None,
@@ -273,7 +273,7 @@ def empirical_validate_hypothesis(
         random_state=get_seed(),
         verbosity=-1,
     )
-    model.fit(filled, train_frame[target_col].astype(int))
+    model.fit(filled, train_frame[target_col].astype(int))  # type: ignore[arg-type]
     gain = model.booster_.feature_importance(importance_type="gain")
     if float(np.sum(gain)) <= 0.0:
         return False, "lightgbm gain <= 0"

@@ -826,7 +826,7 @@ def main():
         if isinstance(cfg.get("submission_budget"), dict)
         else 5
     )
-    budget_used = state.get("submissions_used_today", 0)
+    _ = state.get("submissions_used_today", 0)
     budget_remaining = state.get("remaining_submissions", budget_total)
     submission_budget = f"{budget_remaining} remaining ({budget_daily} today)"
 
@@ -889,11 +889,8 @@ def main():
     policy_filters = (
         f"{len(cfg.get('policy_filters', []))} columns blocked" if cfg else "N/A"
     )
-    leaked_features = (
-        "empty"
-        if not state.get("leaked_features")
-        else f"{len(state.get('leaked_features'))} flagged"
-    )
+    leaked_list = state.get("leaked_features") or []
+    leaked_features = "empty" if not leaked_list else f"{len(leaked_list)} flagged"
     banned_check = (
         "N/A"
         if is_init

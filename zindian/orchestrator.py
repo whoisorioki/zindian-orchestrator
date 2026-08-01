@@ -468,7 +468,7 @@ def prompt_human_gate(
 
                 # Execute challenge run
                 print("\nRunning challenge anchor training...")
-                result = run_skill("skill_08")
+                _ = run_skill("skill_08")
 
                 fresh_state = store.read()
                 challenged_oof = fresh_state.get("anchor_oof_score")
@@ -531,7 +531,7 @@ def prompt_human_gate(
                 print(
                     f"\nRunning comparison CV strategy training using {override_strategy}..."
                 )
-                result = run_skill("skill_08")
+                _ = run_skill("skill_08")
 
                 fresh_state = store.read()
                 override_oof = fresh_state.get("anchor_oof_score")

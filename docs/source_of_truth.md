@@ -1,27 +1,22 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** 2.3
-**Status:** SIGNED OFF
+**Version:** v2.4 Target Spec (Patched from v2.3)
+**Status:** SIGNED OFF (v2.3) / SPEC FINALIZED (v2.4)
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
+**Last updated:** August 2026 (v2.4: finalized statistical target specs for S1–S10 & pseudo-labeling contracts)
 
-**KNOWN GAPS IN IMPLEMENTATION:**
-While the multi-target pipeline and sub-phase mappings are fully implemented and functional,
-most gaps from v2.2.1 have been resolved in v2.3. GAP-1 (skill_21 retraining) was already
-implemented, GAP-2 (composite fold variance) has been added, and DRIFT-1 (hardcoded targets)
-has been fixed.
+---
 
-
-**Last updated:** June 2026 (v2.3: added R5 carbon tracking, known gaps registry, resolved GAP-2 and DRIFT-1)
-**Patched from v2.2.1-Multi-Target:** 3 changes —
-  Section 2: Replaced "RMSLE vs RMSE Target Transformation and Evaluation"
-  with "Regression Target Transformation Lifecycle" — generalized mapping
-  matrix covering RMSLE, RMSE (root_mean_squared_error), and MAE
-  (mean_absolute_error) with metric-aware target transformation, prediction
-  domain clipping, and score computation rules.
-  Section 4 `skill_11_gate` condition 2–3: Made metric routing explicit for
-  `root_mean_squared_error`/`mean_absolute_error` (scale-sensitive) vs `rmsle`
-  (scale-invariant) vs `classification` (bounded).
-
+### v2.4 Target Specification Summary
+This document defines the authoritative architecture for v2.3 and the target specifications for the v2.4 statistical migration:
+- **S1 & S9 (Nadeau-Bengio + 1-SE):** Corrected fold variance $\text{Var}_{\text{NB}}$ and 1-SE promotion margins in `skill_11`/`skill_12`.
+- **S2 (MASE Metric):** Naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
+- **S3 (Inverse-Variance Weighting):** Dynamic variance weighting $w_k^{\text{eff}} = w_k / (\sigma_k^2 + \epsilon)$ for multi-target composite scores in Section 2 & `skill_11`.
+- **S4 (Residual Diversity):** Kuncheva residual vector correlation in `skill_13` collinearity pruning.
+- **S6 (Two-Tier Leak Audit):** Pearson primary/blocking + advisory subsampled MI audit surfaced at Gate 2 in `skill_10`.
+- **S7 (Spatial Buffering):** `spatial_buffer_km` config parameterization for spatial CV splits in `skill_05`.
+- **S8 (Hybrid Adaptive Pseudo-labeling):** Class-wise quantile thresholding with 0.70 floor & post-retraining recombination in `skill_21`.
+- **S10 (Path 2 Fingerprinting):** Tolerance-based 3-tier band verification for derived artifacts in `skill_22`.
 
 ---
 
@@ -49,8 +44,6 @@ The orchestrator manages one active competition.
 `challenge_config.json` and `SKILL_STATE.json` are scoped to one
 competition directory. Parallel competition support is out of scope.
 
-**IMPLEMENTATION STATUS:** Recombination policy logic (A12) is implemented in `skill_21_pseudo_label.py`, and the model retraining loop (LightGBM + Random Forest ensemble with strict split isolation) is fully implemented and operational.
-
 **A2 — Tabular data only.**
 All skills assume structured, tabular input. Image, text, audio,
 or graph data are not handled. Spatial data is treated as tabular
@@ -76,10 +69,16 @@ be read from `challenge_config.json` via a config accessor.
 No string literals for any of the above are permitted in any
 skill body.
 
-**A6 — `SKILL_STATE.json` is the single source of truth for
-execution state.**
-No skill holds internal state between runs. All execution state
-is written to and read from `SKILL_STATE.json`.
+**A6 — `SKILL_STATE.json` is the single source of truth for execution state.**
+No skill holds internal state between runs. All execution state is written to and read from `SKILL_STATE.json`.
+
+*State Hygiene & Boundary Rule:* `SKILL_STATE.json` holds only what downstream skills or gates need to make a decision (booleans, counts, OOF scores, short column-name lists, phase/gate flags, file hashes, and small scalar summaries). Any diagnostic artifact for human review — per-feature, per-band, or per-row dictionaries whose size scales with feature/row count — belongs in `reports/` as JSON or Markdown, with at most a short pointer or single derived flag left in state.
+
+Examples of the standard boundary:
+- `skill_03`: `checks[]` + `policy{}` → `reports/feature_policy.json` + `reports/legality_report.md`. State gets `legality_status`, `feature_policy_written`, `last_legality_checked`.
+- `skill_04`: heavy per-band/per-feature diagnostic dicts (`band_summary_stats`, `seasonal_amplitude`, `temporal_trends`, `target_correlation_per_feature`, `class_separability_index`) → `reports/eda_report.json`. State gets `temporal_index_confirmed`, `group_structure_confirmed`.
+- `skill_10`: heavy SHAP ranking & corr pairs → `reports/shap_analysis.json`. State gets `shap_top_features`, `shap_feature_count`, `pruning_delta_f1`, `pruning_pass`.
+- `skill_15`: phase summaries → `reports/phase_*.md`. State gets `last_reported`.
 
 **A7 — The OOF contract is universal.**
 Every skill that generates or evaluates OOF scores uses the CV
@@ -140,8 +139,6 @@ reproducible, reviewable pinning while keeping the top-level intent in
 `requirements.in`.
 
 **A11 — Multi-target competitions are config-declared, never inferred.**
-**IMPLEMENTATION STATUS:** Multi-target logic is implemented and operational in skills 02, 04, 07, 08, 09, 10, and 11.
-
 A competition is multi-target if and only if
 `challenge_config.json["target_config"]["targets"]` contains more than one
 entry. No skill infers multi-target status from data shape, column count,
@@ -156,8 +153,6 @@ etc. from the top-level config fields exactly as in v2.2 — unchanged code
 path. Single-target competitions are byte-for-byte unaffected.
 
 **A12 — Pseudo-label recombination policy is mandatory for mixed-task multi-target competitions.**
-**IMPLEMENTATION STATUS:** Recombination policy logic (A12) is implemented in `skill_21_pseudo_label.py`, and the model retraining loop (LightGBM + Random Forest ensemble with strict split isolation) is fully implemented and operational.
-
 Whenever `target_config` has more than one target AND at least one target is classification, `target_config` must include `pseudo_label_recombination_policy`. Permitted values are exclusively `"freeze_unaugmented_targets_at_original"` and `"block_composite_until_all_targets_augmented_or_none"`. This field is absent for single-target competitions and for multi-target competitions where all targets are regression.
 
 ---
@@ -276,8 +271,11 @@ To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versat
   `secondary_metrics` block and any downstream diagnostic that reads it.
 
 - `r2`: Coefficient of determination (regression tasks only)
+- `zero_fraction`: Target sparsity diagnostic (fraction of ground-truth targets where $y_{true} == 0$)
 
-For classification tasks, the `secondary_metrics` field may be omitted or set to `null`.
+> **v2.4 — not yet implemented (S2):** `mase` (Mean Absolute Scaled Error) diagnostic. Added to `secondary_metrics` ONLY when `config["temporal_signal"]["present"] == True`. MASE MUST NOT be computed or offered for non-temporal competitions, as its naive-forecast denominator $\frac{1}{N-1}\sum_{t=2}^{N} |y_t - y_{t-1}|$ has no valid non-temporal formulation.
+
+For classification tasks, the `secondary_metrics` field may be omitted or set to `null`. For multi-target competitions, secondary_metrics is computed and stored per-target inside that target's own OOF record — there is no separate composite secondary_metrics block.
 
 Multi-target variant of the same schema (only when target_config.targets
 has more than one entry):
@@ -290,7 +288,7 @@ has more than one entry):
   "branch_name": "variant-01",
   "target_name": "total_goals",
   "model_config": { ... },
-  "secondary_metrics": { "mae": 0.123, "mape": 0.045, "r2": 0.789 }
+  "secondary_metrics": { "mae": 0.123, "mape": 0.045, "r2": 0.789, "zero_fraction": 0.05, "mase": 0.82 }
 }
 ```
 
@@ -298,24 +296,6 @@ target_name is required when target_config has more than one target,
 absent or null otherwise. Storage key becomes
 branch_{branch_name}_{target_name}_oof instead of branch_{branch_name}_oof
 only when multi-target is active. Single-target keys unchanged.
-
-#### Secondary Metrics Block
-To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versatility across diverse Zindi regression challenges, all candidate and anchor OOF records must contain a nested `secondary_metrics` object containing:
-- `mae`: Mean Absolute Error (regression tasks only)
-- `mape`: Mean Absolute Percentage Error (regression tasks only).
-  Computed exclusively over rows where the ground-truth target
-  `y_true != 0`. Rows where `y_true == 0` are excluded entirely from
-  both the numerator and denominator of the MAPE computation.
-  When all rows in the validation fold have `y_true == 0`,
-  `mape` is set to `null` with reason `"all_targets_zero"` rather than
-  `0.0` or infinity. Zero or infinity would silently corrupt the
-  `secondary_metrics` block and any downstream diagnostic that reads it.
-
-- `r2`: Coefficient of determination (regression tasks only)
-
-For classification tasks, the `secondary_metrics` field may be omitted or set to `null`. For multi-target competitions, secondary_metrics is computed and stored
-per-target inside that target's own OOF record — there is no separate
-composite secondary_metrics block.
 
 #### Regression Target Transformation Lifecycle
 
@@ -364,10 +344,15 @@ For each target_spec in target_config["targets"]:
     if target_spec["task_type"] == "classification":
         normalized_distance = 1.0 - raw_score
 
-    weighted_distances.append(normalized_distance * target_spec["weight"])
+    weighted_distances.append(normalized_distance * effective_weight)
 
-composite_score = sum(weighted_distances)
+composite_score = sum(weighted_distances) / total_weight
 ```
+
+> **v2.4 — not yet implemented (Item 4):** Inverse-variance effective weighting. When `use_inverse_variance_weighting: True` is configured, target weight $w_k$ is scaled inversely by target fold variance:
+> $$w_k^{eff} = \frac{w_k}{\sigma_k^2 + \epsilon}$$
+> where $\sigma_k^2$ is the unbiased sample variance (`ddof=1`) of target $k$'s fold scores, and $\epsilon = 10^{-8}$ prevents division by zero.
+> **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use).
 
 `composite_direction` is fixed as `"minimize_composite_distance"` — every term is already a "lower is better" distance, regardless of how many targets individually maximize or minimize.
 
@@ -831,7 +816,8 @@ writes.
     "present": false,
     "lat_col": null,
     "lon_col": null,
-    "group_col": null
+    "group_col": null,
+    "spatial_buffer_km": null
   },
   "missingness_level": "low | moderate | high",
   "external_data_allowed": false,
@@ -918,7 +904,18 @@ policy_gate():
 
 ---
 
-**`skill_04_eda` — Writes to `SKILL_STATE.json` only:**
+**`skill_04_eda` — Writes to `SKILL_STATE.json` (lean fields) and
+`reports/eda_report.json` (heavy diagnostics):**
+
+**[CORRECTION — v2.3]** The five per-band/per-feature diagnostic dicts
+previously listed here as SKILL_STATE fields (`band_summary_stats`,
+`seasonal_amplitude`, `temporal_trends`, `target_correlation_per_feature`,
+`class_separability_index`) have been moved to `reports/eda_report.json`.
+They do not belong in SKILL_STATE.json per rule A6-B — their size scales
+with feature/band count. Only the lean boolean derived from them is kept
+in state.
+
+SKILL_STATE.json `eda` sub-block (lean fields only):
 
 ```json
 {
@@ -929,31 +926,29 @@ policy_gate():
     "target_skew": 0.0,
     "target_std": 0.0,
     "group_structure_confirmed": false,
-    "temporal_index_confirmed": false,
-    "band_summary_stats": {},
-    "seasonal_amplitude": {},
-    "temporal_trends": {},
-    "target_correlation_per_feature": {},
-    "class_separability_index": {}
+    "temporal_index_confirmed": false
   }
+}
+```
+
+`reports/eda_report.json` holds the heavy diagnostics:
+
+```json
+{
+  "data_quality": { "...": "full quality report" },
+  "preprocessing_audit": { "...": "outlier_assessment, missingness, etc." },
+  "band_summary_stats": {},
+  "seasonal_amplitude": {},
+  "temporal_trends": {},
+  "target_correlation_per_feature": {},
+  "class_separability_index": {}
 }
 ```
 
 The five band-aware diagnostics are computed dynamically from column
 naming patterns (e.g., `VH_01`, `blue_12`) — no hardcoded band names
 or competition-specific strings. When a dataset has no monthly composite
-columns (no `BAND_MM` pattern), all five fields are empty dicts — no
-pipeline halt.
-
-- `band_summary_stats`: per-band mean, std, min, max across all months
-- `seasonal_amplitude`: max(monthly_mean) − min(monthly_mean) per band
-- `temporal_trends`: monthly means and month-over-month deltas per band.
-  Structural feature (computed from feature columns, not targets) —
-  no two-mode fold-restriction applies.
-- `target_correlation_per_feature`: Pearson correlation of each numeric
-  feature with the primary target — class-separation ranking
-- `class_separability_index`: per-feature F1 score from a single-feature
-  decision stump (diagnostic only — not model selection, not AutoML)
+columns (no `BAND_MM` pattern), all five are empty dicts — no pipeline halt.
 
 `target_std` is the standard deviation of the target column
 computed on the full training set. It is used by `skill_11`
@@ -961,6 +956,44 @@ and `skill_12` to normalise `gate_margin` and
 `variance_gate_threshold` for regression tasks where raw
 thresholds are scale-sensitive. Written during Phase 1 before
 the config lock closes.
+
+**Implementation note — `temporal_index_confirmed` and
+`group_structure_confirmed` derivation (v2.3):**
+
+`temporal_index_confirmed` is set to `True` when either of the
+following competition-agnostic signals is found:
+
+1. The BAND_MM monthly composite pattern detection (which also
+   populates `seasonal_amplitude` and `temporal_trends`) already
+   confirmed temporal column structure — i.e., `seasonal_amplitude`
+   or `temporal_trends` is non-empty after band detection completes.
+2. Any feature column has a datetime64 dtype (`pd.api.types.is_datetime64_any_dtype`),
+   OR is a string/object-dtype column (`pd.api.types.is_string_dtype`) that
+   round-trips cleanly through `pd.to_datetime` on a 20-row sample AND exhibits
+   sequential row monotonicity (`.is_monotonic_increasing` or `.is_monotonic_decreasing`).
+   `is_string_dtype` is used rather than `is_object_dtype` because string columns
+   can be Arrow string arrays (`dtype='str'`). Numeric (float/int) columns are
+   explicitly excluded — `pd.to_datetime` interprets floats as nanosecond Unix timestamps.
+   The monotonicity requirement prevents string ID columns containing date fragments
+   (e.g., `sample_id` with `20200115_000` values) from triggering false positives.
+
+No hardcoded column names are used. Detection relies solely on dtype inference,
+monotonicity, and the existing BAND_MM pattern match.
+
+`group_structure_confirmed` is set to `True` when any feature column
+(excluding targets) satisfies all three of the following:
+- `nunique > 1` (not constant)
+- `nunique < len(df)` (not unique-per-row, i.e., not an ID column)
+- `nunique / len(df) < 0.05` (at most 5% distinct values, meaning
+  each value repeats across many rows — consistent with a grouping
+  or categorical identifier column)
+
+**Judgment call note:** The 0.05 cardinality ratio threshold was
+introduced in v2.3 as a new heuristic. No existing convention for
+group-cardinality detection was found elsewhere in the codebase
+(`skill_02`, `skill_05`, `skill_07`) at the time this was written.
+If a second convention is added elsewhere, both should be unified
+to avoid two different definitions of "group structure" coexisting.
 
 `skill_04` does not write to `challenge_config.json`.
 Its outputs inform `skill_05_cv` before the config lock
@@ -1003,6 +1036,8 @@ Step 2 — Group / Spatial check:
            identifier column)
 
       Reason: group leakage prevention
+
+      > **v2.4 — not yet implemented (S7):** Spatial CV Buffering. When `config["spatial_signal"]["present"] == True`, `challenge_config.json["spatial_signal"]` must declare `spatial_buffer_km` (float, explicit buffer distance in kilometers, per A5). In `skill_05_cv`'s `build_spatial_splits`, training set samples located within `spatial_buffer_km` distance of any validation fold sample are excluded from that fold's training split to eliminate spatial autocorrelation leakage.
       → Go to write
 
 Step 3 — Imbalance check (classification only):
@@ -1069,6 +1104,10 @@ No string literals permitted in `skill_05` body.
     target_std present in SKILL_STATE["eda"]["target_std"]
     — required for effective_gate_margin and
     effective_variance_threshold normalisation in skill_11
+[ ] If temporal_signal.present == True and task_type == regression:
+    MAE_naive_baseline present in SKILL_STATE["eda"]["MAE_naive_baseline"]
+    — computed as mean absolute difference between consecutive temporal observations:
+      MAE_naive = mean(|y_t - y_{t-1}|) (required for MASE gating in skill_11)
 [ ] skill_05 cv_strategy written with selection_reason
     — only valid after skill_04 outputs confirmed
 [ ] spatial_signal.group_col populated if spatial_signal
@@ -1373,6 +1412,14 @@ For each feature variant branch:
             Issue drop-and-regenerate directive to skill_07
 ```
 
+> **Current Code State & v2.4 Target Spec — Systematic MI Leakage Audit (S6):**
+> - **Current Code State:** `skill_10_shap.py` currently implements a conditional leak audit when top-feature SHAP dominance ratio exceeds `shap_leak_threshold` (default 3.0): for classification, it invokes `sklearn.feature_selection.mutual_info_classif` (flagging leaks at $NMI \ge 0.90$); for regression, it evaluates Pearson $|r| \ge 0.98$. Both thresholds (0.90, 0.98) are currently hardcoded in the function body rather than read from `challenge_config.json` (an A5 consistency gap).
+> - **v2.4 — not yet implemented (S6):** Two-Tier Leak Audit.
+>   - **Classification:** NMI $\ge$ threshold remains primary/blocking.
+>   - **Regression — Primary (blocking):** Pearson $|r| \ge$ `regression_threshold` (0.98) flags feature to `leaked_features`, blocks promotion, and triggers `skill_07` regenerate directive.
+>   - **Regression — Verification (advisory, non-blocking):** If `enable_mi_regression_subsample: true` in config, subsampled `mutual_info_regression` runs in addition. Features flagged by MI but not Pearson are written to `SKILL_STATE.json["leakage_mi_advisory"]` (not `leaked_features`), do NOT block `skill_11` promotion, and do NOT trigger auto-regeneration.
+>   - **Surfacing:** Non-empty `leakage_mi_advisory` entries are surfaced to the operator at **Human Gate 2** for review ("Pearson clean, but MI flagged X — approve anyway?"). Threshold parameters will be read from `challenge_config.json` per A5.
+
 Multi-target extension:
 
 For each target_spec in target_config["targets"]:
@@ -1462,6 +1509,15 @@ regardless of classification target presence.
 
 High fold score variance signals the model is not
 generalising uniformly across the distribution.
+
+> **v2.4 — not yet implemented (S1 & S9):** Nadeau-Bengio Corrected Variance & 1-SE Promotion Margin.
+> `skill_12_metric` will compute Nadeau-Bengio corrected CV fold score variance to account for fold overlap dependence:
+> $$\text{Var}_{NB} = \text{Var}_{sample}(ddof=1) \times \left(\frac{1}{K} + \frac{n_{val}}{n_{train}}\right)$$
+> where $K$ is fold count, $n_{val}$ is validation fold size, and $n_{train}$ is training set size.
+> `skill_11_gate` promotion conditions 2 and 3 consume $\text{Var}_{NB}$ to apply a 1-Standard-Error (1-SE) promotion margin:
+> $$\text{SE}_{OOF} = \sqrt{\frac{\text{Var}_{NB}}{K}}$$
+> $$\text{effective\_gate\_margin} = \max\left(\text{gate\_margin}_{scale\_adjusted}, 1 \times \text{SE}_{OOF}\right)$$
+> **CRITICAL DEPENDENCY:** S1 (Nadeau-Bengio variance) and S9 (1-SE promotion margin) **MUST SHIP TOGETHER**, as feeding corrected variance into an uncorrected margin reintroduces statistical inconsistency.
 
 ---
 
@@ -1585,6 +1641,10 @@ runs.**
    in SKILL_STATE.json
 ```
 
+> **v2.4 — not yet implemented (Item 4):** Inverse-variance weighting mirror in the multi-target gate. On competitions where `target_config` has more than one entry, gate conditions 2 and 3 consume the same inverse-variance effective weights as the composite score:
+> $$w_k^{eff} = \frac{w_k}{\sigma_k^2 + \epsilon}$$
+> where $\sigma_k^2$ is the unbiased sample variance (`ddof=1`) of target $k$'s fold scores and $\epsilon = 10^{-8}$. The effective variance threshold and gate margin for multi-target gate comparisons are computed using these $w_k^{eff}$ weights exactly as documented in the Composite Score Computation section (Section 2). **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use). This mirror must ship together with the Section 2 inverse-variance implementation — the two formulas are the same formula and must never diverge.
+
 Gate failure writes a complete diagnosis to
 `SKILL_STATE.json` and triggers an automated
 `skill_20` on-demand run.
@@ -1613,8 +1673,14 @@ Guard conditions — ALL must be true before running:
    in skill_11 and skill_12.)
 5. Calibrated probabilities present from skill_09
 6. Confident prediction threshold met
-   (default: top 10% by confidence score)
+   (default: fixed absolute thresholds conf_pos >= 0.85, conf_neg <= 0.15 from CONF_POS_DEFAULT and CONF_NEG_DEFAULT in skill_21_pseudo_label.py)
 ```
+
+> **v2.4 — Target Spec Finalized (S8):** Hybrid Adaptive Pseudo-labeling.
+> - **Mechanism:** Class-wise quantile selection with a 0.70 floor (e.g. top $P\%$ per class, bounded below by 0.70 probability).
+> - **Preconditions & Guards:** OOF isotonic/platt calibration (from `skill_09`) mandatory. Aggregated row count guarded by `min_pseudo_samples` parameter.
+> - **Ranking & Multi-target:** Deterministic `method='first'` tie-breaking. Scoped independently per classification target in multi-target competitions.
+> - **Recombination Timing:** Enforced **post-retraining**, immediately after the pseudo-label retraining loop finishes, before passing candidate branches to `skill_11`.
 
 On guard pass:
 
@@ -1779,6 +1845,8 @@ For each pair of candidates:
     If correlation > 0.95:
         Drop the lower-scoring candidate
 
+> **v2.4 — not yet implemented (S4):** Residual Diversity / Kuncheva Pruning. `_prune_collinear` in `oracle_fusion_core.py` will thread ground-truth `y_true` into the function body to calculate error residual vectors $e_m = y_{pred, m} - y_{true}$. Diversity pruning will correlate error residual vectors ($e_A, e_B$) rather than raw predictions ($y_{pred, A}, y_{pred, B}$). Task-type correlation methods (Pearson for classification residuals, Spearman rank for regression residuals) remain preserved.
+
 All candidates must have:
     Seeds set and logged
     Open-source tools only
@@ -1812,7 +1880,8 @@ All candidates must have:
         gc3_no_leaked_features: leaked_features empty
         gc4_variance_within_threshold: fold variance check
         gc5_calibrated_probs_present: skill_09 output found
-        gc6_confidence_threshold_met: top 10% threshold met
+        gc6_confidence_threshold_met: fixed absolute thresholds met
+          (conf_pos >= 0.85, conf_neg <= 0.15)
         Pseudo-label CV fold assignment contract verified:
           augmented rows in train splits only,
           OOF indices identical to Phase 1 layout
@@ -1900,24 +1969,25 @@ All task types:
 **`skill_16_submit` — Budget management protocol:**
 
 ```
-Before any Zindi API call:
+Before any Zindi submission API call:
 
-    Read remaining_submissions from Zindi client
+    Query live remaining_submissions from Zindi client (or read cached state if offline/error).
 
     If remaining_submissions <= 0:
-        Write to SKILL_STATE.json:
-            {
-              "submission_blocked": true,
-              "reason": "budget_exhausted"
-            }
-        Raise HardAbortException
-        No API call under any condition
+        Raise HardAbortException ("Zindi reports zero remaining submissions today."
+        or "State-side budget guard: zero submissions remaining.")
+        No submission API call under any condition.
 
     If remaining_submissions == 1:
-        Write warning to SKILL_STATE.json
-        Halt thread
-        Prompt human operator for explicit confirmation
-        before proceeding
+        Write budget_warning to SKILL_STATE.json:
+            {
+              "budget_warning": {
+                "remaining_submissions": 1,
+                "source": "live" | "cached",
+                "timestamp": "<UTC ISO timestamp>"
+              }
+            }
+        Prompt human operator for explicit confirmation before proceeding.
 ```
 
 ---
@@ -2150,6 +2220,14 @@ must produce bit-identical OOF scores and submission
 files. Non-reproducible skills must not be promoted
 or submitted.
 ```
+
+> **v2.4 — Target Spec Finalized (S10):** Computed-Artifact Fingerprinting Scope (Path 2).
+> - **Raw Intake Files:** Retain exact MD5 hashing (`skill_01`).
+> - **Computed Artifacts Scope:** Evaluated exclusively at `skill_22` reproducibility sign-off (Path 2) across cleaned datasets (`skill_06`), engineered features (`skill_07`), and OOF predictions (`skill_08` / `skill_21`).
+> - **Tolerance-Based 3-Tier Verification Bands:**
+>   - **Tier 1 ($\le 10^{-6}$ relative delta):** Bit/float identical pass.
+>   - **Tier 2 ($10^{-6}$ to $10^{-5}$ relative delta):** Soft-warning issued; requires explicit operator sign-off at Human Gate 5.
+>   - **Tier 3 ($> 10^{-5}$ relative delta):** Hard-halt — non-reproducible artifact rejected.
 
 **R3 — No custom packages.**
 
@@ -2478,6 +2556,7 @@ optimisation.
 [ ] random_state reads from
     config["reproducibility"]["seed"]
 [ ] Config locks after this write completes
+[ ] [v2.4 Target - Pending] Spatial GroupKFold enforces spatial_buffer_km exclusion zones when spatial_signal present
 ```
 
 **`skill_06`**
@@ -2524,6 +2603,7 @@ optimisation.
     anchor_challenge block written with modification
       description, both OOF scores, rationale, timestamp
     No write to challenge_config.json under any condition
+[ ] [v2.4 Target - Pending] Secondary metrics contains zero_fraction and temporal-gated mase (when temporal_signal present)
 ```
 
 **`skill_09`**
@@ -2547,6 +2627,7 @@ optimisation.
 [ ] leaked_features written for every branch
 [ ] Branches with non-empty leaked_features blocked
     from promotion
+[ ] [v2.4 Target - Pending] Systematic pre-filtering MI audit executed using mutual_info_regression/classif with thresholds from config
 ```
 
 **`skill_11`**
@@ -2595,6 +2676,8 @@ optimisation.
 [ ] Gate failure triggers skill_20 on-demand run
 [ ] Human Gate 2 approval checked before candidate
     pool entry
+[ ] [v2.4 Target - Pending] Gate conditions 2 and 3 consume Nadeau-Bengio corrected variance Var_NB and 1-SE promotion margin
+[ ] [v2.4 Target - Pending] Multi-target gate conditions 2 and 3 consume inverse-variance effective weights w_k^eff = w_k / (σ_k^2 + ε), mirrored one-for-one from Composite Score Computation
 ```
 
 **`skill_12`**
@@ -2610,6 +2693,7 @@ optimisation.
 [ ] For classification: raw variance_gate_threshold used
 [ ] OOF-to-LB delta recorded when available
 [ ] Recommended threshold written
+[ ] [v2.4 Target - Pending] Fold score variance computed using Nadeau-Bengio overlap-corrected estimator Var_NB
 ```
 
 **`skill_13`**
@@ -2625,6 +2709,7 @@ optimisation.
 [ ] Fusion strategy written to SKILL_STATE.json
 [ ] Uses most recent OOF arrays only —
     never stale pre-pseudo-label arrays
+[ ] [v2.4 Target - Pending] Candidate pruning evaluates error residual vector correlation e_m = y_pred,m - y_true
 ```
 
 **`skill_14`**
@@ -2721,7 +2806,8 @@ optimisation.
 [ ] Guard Condition 5: does not run without calibrated
     probabilities from skill_09
 [ ] Guard Condition 6: does not run if confidence
-    threshold not met
+    threshold not met (fixed absolute thresholds:
+    conf_pos >= 0.85, conf_neg <= 0.15)
 [ ] Uses calibrated probabilities from skill_09
 [ ] Config seed used
 [ ] Full pseudo_label_result schema written to
@@ -2759,6 +2845,7 @@ optimisation.
     original branch_{name}_oof arrays intact,
     original candidate pool restored, proceeds to skill_13
 [ ] Fusion uses most recent OOF arrays only
+[ ] [v2.4 Target - Decision Required] Pseudo-label thresholding strategy decision recorded (S8): fixed absolute thresholds (current implementation) vs class-wise percentile (requires calibrated OOF probabilities) — DECISION REQUIRED, do not implement either option until resolved
 ```
 
 **`skill_22`**
@@ -2770,6 +2857,7 @@ optimisation.
     all outputs tagged
 [ ] Environment lock file verified
 [ ] No custom packages confirmed via import scan
+[ ] [v2.4 Target - Decision Required] Computed-artifact fingerprinting scope decision recorded (S10): whether to add IEEE-754 tolerance-based statistical fingerprinting for derived floating-point matrices, and where (skill_01 intake vs skill_22 sign-off vs both) — DECISION REQUIRED, no implementation before resolution; raw-file MD5 hashing remains the only fingerprinting today
 [ ] If skill_21 ran with retraining_required == true:
         Guard Condition 1 (classification-only) confirmed
         Pseudo-label fold contract verified: augmented
@@ -3077,7 +3165,7 @@ contract and the current codebase. Items are tracked by severity.
 
 ---
 
-### 🔴 CRITICAL — Pipeline-blocking or Contract-violating
+### CRITICAL — Pipeline-blocking or Contract-violating
 
 **[RESOLVED] C1 — Bootstrap dag_phase prevents config writes**
 
@@ -3088,22 +3176,43 @@ Code Reality:   Resolved. "phase_1_integrity_locked" has been added
                 to allowed_write_phases in skill_02 and skill_05.
 ```
 
+**[RESOLVED — v2.3] GAP-4 — Temporal and Group CV signal detection in skill_04_eda**
+
+```
+SoT Contract:   skill_04_eda writes temporal_index_confirmed and
+                group_structure_confirmed to SKILL_STATE.json["eda"].
+Code Reality:   Resolved in v2.3. skill_04_eda now writes both lean booleans
+                derived from BAND_MM pattern match, datetime/monotonicity
+                dtype inference, and cardinality ratio (<5% distinct non-ID
+                feature values). Heavy diagnostic dicts moved to
+                reports/eda_report.json.
+```
+
 ---
 
-### 📊 STATISTICAL HEURISTICS & LIMITATIONS — Approved for v2.3 / Scheduled for v2.4+ Revision
+### STATISTICAL HEURISTICS & LIMITATIONS — v2.4 Migration Status & Specifications
 
-These are confirmed limitations where the current SoT v2.3 specifications rely on heuristics rather than optimal statistical/machine learning theory. They are accepted to maintain pipeline stability under v2.3, but are flagged for revision in v2.4+:
+These items document statistical limitations from v2.3 and their updated v2.4 target specifications:
 
-- **S1 — Bessel's Correction Underestimation**: Using `ddof=1` for CV fold score variance (Section 4) underestimates the true variance of non-independent splits. *Risk:* False-positive gate promotions under small $K$. *Alternative:* Nadeau-Bengio corrected estimator.
-- **S2 — MAPE Zero-Target Bias**: Excluding zero targets (Section 2) introduces selection bias. *Alternative:* MASE or sMAPE.
-- **S3 — Non-Uniform Metric Scaling**: Combining unbounded RMSE/std with bounded 1-F1 in composite scores (Section 4) violates scale-invariance under extreme values. *Alternative:* Kendall uncertainty-weighting.
-- **S4 — Correlation-Based Pruning**: Pruning on raw prediction correlation (Section 4) ignores error residuals. *Alternative:* Kuncheva error diversity measures.
-- **S5 — Target Covariance Breakdown**: Retraining with partially frozen targets (Section 4) breaks joint target distributions. *Alternative:* Joint consistency regularization.
-- **S6 — Multicollinear Leakage Splitting**: SHAP dominance check (> 3.0) fails if a target leak is split across correlated columns. *Alternative:* SHAP interaction values or Mutual Information.
-- **S7 — Spatial Autocorrelation Bias**: Using standard GroupKFold on block IDs without spatial buffering yields optimistic CV scores. *Alternative:* Spatial buffering zones.
-- **S8 — Fixed Percentile Pseudo-labeling**: A flat top 10% threshold forces noisy labels under class imbalance. *Alternative:* Adaptive class-wise thresholds.
-- **S9 — Absolute Promotion Margins**: A constant `gate_margin: 0.001` is noise-insensitive. *Alternative:* 1-SE rule.
-- **S10 — Floating-Point Integrity limits**: SHA-256 hashing fails to verify identical datasets under IEEE-754 precision drift. *Alternative:* Statistical fingerprinting.
+- **S1 — Bessel's Correction Underestimation & S9 — Absolute Promotion Margins**:
+  *Status:* **[v2.4 Spec Drafted — Implementation Pending]** Specified in Section 4 (`skill_12_metric` & `skill_11_gate`). `skill_12` computes Nadeau-Bengio corrected fold variance $\text{Var}_{NB}$; `skill_11` consumes $\text{Var}_{NB}$ to apply a 1-SE promotion margin $\text{gate\_margin}_{eff} = \sqrt{\text{Var}_{NB}}$. S1 and S9 **must ship together**. **Bucketing confirmed: no `challenge_config.json` schema change required** — $\text{Var}_{NB}$ is computed entirely from existing fold-split geometry and per-fold scores already present in state. S1/S9 bucket as *spec drafted / implementation pending (no config schema change)*.
+- **S2 — MAPE Zero-Target Bias**:
+  *Status:* **[v2.4 Spec Drafted — Implementation Pending]** Specified in Section 2 (`secondary_metrics` block). MASE (Mean Absolute Scaled Error) added to secondary metrics, strictly gated on `config["temporal_signal"]["present"] == True`. MASE is omitted for non-temporal tasks.
+- **S3 — Non-Uniform Metric Scaling / Composite Weighting**:
+  *Status:* **[v2.4 Spec Drafted — Implementation Pending]** Specified in Section 2 (`Composite Score Computation`). Dynamic inverse-variance weighting ($w_k^{eff} = w_k / (\sigma_k^2 + \epsilon)$). Explicitly noted as inverse-variance weighting, not Kendall uncertainty weighting.
+- **S4 — Correlation-Based Pruning**:
+  *Status:* **[v2.4 Spec Drafted — Implementation Pending]** Specified in Section 4 (`skill_13` / `oracle_fusion_core.py`). `_prune_collinear` correlates error residual vectors $e_m = y_{pred, m} - y_{true}$ rather than raw predictions.
+- **S5 — Target Covariance Breakdown**:
+  *Status:* **[v2.3 Handled via A12 / Deferred]** Recombination policy A12 (`freeze_unaugmented_targets_at_original` or `block_composite_until_all_targets_augmented_or_none`) isolates multi-target augmentation. Joint consistency regularization deferred.
+- **S6 — Multicollinear Leakage Splitting / Systematic MI Audit**:
+  *Status:* **[v2.4 Spec Drafted — Spec Finalized]** Documented in Section 4 (`skill_10_shap`). Two-tier audit spec: Pearson $|r| \ge 0.98$ remains primary/blocking for regression; subsampled `mutual_info_regression` runs as an advisory, non-blocking verification step (`enable_mi_regression_subsample: true`) written to `SKILL_STATE.json["leakage_mi_advisory"]` and surfaced at Human Gate 2. Note: S6 remains partially addressed overall — univariate NMI/Pearson misses multicollinearity-split leaks; MI verification adds recall on non-linear univariate leaks but is advisory, so it does not fully close the split-leak gap.
+- **S7 — Spatial Autocorrelation Bias**:
+  *Status:* **[v2.4 Spec Drafted — Config Schema Update Pending]** Specified in Section 4 (`skill_05_cv`). Requires adding `spatial_buffer_km` (float, explicit km units) to `challenge_config.json["spatial_signal"]` to build buffered spatial GroupKFold splits.
+- **S8 — Fixed Pseudo-label Thresholding & Adaptive Quantiles**:
+  *Status:* **[v2.4 Spec Drafted — Spec Finalized]** Specified in Section 4 (`skill_21`) & Section 8. Hybrid Adaptive spec locked: class-wise quantile selection with 0.70 floor, calibration mandatory precondition, `min_pseudo_samples` aggregate-count guard, deterministic `method='first'` ranking, per-target scoping under multi-target. Recombination policy timing locked to **post-retraining**.
+- **S10 — Floating-Point Integrity limits**:
+  *Status:* **[v2.4 Spec Drafted — Spec Finalized]** Specified in Section 6 (`Reproducibility Contract`) & Section 8. Path 2 `skill_22`-only verification with 3-tier bands ($\le 10^{-6}$ pass, $10^{-6}$–$10^{-5}$ soft-warn + Gate 5 sign-off, $> 10^{-5}$ hard-halt) covering cleaned/engineered/OOF datasets, preserving raw-file exact MD5 hashes.
 
-*Patched from v2.2.1-Multi-Target: 3 changes — R5 carbon tracking (Section 6), known gaps registry (Section 9), skill_22 R5 checklist (Section 8).*
-*Status: Signed off — known gaps tracked in Section 9.*
+---
+*Version: v2.4 Target Spec (Patched from v2.3)*
+*Status: v2.3 Code Baseline Signed Off / v2.4 Statistical Target Spec Finalized — tracked in Section 9.*

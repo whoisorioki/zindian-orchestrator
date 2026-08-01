@@ -71,7 +71,12 @@ def update_skill_state(integrity: dict, state_path: Path) -> None:
     }
     # Do not downgrade dag_phase if already beyond phase_1
     current_phase = state.get("dag_phase")
-    if current_phase in (None, "uninitialized", "phase_0_foundation"):
+    if current_phase in (
+        None,
+        "uninitialized",
+        "phase_0_foundation",
+        "phase_1_integrity_locked",
+    ):
         updates["dag_phase"] = "phase_1_complete"
     store.update(**updates)
     print(f"[OK] {state_path} updated with MD5 hashes via SkillStateStore")

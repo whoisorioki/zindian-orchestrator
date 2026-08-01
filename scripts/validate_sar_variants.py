@@ -10,6 +10,7 @@ Tests:
 import sys
 import json
 import inspect
+import importlib
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -131,8 +132,6 @@ print("[4] Two-Mode Contract (CV == inference column set) for both variants: PAS
 # Test 5: feature_columns sidecar loader picks up sar_radar_only
 # -----------------------------------------------------------------------
 # Simulate the loader block from run()
-import importlib
-
 sk7 = importlib.import_module("zindian.skills.skill_07_features")
 # The loader runs inside run() — verify the JSON is readable and stem matches
 p = comp / "variants/sar_radar_only.json"

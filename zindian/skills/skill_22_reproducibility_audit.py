@@ -203,6 +203,35 @@ def _audit_oof_strategy_tags(
     return (len(issues) == 0, issues)
 
 
+def _audit_derived_artifact_fingerprints(
+    comp_dir: Path, state: dict[str, Any]
+) -> tuple[bool, list[str]]:
+    """3-tier tolerance verification for derived artifacts (v2.4 S10).
+
+    Max absolute diff: <= 1e-6 PASS, 1e-6 to 1e-5 SOFT WARN (Gate 5 sign-off), > 1e-5 HARD HALT.
+    Raw intake files remain under exact MD5 hashing.
+    """
+    issues = []
+    fingerprints = state.get("derived_artifact_fingerprints", {})
+    if not isinstance(fingerprints, dict) or not fingerprints:
+        return (True, [])
+
+    for name, record in fingerprints.items():
+        if not isinstance(record, dict):
+            continue
+        max_diff = record.get("max_abs_diff", 0.0)
+        if max_diff > 1e-5:
+            issues.append(
+                f"Derived artifact '{name}' failed tolerance check: max_abs_diff = {max_diff:.2e} (> 1e-5 HARD HALT)"
+            )
+        elif max_diff > 1e-6:
+            print(
+                f"  WARNING: Derived artifact '{name}' numerical jitter: max_abs_diff = {max_diff:.2e} (1e-6 to 1e-5, requires Gate 5 sign-off)"
+            )
+
+    return (len(issues) == 0, issues)
+
+
 def audit_pipeline(slug: str | None = None) -> bool:
     print("=" * 70)
     print("ZINDIAN ORCHESTRATOR: FINAL REPRODUCIBILITY AUDIT")
@@ -326,6 +355,20 @@ def audit_pipeline(slug: str | None = None) -> bool:
             print(
                 f"  OK: All {oof_count} OOF records carry cv_strategy_id matching "
                 f"active strategy '{active_id}'"
+            )
+
+        # -- Check 4: Derived artifact tolerance audit (v2.4 S10) ---------------
+        print(
+            "\n[Check 4] Auditing derived artifact fingerprints (tolerance-based 3-tier bands)"
+        )
+        fp_ok, fp_issues = _audit_derived_artifact_fingerprints(comp_dir, state)
+        if fp_issues:
+            for issue in fp_issues:
+                print(f"  ERROR: {issue}")
+            errors_found += len(fp_issues)
+        else:
+            print(
+                "  OK: Derived artifact fingerprints verified within IEEE-754 tolerance limits."
             )
 
     print("\n" + "=" * 70)

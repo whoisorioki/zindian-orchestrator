@@ -111,9 +111,22 @@ def sync_all() -> dict[str, Any]:
         client.select_competition(config.slug)
         state = sync_submission_board(client, state)
         state = sync_leaderboard(client, state)
-        state["remaining_submissions"] = client.remaining_submissions
+        rem = client.remaining_submissions
+        if rem is not None and rem >= 0:
+            state["remaining_submissions"] = rem
+        else:
+            daily_limit = config.get("daily_limit")
+            if daily_limit is not None:
+                state["remaining_submissions"] = max(
+                    0, int(daily_limit) - int(state.get("submissions_used_today", 0))
+                )
     except Exception as e:
         print(f"  [WARN]  Could not sync Zindi data: {e}")
+        daily_limit = config.get("daily_limit")
+        if daily_limit is not None:
+            state["remaining_submissions"] = max(
+                0, int(daily_limit) - int(state.get("submissions_used_today", 0))
+            )
 
     # Timestamp
     state["last_updated"] = datetime.now(timezone.utc).isoformat()

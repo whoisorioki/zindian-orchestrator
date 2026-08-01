@@ -155,3 +155,140 @@ def test_skill05_spatial_choice_uses_group_col(tmp_path, monkeypatch):
     assert written["cv_strategy"]["type"] == "GroupKFold"
     assert written["cv_strategy"]["group_col"] == "site_id"
     assert written["cv_strategy"]["selection_reason"] == "group_structure_confirmed"
+
+
+def test_skill05_group_structure_confirmed_without_config_signal_does_not_select_group_cv(
+    tmp_path, monkeypatch
+):
+    """When eda has group_structure_confirmed=True (e.g. from low-cardinality land_cover_class),
+    but challenge_config has NO group_signal or spatial_signal, skill_05_cv should NOT select
+    GroupKFold with an unresolvable group column, but fall back to standard CV (KFold/StratifiedKFold).
+    """
+    paths = SimplePaths(tmp_path)
+    paths.data_processed_dir.mkdir(parents=True)
+    paths.data_raw_dir.mkdir(parents=True)
+    paths.reports_dir.mkdir(parents=True)
+
+    frame = pd.DataFrame(
+        {
+            "ID": [1, 2, 3, 4, 5, 6],
+            "target": [0, 1, 0, 1, 0, 1],
+            "land_cover_class": ["forest", "forest", "urban", "urban", "crop", "crop"],
+            "keep_feature": [200, 201, 202, 203, 204, 205],
+        }
+    )
+    frame.to_csv(paths.data_processed_dir / "features_train.csv", index=False)
+
+    state = skill_state_skeleton()
+    state.update(
+        {
+            "competition": "cmp",
+            "dag_phase": "phase_1",
+            "eda": {"group_structure_confirmed": True},
+        }
+    )
+    _write_state(tmp_path, state)
+
+    cfg_payload = {
+        "slug": "cmp",
+        "task_type": "classification",
+        "target_column": "target",
+        "cv_strategy": {"n_splits": 3},
+        "reproducibility": {"seed": 7},
+        "spatial_signal": {"present": False},
+        "group_signal": {"present": False},
+    }
+    monkeypatch.setattr(
+        cv_architect,
+        "resolve_competition_paths",
+        lambda require_competition=True: paths,
+    )
+    monkeypatch.setattr(
+        cv_architect,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}),
+    )
+
+    result = cv_architect.run(strategy="compare")
+    assert result["status"] == "OK"
+    assert result["strategy_chosen"] != "GroupKFold"
+    assert result["strategy_chosen"] in ("KFold", "StratifiedKFold")
+
+    written = json.loads(paths.config_path.read_text(encoding="utf-8"))
+    assert written["cv_strategy"]["type"] != "GroupKFold"
+
+
+def test_skill04_and_skill05_end_to_end_group_structure_gating(tmp_path, monkeypatch):
+    """End-to-end integration test:
+    1. Runs skill_04_eda against a 500-row dataset containing a land_cover_class feature
+       with 5 unique categories (ratio = 5/500 = 1% < 5%).
+    2. Confirms group_structure_confirmed=True is written to SKILL_STATE.json.
+    3. Runs skill_05_cv against the resulting state (with no group_signal/spatial_signal set)
+       and verifies it does NOT select GroupKFold.
+    """
+    from zindian.skills.skill_04_eda import run as eda_run
+    import numpy as np
+
+    paths = SimplePaths(tmp_path)
+    paths.data_processed_dir.mkdir(parents=True)
+    paths.data_raw_dir.mkdir(parents=True)
+    paths.reports_dir.mkdir(parents=True)
+
+    n = 500
+    categories = ["forest", "urban", "cropland", "water", "wetland"]
+    df = pd.DataFrame(
+        {
+            "ID": range(1, n + 1),
+            "target": [0, 1] * (n // 2),
+            "land_cover_class": [categories[i % 5] for i in range(n)],
+            "numeric_feat": np.random.default_rng(42).standard_normal(n),
+        }
+    )
+    df.to_csv(paths.data_raw_dir / "Train.csv", index=False)
+    df.drop(columns=["target"]).to_csv(paths.data_raw_dir / "Test.csv", index=False)
+    df.to_csv(paths.data_processed_dir / "features_train.csv", index=False)
+
+    state = skill_state_skeleton()
+    state.update({"competition": "cmp-e2e", "dag_phase": "phase_1"})
+    _write_state(tmp_path, state)
+
+    cfg_payload = {
+        "slug": "cmp-e2e",
+        "task_type": "classification",
+        "target_column": "target",
+        "target_config": {"targets": [{"name": "target", "type": "classification"}]},
+        "cv_strategy": {"n_splits": 5},
+        "reproducibility": {"seed": 42},
+        "spatial_signal": {"present": False},
+        "group_signal": {"present": False},
+    }
+    paths.config_path.write_text(json.dumps(cfg_payload), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "zindian.skills.skill_04_eda.resolve_competition_paths",
+        lambda require_competition=True: paths,
+    )
+    monkeypatch.setattr(
+        cv_architect,
+        "resolve_competition_paths",
+        lambda require_competition=True: paths,
+    )
+    monkeypatch.setattr(
+        cv_architect,
+        "ChallengeConfig",
+        type("C", (), {"load": staticmethod(lambda: _fake_cfg(cfg_payload))}),
+    )
+
+    # 1. Run Skill 04 EDA
+    eda_run()
+
+    # 2. Confirm group_structure_confirmed=True in state
+    written_state = json.loads(paths.state_path.read_text(encoding="utf-8"))
+    assert written_state.get("eda", {}).get("group_structure_confirmed") is True
+
+    # 3. Run Skill 05 CV Architect
+    result = cv_architect.run(strategy="compare")
+    assert result["status"] == "OK"
+    assert result["strategy_chosen"] != "GroupKFold"
+    assert result["strategy_chosen"] in ("KFold", "StratifiedKFold")

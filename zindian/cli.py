@@ -73,12 +73,12 @@ def _run_shell_script(script_path: str, args: list[str] | None = None) -> None:
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         try:
-            sys.stdout.reconfigure(encoding="utf-8")
+            sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         except Exception:
             pass
     if hasattr(sys.stderr, "reconfigure"):
         try:
-            sys.stderr.reconfigure(encoding="utf-8")
+            sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         except Exception:
             pass
     parser = argparse.ArgumentParser(description="Zindian CLI")

@@ -8,28 +8,65 @@ from unittest.mock import patch
 import pytest
 
 
+def dummy_challenge_config():
+    return {
+        "name": "Test Competition",
+        "slug": "test-competition",
+        "metric": "rmse",
+        "metric_direction": "minimize",
+        "submission_format": "csv",
+        "use_probabilities": False,
+        "daily_limit": 5,
+        "total_limit": 100,
+        "public_split_pct": 0.5,
+        "private_split_pct": 0.5,
+        "team_allowed": True,
+        "code_review_tier": "standard",
+        "allowed_external_data": False,
+        "automl_permitted": False,
+        "data_modality": "tabular",
+        "domain": "generic",
+    }
+
+
 def test_cli_status_missing_competition_slug():
     """Test CLI status command uses existing state when COMPETITION_SLUG not set."""
     from zindian.cli import main
     import sys
     from io import StringIO
+    from zindian.schemas import skill_state_skeleton
 
     # Unset COMPETITION_SLUG
     old_slug = os.environ.pop("COMPETITION_SLUG", None)
 
     try:
-        # CLI should still work by reading from existing state
-        with patch("sys.argv", ["zindian.cli", "status"]):
-            old_stdout = sys.stdout
-            sys.stdout = StringIO()
-            try:
-                main()
-                output = sys.stdout.getvalue()
-                # Should output valid JSON
-                result = json.loads(output)
-                assert "competition" in result
-            finally:
-                sys.stdout = old_stdout
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "SKILL_STATE.json"
+            config_path = Path(tmpdir) / "challenge_config.json"
+            state = skill_state_skeleton()
+            state["competition"] = "test-cmp"
+            state["dag_phase"] = "phase_1"
+            state_path.write_text(json.dumps(state))
+            config_path.write_text(json.dumps(dummy_challenge_config()))
+
+            with patch("zindian.paths.resolve_competition_paths") as mock_paths1, patch(
+                "zindian.config.resolve_competition_paths"
+            ) as mock_paths2:
+                for mock_paths in (mock_paths1, mock_paths2):
+                    mock_paths.return_value.state_path = state_path
+                    mock_paths.return_value.config_path = config_path
+                    mock_paths.return_value.competition_dir = Path(tmpdir)
+
+                with patch("sys.argv", ["zindian.cli", "status"]):
+                    old_stdout = sys.stdout
+                    sys.stdout = StringIO()
+                    try:
+                        main()
+                        output = sys.stdout.getvalue()
+                        result = json.loads(output)
+                        assert "competition" in result
+                    finally:
+                        sys.stdout = old_stdout
     finally:
         if old_slug:
             os.environ["COMPETITION_SLUG"] = old_slug
@@ -73,16 +110,19 @@ def test_sync_state_network_failure():
         initial_state["competition"] = "test-competition"
         state_path.write_text(json.dumps(initial_state))
 
-        config = {"slug": "test-competition"}
-        config_path.write_text(json.dumps(config))
+        config_path.write_text(json.dumps(dummy_challenge_config()))
 
         # Mock network failure
         with patch("zindian.sync_state.ZindiClient") as mock_client:
             mock_client.side_effect = ConnectionError("Network unavailable")
 
-            with patch("zindian.sync_state.resolve_competition_paths") as mock_paths:
-                mock_paths.return_value.state_path = state_path
-                mock_paths.return_value.competition_dir = Path(tmpdir)
+            with patch("zindian.paths.resolve_competition_paths") as mock_paths1, patch(
+                "zindian.config.resolve_competition_paths"
+            ) as mock_paths2:
+                for mock_paths in (mock_paths1, mock_paths2):
+                    mock_paths.return_value.state_path = state_path
+                    mock_paths.return_value.config_path = config_path
+                    mock_paths.return_value.competition_dir = Path(tmpdir)
 
                 # Should not crash, should preserve existing state
                 try:
@@ -119,8 +159,9 @@ def test_submit_zero_remaining_budget():
         )
         state_path.write_text(json.dumps(state))
 
-        config = {"slug": "test-competition", "daily_limit": 5}
-        config_path.write_text(json.dumps(config))
+        cfg = dummy_challenge_config()
+        cfg["use_probabilities"] = True
+        config_path.write_text(json.dumps(cfg))
 
         # Create dummy submission and sample files
         submission_file.write_text("id,Target\n1,0.5\n2,0.7\n")
@@ -128,17 +169,25 @@ def test_submit_zero_remaining_budget():
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / "SampleSubmission.csv").write_text("id,Target\n1,0.5\n2,0.7\n")
 
-        with patch(
+        with patch("zindian.paths.resolve_competition_paths") as mock_paths1, patch(
+            "zindian.config.resolve_competition_paths"
+        ) as mock_paths2, patch(
             "zindian.skills.skill_16_submit.resolve_competition_paths"
-        ) as mock_paths:
-            mock_paths.return_value.state_path = state_path
-            mock_paths.return_value.competition_dir = Path(tmpdir)
-            mock_paths.return_value.data_raw_dir = raw_dir
+        ) as mock_paths3, patch(
+            "zindian.zindi_client.ZindiClient"
+        ) as mock_client:
+            for mock_paths in (mock_paths1, mock_paths2, mock_paths3):
+                mock_paths.return_value.state_path = state_path
+                mock_paths.return_value.config_path = config_path
+                mock_paths.return_value.competition_dir = Path(tmpdir)
+                mock_paths.return_value.data_raw_dir = raw_dir
+
+            mock_client.return_value.remaining_submissions = 0
 
             # Should abort before attempting submission
             from zindian.skills.skill_16_submit import HardAbortException
 
-            with pytest.raises(HardAbortException, match="zero submissions remaining"):
+            with pytest.raises(HardAbortException, match="zero.*remaining"):
                 submit_run(str(submission_file), state)
 
 

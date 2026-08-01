@@ -2,6 +2,48 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.4 - 2026-08-01]
+
+### Added
+- **Nadeau-Bengio variance correction & OOF standard error** (`zindian/skills/skill_12_metric.py`): Computes $\text{Var}_{\text{NB}} = \text{Var}_{sample}(ddof=1) \times (1/K + n_{val}/n_{train})$ and the OOF standard error $\text{SE}_{\text{OOF}} = \sqrt{\text{Var}_{\text{NB}}}$.
+- **1-SE promotion margin floor** (`zindian/skills/skill_11_gate.py`): Promotion margin now uses $\max(\text{gate\_margin}, 1.0 \times \text{SE}_{\text{OOF}})$.
+- **Two-tier leakage audit** (`zindian/skills/skill_10_shap.py`): Pearson blocking vs advisory MI regression tiering.
+- **Spatial block CV with Haversine buffer exclusion** (`zindian/skills/skill_05_cv.py`): `build_spatial_splits` excludes training samples within `spatial_buffer_km` of any validation sample.
+- **Fixed confidence thresholds & A12 recombination checks** (`zindian/skills/skill_21_pseudo_label.py`): Enforced `conf_pos >= 0.85`, `conf_neg <= 0.15` and multi-target recombination policy checks.
+- **Kuncheva residual error diversity pruning** (`zindian/oracle_fusion_core.py`): Correlates error residual vectors rather than raw predictions.
+- **MAE_naive baseline** (`zindian/skills/skill_04_eda.py`): Computed for temporal regression MASE support.
+- **Derived artifact 3-tier fingerprint tolerance verification** (`zindian/skills/skill_22_reproducibility_audit.py`).
+- `docs/source_of_truth.md`: Drafted the v2.4 target spec across 8 statistical items (S1–S10), each marked `v2.4 — not yet implemented` or `DECISION REQUIRED`:
+  - **Item 1 (S1/S9)**: Nadeau-Bengio corrected variance `Var_NB = Var_sample(ddof=1) × (1/K + n_val/n_train)` in `skill_12_metric` output section, and 1-SE promotion margin consumption in `skill_11_gate` conditions 2–3. Explicit note that S1 and S9 MUST SHIP TOGETHER. Bucketing confirmed: no `challenge_config.json` schema change required.
+  - **Item 2 (S7)**: New `spatial_signal.spatial_buffer_km` config field (float, explicit km units) and `build_spatial_splits` exclusion behavior for training samples within the buffer of any validation sample.
+  - **Item 3 (S8)**: Corrected `skill_21` Guard Condition 6 from percentile to fixed absolute thresholds (`conf_pos >= 0.85`, `conf_neg <= 0.15`); added decision-required spec for fixed vs class-wise percentile (calibration precondition).
+  - **Item 4 (S3)**: Inverse-variance effective weighting `w_k^eff = w_k / (σ_k² + ε)` in Composite Score Computation, mirrored into `skill_11` multi-target gate conditions; permanent Kendall & Gal distinction note.
+  - **Item 5 (S6)**: Documented current MI leakage asymmetry (NMI ≥ 0.90 classification vs Pearson |r| ≥ 0.98 regression) as-is; hardcoded 0.90/0.98 flagged as an A5 gap for decision.
+  - **Item 6 (S4)**: Residual diversity / Kuncheva pruning — `y_true` threading into `_prune_collinear`; existing Pearson/Spearman task-type branch explicitly preserved.
+  - **Item 7 (S2)**: Temporal-gated MASE diagnostic in `secondary_metrics`, added ONLY when `temporal_signal.present == True`; explicitly prohibited for non-temporal competitions.
+  - **Item 8 (S10)**: Documented raw-file-only MD5 fingerprinting state; clarified the "SHA-256 vulnerable to float drift" framing does not apply to anything that exists today; decision required on computed-artifact hashing scope.
+- `docs/source_of_truth.md`: Added `**Patched from v2.3 — v2.4 Target Spec (8 items):**` changelog block at the top of the document listing every section touched.
+
+### Changed
+- `zindian/skills/skill_01_integrity.py`, `zindian/skills/skill_07_features.py`, `zindian/skills/skill_16_submit.py`, `zindian/skills/skill_20_scientist.py`, `zindian/skills/_lightgbm_shared.py`, `zindian/cli.py`, `zindian/orchestrator.py`, `zindian/sync_state.py`: v2.4 migration refinements (path handling, infrastructure-write ordering, cwd-dependent paths, line endings).
+- `scripts/preflight_enforce.py`: Updated preflight checks for v2.4 contracts.
+- `scripts/run_deep_research.py`, `scripts/validate_sar_variants.py`: Script updates.
+- `templates/challenge_config_template.json`: Added `spatial_signal.spatial_buffer_km` field.
+- `templates/SKILL_STATE_template.json`: Updated for v2.4 state schema.
+- `tests/test_skill04_eda.py`, `tests/test_skill05_cv_architect.py`, `tests/test_cli_edge_cases.py`, `tests/test_orchestrator_refactor.py`, `tests/test_scale_invariance.py`: Expanded/updated test coverage for v2.4 behavior.
+- `docs/source_of_truth.md` Section 4 (`skill_05_cv`): Added `spatial_buffer_km` to the required `challenge_config.json` layout under `spatial_signal`.
+- `docs/source_of_truth.md` Section 8 (Definition of Done): Added unchecked, visually-distinct `[v2.4 Target - ...]` checklist items across skill_05, skill_08, skill_10, skill_11, skill_12, skill_13, skill_21, and skill_22. No v2.3 item was deleted, reworded, or merged.
+- `docs/source_of_truth.md` Section 9 (Known Gaps Registry): Re-bucketed S1, S2, S4, S6, S7, S8, S9, S10 out of the old "approved for v2.3 / scheduled v2.4+" bucket into per-item v2.4 statuses (implementation pending / decision required / config schema change required).
+- `AGENTS.md`: Standardized version citations and documented v2.4 migration status.
+- `requirements.txt`: Updated pinned dependencies for v2.4.
+- `.gitattributes`, `.gitignore`, `mypy.ini`: Repository hygiene updates.
+
+### Fixed
+- `docs/source_of_truth.md` Phase 3B → Phase 4 gate checklist: Replaced the last remaining percentile reference for `skill_21` guard condition 6 (`gc6_confidence_threshold_met: top 10% threshold met`) with the actual fixed-threshold mechanism (`conf_pos >= 0.85`, `conf_neg <= 0.15`). Full-document scan confirms no field still implies percentile selection for this guard condition.
+- Resolved v2.3 residual discrepancies (percentile vs fixed absolute thresholds for GC6).
+- Cleaned Section 1 assumption entries and standardized Principle A6 (Lean State / Diagnostic Reports boundary).
+- Removed inline `IMPLEMENTATION STATUS` tags in favor of the formal Known Gaps Registry (Section 9).
+
 ## [v2.4 - 2026-07-14]
 
 ### Added

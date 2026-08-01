@@ -188,9 +188,17 @@ def _correlation(x: np.ndarray, y: np.ndarray, task_type: str) -> float:
 
 
 def _prune_collinear(
-    candidates: list[dict[str, Any]], *, task_type: str, direction: str
+    candidates: list[dict[str, Any]],
+    *,
+    task_type: str,
+    direction: str,
+    y_true: np.ndarray | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Drop lower-scoring candidate for any pair with correlation > 0.95."""
+    """Drop lower-scoring candidate for any pair with correlation > 0.95.
+
+    When y_true is provided (v2.4 S4), computes correlation on error residuals:
+        e_a = pred_a - y_true, e_b = pred_b - y_true
+    """
     working = list(candidates)
     dropped: list[dict[str, Any]] = []
 
@@ -201,9 +209,17 @@ def _prune_collinear(
             for j in range(i + 1, len(working)):
                 a = working[i]
                 b = working[j]
+
+                a_vec = np.asarray(a["probs"], dtype=np.float64)
+                b_vec = np.asarray(b["probs"], dtype=np.float64)
+
+                if y_true is not None and len(y_true) == len(a_vec):
+                    a_vec = a_vec - np.asarray(y_true, dtype=np.float64)
+                    b_vec = b_vec - np.asarray(y_true, dtype=np.float64)
+
                 corr = _correlation(
-                    np.asarray(a["probs"], dtype=np.float64),
-                    np.asarray(b["probs"], dtype=np.float64),
+                    a_vec,
+                    b_vec,
                     task_type,
                 )
                 if corr <= 0.95:

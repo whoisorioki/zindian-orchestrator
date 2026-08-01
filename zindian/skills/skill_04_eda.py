@@ -159,7 +159,7 @@ def _build_categorical_columns(
 ) -> list[dict[str, Any]]:
     categorical_columns: list[dict[str, Any]] = []
     for column in feature_cols:
-        column_series = cast(pd.Series, df[column])
+        column_series = df[column]
         column_rules = explicit_rules.get(column)
         if (
             pd.api.types.is_object_dtype(column_series)
@@ -169,7 +169,7 @@ def _build_categorical_columns(
             categorical_columns.append(
                 {
                     "name": column,
-                    "cardinality": int(column_series.nunique(dropna=False)),
+                    "cardinality": column_series.nunique(dropna=False),
                     "encoding": column_rules or "one-hot or ordinal",
                 }
             )
@@ -177,7 +177,7 @@ def _build_categorical_columns(
             categorical_columns.append(
                 {
                     "name": column,
-                    "cardinality": int(column_series.nunique(dropna=False)),
+                    "cardinality": column_series.nunique(dropna=False),
                     "encoding": column_rules,
                 }
             )
@@ -187,19 +187,20 @@ def _build_categorical_columns(
 def mcar_mnar_assessment(df: pd.DataFrame, col: str, targets: list[str]) -> str:
     """Multi-target MNAR assessment. If missingness correlates with ANY target, flag as MNAR."""
     series = cast(pd.Series, df[col])
-    null_rate = series.isnull().mean()
+    null_rate = float(series.isnull().mean())
     if null_rate == 0:
         return "none"
 
     # Check correlation with each target
-    null_ind = series.isnull().astype(float)
+    null_ind = cast(pd.Series, series.isnull().astype(float))
     for target in targets:
         if target in df.columns:
-            target_raw = pd.to_numeric(cast(pd.Series, df[target]), errors="coerce")
-            target_series = cast(pd.Series, target_raw).astype(float)
-            corr = null_ind.corr(target_series)
-            if pd.notna(corr) and abs(corr) >= 0.05:
-                return "MNAR"  # Correlated with at least one target
+            target_raw = pd.to_numeric(df[target], errors="coerce")
+            if isinstance(target_raw, pd.Series):
+                target_series = target_raw.astype(float)
+                corr_val = float(null_ind.corr(target_series))
+                if not np.isnan(corr_val) and abs(corr_val) >= 0.05:
+                    return "MNAR"  # Correlated with at least one target
     return "MCAR"
 
 
@@ -259,8 +260,12 @@ def run():
 
     # Detect target column(s)
     target = detect_target(paths)
-    is_multi_target = isinstance(target, list)
-    targets: list[str] = list(target) if is_multi_target else [str(target)]
+    if isinstance(target, list):
+        is_multi_target = True
+        targets: list[str] = list(target)
+    else:
+        is_multi_target = False
+        targets = [target]
 
     # Validate all targets exist
     for t in targets:
@@ -275,7 +280,12 @@ def run():
     if is_multi_target and target_config.get("targets"):
         for target_spec in target_config["targets"]:
             t_name = target_spec["name"]
-            if target_spec["task_type"] == "regression":
+            t_type = (
+                target_spec.get("task_type")
+                or target_spec.get("type")
+                or "classification"
+            )
+            if t_type == "regression":
                 target_std_dict[f"{t_name}_std"] = float(
                     np.std(np.asarray(df[t_name].values, dtype=float), ddof=1)
                 )
@@ -318,7 +328,7 @@ def run():
     # Correlations
     numeric_feats = feature_frame.select_dtypes(include=[np.number]).columns.tolist()
     numeric_frame = cast(pd.DataFrame, feature_frame[numeric_feats])
-    corr = numeric_frame.corr().abs()
+    corr = cast(pd.DataFrame, numeric_frame.corr().abs())
     high_corr_pairs = _high_correlation_pairs(corr, thresh=0.95)
 
     pii_keywords = {"email", "phone", "name", "id_number", "ssn"}
@@ -341,21 +351,23 @@ def run():
     scaling_needed = []
     for c in numeric_feats:
         snum_raw = pd.to_numeric(df[c], errors="coerce")
-        snum = cast(pd.Series, snum_raw).dropna()
-        if snum.empty:
-            continue
-        range_span = float(snum.quantile(0.95) - snum.quantile(0.05))
-        scale_ratio = (
-            float(snum.std(ddof=1) / max(snum.abs().median(), 1e-12))
-            if len(snum) > 1
-            else 0.0
-        )
-        if range_span > 1000 or scale_ratio > 10:
-            scaling_needed.append(c)
+        if isinstance(snum_raw, pd.Series):
+            snum = snum_raw.dropna()
+            if snum.empty:
+                continue
+            range_span = float(snum.quantile(0.95) - snum.quantile(0.05))
+            scale_ratio = (
+                float(snum.std(ddof=1) / max(snum.abs().median(), 1e-12))
+                if len(snum) > 1
+                else 0.0
+            )
+            if range_span > 1000 or scale_ratio > 10:
+                scaling_needed.append(c)
 
     outlier_flags = {}
     for c in numeric_feats:
-        outlier_flags[c] = _outlier_summary(cast(pd.Series, df[c]), len(df))
+        col_s = cast(pd.Series, df[c])
+        outlier_flags[c] = _outlier_summary(col_s, len(df))
 
     # Standardisation verdict
     std_verdict = {
@@ -434,20 +446,22 @@ def run():
     # ── 2d: Target correlation per feature ───────────────────────────
     target_correlation_per_feature: dict[str, float] = {}
     if primary_target in df.columns:
-        y_raw = pd.to_numeric(cast(pd.Series, df[primary_target]), errors="coerce")
-        y_vals = cast(pd.Series, y_raw).to_numpy(dtype=float)
-        for c in numeric_feats:
-            try:
-                x_raw = pd.to_numeric(cast(pd.Series, df[c]), errors="coerce")
-                x_vals = cast(pd.Series, x_raw).to_numpy(dtype=float)
-                mask = ~(np.isnan(x_vals) | np.isnan(y_vals))
-                if mask.sum() > 2:
-                    xy = np.corrcoef(x_vals[mask], y_vals[mask])
-                    corr_val = float(xy[0, 1])
-                    if not np.isnan(corr_val):
-                        target_correlation_per_feature[c] = corr_val
-            except Exception:
-                pass
+        y_raw = pd.to_numeric(df[primary_target], errors="coerce")
+        if isinstance(y_raw, pd.Series):
+            y_vals = y_raw.to_numpy(dtype=float)
+            for c in numeric_feats:
+                try:
+                    x_raw = pd.to_numeric(df[c], errors="coerce")
+                    if isinstance(x_raw, pd.Series):
+                        x_vals = x_raw.to_numpy(dtype=float)
+                        mask = ~(np.isnan(x_vals) | np.isnan(y_vals))
+                        if mask.sum() > 2:
+                            xy = np.corrcoef(x_vals[mask], y_vals[mask])
+                            corr_val = float(xy[0, 1])
+                            if not np.isnan(corr_val):
+                                target_correlation_per_feature[c] = corr_val
+                except Exception:
+                    pass
 
     # ── 2e: Class-separability index ─────────────────────────────────
     # Diagnostic only — single-feature decision stumps used as a ranking
@@ -501,6 +515,15 @@ def run():
             "outlier_assessment": outlier_flags,
             "standardisation_verdict": std_verdict,
         },
+        # ── Heavy band-aware / per-feature diagnostics go to reports/ not state ──
+        # These scale with feature/band count and are for human review only.
+        # Downstream skills (skill_05, three_lens) use only the lean boolean
+        # derived from them (temporal_index_confirmed), not the full dicts.
+        "band_summary_stats": band_summary_stats,
+        "seasonal_amplitude": seasonal_amplitude,
+        "temporal_trends": temporal_trends,
+        "target_correlation_per_feature": target_correlation_per_feature,
+        "class_separability_index": class_separability_index,
     }
 
     # Write JSON report
@@ -550,19 +573,123 @@ def run():
     mnar_cols = [c for c, pattern in missingness_pattern.items() if pattern == "MNAR"]
     mcar_cols = [c for c, pattern in missingness_pattern.items() if pattern == "MCAR"]
 
+    # ── Derive temporal_index_confirmed ──────────────────────────────────────
+    # Signal 1: if BAND_MM detection already found monthly composite columns
+    # (seasonal_amplitude or temporal_trends is non-empty), that IS temporal
+    # structure — no hardcoded column names required.
+    # Signal 2: any column (excluding targets) that is already a datetime
+    # dtype, or that round-trips cleanly through pd.to_datetime on a 5-row
+    # sample without raising, is treated as a temporal index column.
+    # Both are OR conditions — either alone is sufficient.
+    temporal_index_confirmed: bool = bool(seasonal_amplitude or temporal_trends)
+    if not temporal_index_confirmed:
+        for col in feature_cols:
+            col_series = df[col]
+            if pd.api.types.is_datetime64_any_dtype(col_series):
+                temporal_index_confirmed = True
+                break
+
+            # Only attempt string round-trip parse on string/object-dtype columns.
+            # Numeric columns (float/int) are correctly excluded — pd.to_datetime on floats
+            # interprets them as nanosecond Unix timestamps, causing false positives.
+            if not pd.api.types.is_string_dtype(col_series):
+                continue
+            sample_vals = col_series.dropna().head(20)
+            if len(sample_vals) < 5:
+                continue
+            try:
+                parsed = pd.to_datetime(sample_vals, errors="raise")
+                if not parsed.isna().all():
+                    # Behavioral check: Real temporal index columns progress monotonically across rows.
+                    # String ID columns with date components (e.g. sample_id='20200115_000') are non-monotonic.
+                    if parsed.is_monotonic_increasing or parsed.is_monotonic_decreasing:
+                        temporal_index_confirmed = True
+                        break
+            except Exception:
+                pass
+
+    # ── Derive group_structure_confirmed ──────────────────────────────────────
+    # JUDGMENT CALL (no existing convention found elsewhere in the codebase):
+    # A column is considered to have group structure when its unique-value
+    # count is:
+    #   (a) > 1 (not constant), AND
+    #   (b) < len(df) (not unique-per-row — i.e. not an ID), AND
+    #   (c) unique_count / len(df) < 0.05 (at most 5% distinct values —
+    #       meaning each value repeats across many rows, consistent with
+    #       a grouping/categorical identifier).
+    # Targets and known ID/coordinate columns are excluded from consideration.
+    # This heuristic is declared explicitly because no existing cardinality
+    # convention was found in skill_02, skill_05, or skill_07. Any future
+    # refactor should unify this with any convention added to those files.
+    group_structure_confirmed: bool = False
+    if len(df) > 0:
+        for col in feature_cols:
+            col_series = df[col]
+            n_unique = col_series.nunique(dropna=True)
+            if n_unique <= 1:
+                continue  # constant column
+            if n_unique >= len(df):
+                continue  # unique-per-row (likely an ID)
+            ratio = n_unique / len(df)
+            if ratio < 0.05:
+                group_structure_confirmed = True
+                break
+
+    # ── Outlier columns (SoT schema field) ──────────────────────────────────
+    # Columns where the outlier_flags summary flagged outlier_pct > 5%.
+    outlier_columns: list[str] = [c for c, v in outlier_flags.items() if v["flag"]]
+
+    # ── Target skew (SoT schema field) ───────────────────────────────────────
+    try:
+        _target_series = df[primary_target]
+        _numeric_series = pd.to_numeric(_target_series, errors="coerce")
+        if isinstance(_numeric_series, pd.Series):
+            _target_vals_for_skew = _numeric_series.dropna()
+            _raw_skew = (
+                _target_vals_for_skew.skew() if len(_target_vals_for_skew) >= 3 else 0.0
+            )
+            target_skew = (
+                float(_raw_skew)
+                if isinstance(_raw_skew, (int, float, np.number))
+                else 0.0
+            )
+        else:
+            target_skew = 0.0
+        if pd.isna(target_skew):
+            target_skew = 0.0
+    except Exception:
+        target_skew = 0.0
+
+    # ── MAE naive baseline for temporal regression (SoT v2.4 S2) ───────────
+    mae_naive = 0.0
+    task_type = str(cfg.get("task_type", "classification"))
+    if (
+        temporal_index_confirmed
+        and task_type == "regression"
+        and primary_target in df.columns
+    ):
+        y_series = pd.Series(
+            pd.to_numeric(df[primary_target], errors="coerce")
+        ).dropna()
+        y_vals_mae: np.ndarray = y_series.to_numpy(dtype=np.float64)
+        if y_vals_mae.size >= 2:
+            diffs = np.abs(np.diff(y_vals_mae))
+            mae_naive = float(np.mean(diffs))
+
     eda_updates = {
+        # ── Lean fields only — anything that scales with feature/band/row count
+        # belongs in reports/eda_report.json, not here.
         "eda_completed_at": datetime.now(timezone.utc).isoformat(),
         "dead_features": zero_variance,
         "high_corr_pairs_count": len(high_corr_pairs),
         **target_std_dict,  # Per-target std for regression
         "mnar_columns": mnar_cols,
         "mcar_columns": mcar_cols,
-        # ── Phase 1 improvement plan: 5 band-aware diagnostics ──
-        "band_summary_stats": band_summary_stats,
-        "seasonal_amplitude": seasonal_amplitude,
-        "temporal_trends": temporal_trends,
-        "target_correlation_per_feature": target_correlation_per_feature,
-        "class_separability_index": class_separability_index,
+        "outlier_columns": outlier_columns,
+        "target_skew": target_skew,
+        "temporal_index_confirmed": temporal_index_confirmed,
+        "group_structure_confirmed": group_structure_confirmed,
+        "MAE_naive_baseline": mae_naive,
     }
 
     updates: dict[str, Any] = {

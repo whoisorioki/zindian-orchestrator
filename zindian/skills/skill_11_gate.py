@@ -104,7 +104,16 @@ def _effective_thresholds(
         # Catch-all: treat unknown regression metrics as scale-sensitive.
         # This prevents silent raw-threshold fallback for future metrics
         # that should be scaled but haven't been added to the set yet.
-        target_std = float((state.get("eda", {}) or {}).get("target_std") or 0.0)
+        eda_block = state.get("eda", {}) or {}
+        target_std = float(eda_block.get("target_std") or 0.0)
+        if target_std == 0.0:
+            std_vals = [
+                float(v)
+                for k, v in eda_block.items()
+                if k.endswith("_std") and isinstance(v, (int, float))
+            ]
+            if std_vals:
+                target_std = std_vals[0]
 
         if target_std == 0.0:
             # Degenerate target: skill_04 may not have written target_std yet,
@@ -121,9 +130,20 @@ def _effective_thresholds(
         # target_std to make them magnitude-invariant across competitions.
         effective_variance = variance_gate_threshold * (target_std**2)
         effective_margin = gate_margin * target_std
+
+        # v2.4 1-SE Promotion Margin (S9): effective_margin = max(effective_margin, 1 * SE_oof)
+        metric_analysis = state.get("metric_analysis", {}) or {}
+        se_oof = float(metric_analysis.get("se_oof") or 0.0)
+        if se_oof > 0.0:
+            effective_margin = max(effective_margin, 1.0 * se_oof)
+
         return effective_variance, effective_margin, None
 
     # Safety fallback (should not be reached if metric sets are comprehensive)
+    metric_analysis = state.get("metric_analysis", {}) or {}
+    se_oof = float(metric_analysis.get("se_oof") or 0.0)
+    if se_oof > 0.0:
+        gate_margin = max(gate_margin, 1.0 * se_oof)
     return variance_gate_threshold, gate_margin, None
 
 

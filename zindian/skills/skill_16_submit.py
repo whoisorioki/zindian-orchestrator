@@ -447,7 +447,6 @@ def run(
             "Explicit confirmation required before proceeding. "
             "Warning written to SKILL_STATE['budget_warning']."
         )
-
     cached_remaining_val = skill_state.get("remaining_submissions")
     cached_remaining = (
         int(cached_remaining_val) if cached_remaining_val is not None else 10
@@ -458,7 +457,7 @@ def run(
     )
     if cached_remaining <= 0:
         raise HardAbortException("State-side budget guard: zero submissions remaining.")
-    if cached_remaining == 1:
+    if cached_remaining == 1 and live_remaining == -1:
         budget_warning_payload = {
             "remaining_submissions": 1,
             "source": "cached",
@@ -467,6 +466,7 @@ def run(
         store.update(budget_warning=budget_warning_payload)
         print(
             "\n[WARN]  BUDGET WARNING: Only 1 cached submission remaining today! "
+            "Proceeding will exhaust the daily budget. "
             "Explicit confirmation required before proceeding. "
             "Warning written to SKILL_STATE['budget_warning']."
         )

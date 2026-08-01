@@ -24,6 +24,7 @@ failed_hypotheses_path = str(reports_dir / "failed_hypotheses.json")
 _, lib_mod = SKILL_REGISTRY["skill_18"]
 _, miner_mod = SKILL_REGISTRY["skill_19"]
 _, sci_mod = SKILL_REGISTRY["skill_20"]
+assert lib_mod is not None and miner_mod is not None and sci_mod is not None
 
 print("=" * 60)
 print("SKILL 18 — The Librarian")
