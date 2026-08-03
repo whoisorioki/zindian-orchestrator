@@ -4,6 +4,34 @@ import pandas as pd
 from zindian.skills import skill_10_shap as shap_mod
 
 
+def test_train_shap_fold_model_uses_eval_set(monkeypatch):
+    train_x = np.array([[0.0], [1.0], [2.0]], dtype=np.float64)
+    train_y = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    val_x = np.array([[3.0], [4.0]], dtype=np.float64)
+    val_y = np.array([1.0, 0.0], dtype=np.float64)
+
+    captured: dict[str, object] = {}
+
+    class FakeModel:
+        def fit(self, *args, **kwargs):
+            captured.update(kwargs)
+            return self
+
+    monkeypatch.setattr(shap_mod.lgb, "LGBMRegressor", lambda **kwargs: FakeModel())
+    shap_mod._train_shap_fold_model(
+        train_x, train_y, val_x, val_y, seed=42, task_type="regression"
+    )
+
+    assert "eval_set" in captured
+    assert "eval_X" not in captured
+    assert "eval_y" not in captured
+    eval_set = captured["eval_set"]
+    assert isinstance(eval_set, list) and len(eval_set) == 1
+    eval_x, eval_y = eval_set[0]
+    assert np.array_equal(eval_x, val_x)
+    assert np.array_equal(eval_y, val_y)
+
+
 def test_compute_shap_audit_monkeypatch(monkeypatch):
     # Create small synthetic dataset
     n = 12

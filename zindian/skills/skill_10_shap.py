@@ -183,8 +183,7 @@ def _train_shap_fold_model(
     model.fit(
         train_x,
         train_y,
-        eval_X=val_x,
-        eval_y=val_y,
+        eval_set=[(val_x, val_y)],
         callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
     )
     return model
