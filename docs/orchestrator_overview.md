@@ -8,9 +8,21 @@
 
 ## Table of Contents
 
-1. [Non-Technical Overview](#non-technical-overview)
-2. [Technical Deep Dive](#technical-deep-dive)
-3. [Quick Reference](#quick-reference)
+1. [Documentation Landscape](#documentation-landscape)
+2. [Non-Technical Overview](#non-technical-overview)
+3. [Technical Deep Dive](#technical-deep-dive)
+4. [Quick Reference](#quick-reference)
+
+---
+
+## Documentation Landscape
+
+To understand and navigate the Zindian Orchestrator workspace, reference the following four documentation files:
+
+*   **[Source of Truth (docs/source_of_truth.md)](source_of_truth.md):** The authoritative architectural specification. It defines strict system contracts, mathematical formulas (such as the Nadeau-Bengio correction and Kuncheva residual diversity), and exact phase boundaries. It is the final design arbiter.
+*   **[System Overview (docs/orchestrator_overview.md)](orchestrator_overview.md) (this file):** A comprehensive guide explaining the system's pipeline phases, human gates, safety features, and design concepts for both technical and non-technical readers.
+*   **[Troubleshooting Guide (docs/troubleshooting_guide.md)](troubleshooting_guide.md):** A practical manual detailing common runtime errors, database locks, package shadowing issues, and CI pipeline resolutions.
+*   **[Agent Operational Manual (AGENTS.md)](../AGENTS.md):** Operational conventions and verification instructions for LLM coding agents.
 
 ---
 
@@ -18,20 +30,19 @@
 
 ## What is Zindian Orchestrator?
 
-Zindian Orchestrator is an **intelligent assistant for tabular machine learning competitions on the Zindi platform.** Think of it as an experienced data scientist that follows a strict, repeatable playbook to systematically ingest raw data, engineer features, train models, audit validation folds, and manage submissions.
+Zindian Orchestrator is a structured execution framework for running tabular machine learning competitions on the Zindi platform. It automates and governs the entire lifecycle of a competition entry—from raw data ingestion, feature engineering, and cross-validation, to data leakage auditing, model ensembling, and submission management.
 
 ### The Problem It Solves
 
-Imagine entering a cooking competition where you must:
-1.  Understand recipe requirements
-2.  Verify ingredients are fresh
-3.  Follow food safety regulations
-4.  Try different cooking techniques
-5.  Taste-test everything
-6.  Submit your best dish
-7.  Document every step
+Entering machine learning competitions at scale is complex and prone to human and statistical errors. Specifically, it involves:
+1. **Requirements Gathering:** Understanding target metrics, file formats, and submission rules.
+2. **Data Integrity:** Ensuring the raw training and testing datasets are not corrupted or modified.
+3. **Statistical Validation:** Designing split strategies (cross-validation) that mirror the test distribution without leakage.
+4. **Iterative Search:** Exploring various feature transformations and model architectures.
+5. **Quality Control:** Validating predictions through rigorous automated audits and human gates.
+6. **Governance:** Enforcing daily submission budgets and documenting pipeline runs for full reproducibility.
 
-The Orchestrator does exactly this for **data science competitions** - it takes raw data and systematically builds, tests, and submits machine learning models while following strict rules.
+The Orchestrator provides a unified, command-line interface (CLI) driven system that systematically handles these tasks, minimizing validation drift and ensuring complete transparency.
 
 ---
 
@@ -136,7 +147,7 @@ Everything must be repeatable. Run twice with same data = identical results.
 -  Complete audit trail
 -  Submission reproducible from config + state alone
 
-**Real-world analogy:** Scientific experiment - anyone following exact steps gets same results.
+**Goal:** Ensures third-party verification and platform auditability without behavior drift.
 
 ---
 
@@ -171,7 +182,7 @@ Measures and reports environmental impact (CO2 emissions) of model training.
 - Hardware type (CPU/GPU)
 - Region (for carbon intensity)
 
-**Real-world analogy:** Like a car showing fuel efficiency - understand environmental cost.
+**Goal:** Quantifies computational efficiency and resource footprints across model runs.
 
 ---
 
@@ -187,7 +198,7 @@ For classification: uses confident predictions on test data to expand training s
 5. Calibrated probabilities available
 6. Confidence threshold met (top 10%)
 
-**Real-world analogy:** Teacher using confident student answers as teaching examples.
+**Goal:** Leverages high-confidence semi-supervised predictions to enhance model decision boundaries.
 
 ---
 
