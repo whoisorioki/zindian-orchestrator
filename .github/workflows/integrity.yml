@@ -1,0 +1,31 @@
+name: Integrity Check
+
+on: [push, pull_request]
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest
+
+      - name: Run SoT alignment check
+        run: python scripts/sot_alignment_check.py --fail-on-misaligned
+
+      - name: Run preflight enforce
+        run: python scripts/preflight_enforce.py --repo-wide --non-interactive
+
+      - name: Run codebase audit
+        run: python scripts/audit_codebase.py

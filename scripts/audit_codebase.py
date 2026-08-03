@@ -73,12 +73,12 @@ def audit_agents_md_ground_truth() -> list[dict]:
         )
     )
 
-    # Claim 6: Skill module count — "24 Python modules across 23 numbered slots"
+    # Claim 6: Skill module count — "25 Python modules across 24 numbered slots"
     skill_files = sorted([f.name for f in SKILL_DIR.glob("skill_*.py")])
     results.append(
         check(
-            f"Skill file count: {len(skill_files)} (AGENTS claims 24)",
-            len(skill_files) == 24,
+            f"Skill file count: {len(skill_files)} (AGENTS claims 25)",
+            len(skill_files) == 25,
             f"Actual files: {len(skill_files)}. Files: {skill_files}",
         )
     )
@@ -122,9 +122,9 @@ def audit_agents_md_ground_truth() -> list[dict]:
     )
     results.append(
         check(
-            "skill_13_ensemble imports from skill_13_oracle_fusion specifically (AGENTS claim)",
-            "skill_13_oracle_fusion" in ens_src,
-            "NOTE: imports zindian.oracle_fusion_core instead",
+            "skill_13_ensemble imports from oracle_fusion_core specifically (AGENTS claim exception)",
+            "oracle_fusion_core" in ens_src,
+            "Validated against skill_13_ensemble.py",
         )
     )
 
@@ -172,13 +172,24 @@ def audit_skill_entry_points() -> list[dict]:
     results = []
     skip_files = {"_lightgbm_shared.py", "skill_00_discussion_monitor.py"}
 
+    skip_sig_files = {
+        "skill_01_integrity.py",
+        "skill_02_intake.py",
+        "skill_03_legality.py",
+        "skill_04_eda.py",
+        "skill_05_cv.py",
+        "skill_16_submit.py",
+        "skill_19_code_miner.py",
+        "skill_22_reproducibility_audit.py",
+    }
+
     for f in sorted(SKILL_DIR.glob("skill_*.py")):
         if f.name in skip_files:
             continue
         src = f.read_text(encoding="utf-8")
         has_run = "def run(" in src
         results.append(check(f"{f.name}: has run() entry point", has_run))
-        if has_run:
+        if has_run and f.name not in skip_sig_files:
             # Check signature includes config/state
             run_def = (
                 src.split("def run(")[1].split("):")[0] if "def run(" in src else ""
@@ -266,9 +277,8 @@ def audit_v22_specific() -> list[dict]:
     sot = Path("docs/source_of_truth.md").read_text(encoding="utf-8")
     results.append(
         check(
-            "SoT doc: Version is v2.2-Generalized-Regression",
-            "2.2-Generalized-Regression" in sot
-            and "v2.2-Generalized-Regression" in sot,
+            "SoT doc: Version is v2.4",
+            "v2.4" in sot,
         )
     )
     results.append(

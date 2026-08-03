@@ -668,13 +668,34 @@ def run():
         and task_type == "regression"
         and primary_target in df.columns
     ):
-        y_series = pd.Series(
-            pd.to_numeric(df[primary_target], errors="coerce")
-        ).dropna()
-        y_vals_mae: np.ndarray = y_series.to_numpy(dtype=np.float64)
-        if y_vals_mae.size >= 2:
-            diffs = np.abs(np.diff(y_vals_mae))
-            mae_naive = float(np.mean(diffs))
+        # Resolve group_col to partition baseline calculation if defined
+        group_col = None
+        group_signal = cfg.get("group_signal", {}) or {}
+        spatial_signal = cfg.get("spatial_signal", {}) or {}
+        if group_signal.get("present", False):
+            group_col = group_signal.get("col")
+        if group_col is None and spatial_signal.get("present", False):
+            group_col = spatial_signal.get("group_col")
+
+        if group_col and group_col in df.columns:
+            all_diffs = []
+            for g_name, g_df in df.groupby(group_col):
+                y_series = pd.Series(
+                    pd.to_numeric(g_df[primary_target], errors="coerce")
+                ).dropna()
+                y_vals_g = y_series.to_numpy(dtype=np.float64)
+                if y_vals_g.size >= 2:
+                    all_diffs.extend(np.abs(np.diff(y_vals_g)).tolist())
+            if all_diffs:
+                mae_naive = float(np.mean(all_diffs))
+        else:
+            y_series = pd.Series(
+                pd.to_numeric(df[primary_target], errors="coerce")
+            ).dropna()
+            y_vals_mae: np.ndarray = y_series.to_numpy(dtype=np.float64)
+            if y_vals_mae.size >= 2:
+                diffs = np.abs(np.diff(y_vals_mae))
+                mae_naive = float(np.mean(diffs))
 
     eda_updates = {
         # ── Lean fields only — anything that scales with feature/band/row count

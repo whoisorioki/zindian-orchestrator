@@ -50,6 +50,7 @@ class LightGBMRunResult:
     threshold: float
     fold_scores: list[float]
     oof_rmse: float = 0.0  # regression metric
+    fold_sizes: list[tuple[int, int]] | None = None
 
 
 def train_lightgbm_cv(
@@ -262,6 +263,11 @@ def train_lightgbm_cv(
             else:
                 split_iter = cv
 
+    split_iter = list(split_iter)
+    fold_sizes = [
+        (int(len(tr_idx)), int(len(val_idx))) for tr_idx, val_idx in split_iter
+    ]
+
     # Resolve target_domain_bounds for RMSE/MAE domain clipping
     domain_bounds = None
     if task_type == "regression" and not use_log1p:
@@ -427,6 +433,7 @@ def train_lightgbm_cv(
             oof_rmse=oof_rmse,
             threshold=0.0,
             fold_scores=fold_scores,
+            fold_sizes=fold_sizes,
         )
     else:
         n_classes = len(np.unique(y))
@@ -472,4 +479,5 @@ def train_lightgbm_cv(
             oof_rmse=0.0,
             threshold=best_t,
             fold_scores=fold_scores,
+            fold_sizes=fold_sizes,
         )

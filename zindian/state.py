@@ -170,8 +170,14 @@ def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:
     return "unknown"
 
 
-def compute_secondary_metrics(y_true: Any, y_pred: Any) -> dict[str, Any]:
-    """Calculate regression diagnostics (MAE, MAPE, R2) on concatenated arrays."""
+def compute_secondary_metrics(
+    y_true: Any,
+    y_pred: Any,
+    *,
+    temporal_present: bool = False,
+    mae_naive_baseline: float | None = None,
+) -> dict[str, Any]:
+    """Calculate regression diagnostics on concatenated arrays."""
     from sklearn.metrics import mean_absolute_error, r2_score
     import numpy as np
 
@@ -194,7 +200,19 @@ def compute_secondary_metrics(y_true: Any, y_pred: Any) -> dict[str, Any]:
     else:
         mape = None  # SOT/user correction: mape is None when all targets are zero
 
-    return {"mae": mae, "mape": mape, "r2": r2}
+    # S2 - implemented 2026-08-03
+    zero_fraction = float(np.mean(y_true_arr == 0))
+    metrics: dict[str, Any] = {
+        "mae": mae,
+        "mape": mape,
+        "r2": r2,
+        "zero_fraction": zero_fraction,
+    }
+    if temporal_present:
+        baseline = float(mae_naive_baseline or 0.0)
+        metrics["mase"] = mae / baseline if baseline > 0.0 else None
+
+    return metrics
 
 
 def write_oof_record(

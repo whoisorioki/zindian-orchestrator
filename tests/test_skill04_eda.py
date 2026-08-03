@@ -459,3 +459,55 @@ def test_low_cardinality_categorical_feature_reports_group_structure_confirmed(
     assert (
         eda.get("group_structure_confirmed") is True
     ), "Low-cardinality categorical feature (land_cover_class) should set group_structure_confirmed=True"
+
+
+def test_group_aware_mae_naive_baseline(tmp_path, monkeypatch):
+    """Verify that when a group column is configured, consecutive differences
+    are calculated within each group separately, avoiding cross-group boundary jumps."""
+
+    # Create two groups:
+    # Group A: target: 10, 11, 12. Diffs: [1, 1]
+    # Group B: target: 100, 101, 102. Diffs: [1, 1]
+    # If flat: diffs contain |100 - 12| = 88. Flat mean diffs would be (1+1+88+1+1)/5 = 18.4
+    # If group-aware: diffs are [1, 1] for group A and [1, 1] for group B. Mean diffs: 1.0
+    df = pd.DataFrame(
+        {
+            "label": [10, 11, 12, 100, 101, 102],
+            "group_id": ["A", "A", "A", "B", "B", "B"],
+            "event_date": pd.date_range("2023-01-01", periods=6, freq="D"),
+        }
+    )
+
+    slug = "cmp-group-mae"
+    competition_dir = tmp_path / "competitions" / slug
+    (competition_dir / "data" / "raw").mkdir(parents=True)
+    (competition_dir / "data" / "processed").mkdir(parents=True)
+    (competition_dir / "reports").mkdir(parents=True)
+
+    df.to_csv(competition_dir / "data" / "raw" / "Training_Data.csv", index=False)
+
+    # Configure group_signal with group_id col
+    config_data = {
+        "target": "label",
+        "task_type": "regression",
+        "reproducibility": {"seed": 42},
+        "group_signal": {"present": True, "col": "group_id"},
+    }
+    (competition_dir / "challenge_config.json").write_text(
+        json.dumps(config_data),
+        encoding="utf-8",
+    )
+    state_path = competition_dir / "SKILL_STATE.json"
+    state = skill_state_skeleton()
+    state["dag_phase"] = "phase_1_eda"
+    state["last_updated"] = "2026-01-01T00:00:00Z"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    run()
+
+    written = json.loads(state_path.read_text(encoding="utf-8"))
+    eda = written.get("eda", {})
+
+    # Assert that mae_naive is indeed 1.0 (group-aware) rather than 18.4 (flat)
+    assert pytest.approx(eda.get("MAE_naive_baseline")) == 1.0

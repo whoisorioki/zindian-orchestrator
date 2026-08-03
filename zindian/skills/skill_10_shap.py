@@ -42,6 +42,7 @@ from zindian.paths import CompetitionPaths, resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.state import resolve_active_cv_strategy_id
 from zindian.state import write_oof_record
+from zindian.cv import load_explicit_cv_splits
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 
@@ -182,7 +183,8 @@ def _train_shap_fold_model(
     model.fit(
         train_x,
         train_y,
-        eval_set=[(val_x, val_y)],
+        eval_X=val_x,
+        eval_y=val_y,
         callbacks=[lgb.early_stopping(50), lgb.log_evaluation(-1)],
     )
     return model
@@ -196,6 +198,7 @@ def _compute_shap_audit(
     n_splits: int = 5,
     seed: int | None = None,
     task_type: str = "classification",
+    state: dict | None = None,
 ) -> dict:
     X = np.asarray(frame[feature_cols].values, dtype=np.float64)
     if task_type == "regression":
@@ -242,7 +245,12 @@ def _compute_shap_audit(
             "type": "kfold" if task_type == "regression" else "stratified",
             "n_splits": n_splits,
         }
-    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    explicit_splits = load_explicit_cv_splits(state)
+    splitter = (
+        None
+        if explicit_splits is not None
+        else make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    )
 
     # Initialize OOF array based on task type
     if task_type == "regression":
@@ -257,7 +265,12 @@ def _compute_shap_audit(
     fold_scores: list[float] = []
     fold_importances: list[np.ndarray] = []
 
-    for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y), start=1):
+    if explicit_splits is not None:
+        split_iter = explicit_splits
+    else:
+        assert splitter is not None
+        split_iter = splitter.split(X, y)
+    for fold_idx, (train_idx, val_idx) in enumerate(split_iter, start=1):
         model = _train_shap_fold_model(
             X[train_idx],
             y[train_idx],
@@ -333,25 +346,67 @@ def _compute_shap_audit(
     # This catches the "one column explains everything" signature without
     # requiring a hardcoded SHAP magnitude — the ratio is scale-invariant.
     leaked_feature_names: list[str] = []
+    mi_advisory_feature_names: list[str] = []
+
+    try:
+        _cfg_shap = ChallengeConfig.load()
+    except Exception:
+        _cfg_shap = None
+
+    # S6: Decoupled Systematic MI Regression Advisory Check
+    # Runs independently over all regression features, every time, regardless
+    # of whether the SHAP dominance ratio check fires.
+    if task_type == "regression" and _cfg_shap is not None:
+        _enable_mi_subsample = bool(
+            _cfg_shap.get("enable_mi_regression_subsample")
+            or _cfg_shap.get("enable_mi_regression", False)
+        )
+        if _enable_mi_subsample:
+            try:
+                from sklearn.feature_selection import mutual_info_regression
+
+                _nmi_thresh = float(_cfg_shap.get("leak_nmi_threshold") or 0.90)
+                mi_max_samples = int(_cfg_shap.get("mi_max_samples") or 2000)
+                rng = np.random.default_rng(42)
+
+                for feat in feature_cols:
+                    valid_mask = frame[feat].notna() & frame[target].notna()
+                    x_mi = frame.loc[valid_mask, [feat]]
+                    y_mi = frame.loc[valid_mask, target]
+                    if len(x_mi) > 0:
+                        n_samples = min(len(x_mi), mi_max_samples)
+                        sub_idx = rng.choice(len(x_mi), size=n_samples, replace=False)
+                        x_sub = x_mi.iloc[sub_idx]
+                        y_sub = y_mi.iloc[sub_idx]
+                        mi_reg = float(
+                            mutual_info_regression(
+                                x_sub, y_sub.values, random_state=42
+                            )[0]
+                        )
+                        var_y = float(np.var(y_sub.values))
+                        score_mi = mi_reg / var_y if var_y > 0 else 0.0
+                        if score_mi >= _nmi_thresh:
+                            mi_advisory_feature_names.append(feat)
+            except Exception as mi_err:
+                print(
+                    f"[WARN] Systematic MI regression advisory check failed: {mi_err}"
+                )
+
     if len(ranking) >= 2:
-        try:
-            _cfg_shap = ChallengeConfig.load()
-            _leak_threshold = float(_cfg_shap.get("shap_leak_threshold") or 3.0)
-        except Exception:
-            _leak_threshold = 3.0
+        _leak_threshold = 3.0
+        if _cfg_shap is not None:
+            try:
+                _leak_threshold = float(_cfg_shap.get("shap_leak_threshold") or 3.0)
+            except Exception:
+                pass
         top_shap = float(ranking.iloc[0]["mean_abs_shap"])
         rest_mean = float(ranking.iloc[1:]["mean_abs_shap"].mean())
         if rest_mean > 0 and (top_shap / rest_mean) > _leak_threshold:
             top_feature = str(ranking.iloc[0]["feature"])
             # Evaluate target leak using Mutual Information (classification) or Pearson correlation (regression)
             is_leak = True
-            is_mi_advisory_leak = False
-            mi_advisory_feature_names: list[str] = []
             try:
-                from sklearn.feature_selection import (
-                    mutual_info_classif,
-                    mutual_info_regression,
-                )
+                from sklearn.feature_selection import mutual_info_classif
                 from scipy.stats import pearsonr
 
                 valid_mask = frame[top_feature].notna() & frame[target].notna()
@@ -360,53 +415,22 @@ def _compute_shap_audit(
 
                 _pearson_thresh = (
                     float(_cfg_shap.get("leak_pearson_threshold") or 0.98)
-                    if "_cfg_shap" in locals()
+                    if _cfg_shap is not None
                     else 0.98
                 )
                 _nmi_thresh = (
                     float(_cfg_shap.get("leak_nmi_threshold") or 0.90)
-                    if "_cfg_shap" in locals()
+                    if _cfg_shap is not None
                     else 0.90
-                )
-                _enable_mi_subsample = (
-                    bool(
-                        _cfg_shap.get("enable_mi_regression_subsample")
-                        or _cfg_shap.get("enable_mi_regression", False)
-                    )
-                    if "_cfg_shap" in locals()
-                    else False
                 )
 
                 if task_type == "regression":
-                    r_val, _ = pearsonr(frame.loc[valid_mask, top_feature], y_mi)
+                    res_pearson = cast(Any, pearsonr(frame.loc[valid_mask, top_feature], y_mi))
+                    r_val = float(res_pearson[0])
                     score_val = abs(r_val)
                     is_leak = score_val >= _pearson_thresh
                     metric_name = "Pearson |r|"
                     threshold_val = _pearson_thresh
-
-                    # Optional advisory MI regression check on subsample (non-blocking)
-                    if not is_leak and _enable_mi_subsample:
-                        try:
-                            n_samples = min(len(x_mi), 2000)
-                            sub_idx = np.random.choice(
-                                len(x_mi), size=n_samples, replace=False
-                            )
-                            x_sub = x_mi.iloc[sub_idx]
-                            y_sub = y_mi.iloc[sub_idx]
-                            mi_reg = float(
-                                mutual_info_regression(
-                                    x_sub, y_sub.values, random_state=42
-                                )[0]
-                            )
-                            var_y = float(np.var(y_sub.values))
-                            score_mi = mi_reg / var_y if var_y > 0 else 0.0
-                            if score_mi >= _nmi_thresh:
-                                is_mi_advisory_leak = True
-                                mi_advisory_feature_names.append(top_feature)
-                        except Exception as mi_err:
-                            print(
-                                f"[WARN] MI regression advisory check failed: {mi_err}"
-                            )
                 else:
                     mi_score = float(
                         mutual_info_classif(x_mi, y_mi.values, random_state=42)[0]
@@ -432,7 +456,7 @@ def _compute_shap_audit(
                     f"is {score_val:.4f} (< {threshold_val:.2f}), proving it is a valid physical signal "
                     f"rather than a 1:1 target copy. Leak check passed."
                 )
-                if is_mi_advisory_leak:
+                if top_feature in mi_advisory_feature_names:
                     print(
                         f"  [SHAP Audit Advisory] Feature '{top_feature}' flagged by advisory MI regression "
                         f"(non-blocking, surfaced at Human Gate 2)."
@@ -453,6 +477,7 @@ def _compute_shap_audit(
             "top15_share": top15_share,
             "tail_share": tail_share,
             "leaked_features": leaked_feature_names,
+            "mi_advisory_feature_names": mi_advisory_feature_names,
         }
     else:
         if oof_probs.ndim == 1:
@@ -486,6 +511,7 @@ def _compute_shap_audit(
             "top15_share": top15_share,
             "tail_share": tail_share,
             "leaked_features": leaked_feature_names,
+            "mi_advisory_feature_names": mi_advisory_feature_names,
         }
 
 
@@ -671,7 +697,13 @@ def run(
     print("Training governed SHAP audit…")
 
     full_audit = _compute_shap_audit(
-        frame, feature_cols, target, n_splits=n_splits, seed=seed, task_type=task_type
+        frame,
+        feature_cols,
+        target,
+        n_splits=n_splits,
+        seed=seed,
+        task_type=task_type,
+        state=state,
     )
     ranking = full_audit["ranking"]
     pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
@@ -811,6 +843,13 @@ def run(
         pruning_pass=pruning_pass,
         last_updated=datetime.now(timezone.utc).isoformat(),
         shap_oof_cv_strategy_id=cv_id,
+        # S6 - implemented 2026-08-03
+        # S6: persist advisory MI features so Gate 2 can surface them to the operator.
+        # These features passed the primary Pearson block but were flagged by the
+        # subsample mutual_info_regression advisory check. Non-blocking — they do NOT
+        # prevent skill_11 promotion. Written as an empty list when no advisory flag
+        # was raised (enable_mi_regression_subsample: false, or no flags found).
+        leakage_mi_advisory=full_audit.get("mi_advisory_feature_names", []),
     )
     write_oof_record(
         state_store,
@@ -881,6 +920,7 @@ def _run_multi_target_shap(
             n_splits=n_splits,
             seed=seed,
             task_type=target_task,
+            state=state,
         )
         ranking = full_audit["ranking"]
         pruning = _build_pruned_feature_set(feature_cols, ranking, frame_with_target)
@@ -967,6 +1007,13 @@ def _run_multi_target_shap(
             "oof_rmse": full_audit.get("oof_rmse"),
             "fold_scores": full_audit.get("fold_scores"),
             "leaked_features": full_audit.get("leaked_features", []),
+            # S6: persist per-target MI advisory list so the flatten step below
+            # can write leakage_mi_advisory to state. Empty list when the
+            # advisory check was not triggered (enable_mi_regression_subsample
+            # is False, or no dominance flag fired for this target).
+            "mi_advisory_feature_names": full_audit.get(
+                "mi_advisory_feature_names", []
+            ),
         }
         all_pass = all_pass and pruning_pass
 
@@ -1066,6 +1113,27 @@ def _run_multi_target_shap(
     # Flatten: any feature leaked in ANY target blocks the anchor branch
     all_leaked = sorted(set(f for leaked in leaked_by_target.values() for f in leaked))
     state_store.update(leaked_features={"anchor-baseline": all_leaked})
+
+    # S6: flatten per-target MI advisory lists into a shared leakage_mi_advisory key.
+    # Convention mirrors leaked_features: gate-layer reads a single flat list, not
+    # per-target keys. We store per-target attribution in shap_multi_target_results
+    # (already written above via all_results) for diagnostic access.
+    # Key design rationale: skill_11 reads state.get("leakage_mi_advisory", []) —
+    # a shared flat key, consistent with how leaked_features is consumed.
+    # Per-target keys (leakage_mi_advisory_{target_name}) are NOT written because
+    # skill_11 has no per-target read loop for advisory data.
+    advisory_by_target = {
+        t: r.get("mi_advisory_feature_names", []) for t, r in all_results.items()
+    }
+    all_advisory = sorted(
+        set(f for advisory in advisory_by_target.values() for f in advisory)
+    )
+    if all_advisory:
+        print(
+            f"  [ADVISORY] MI regression check flagged {len(all_advisory)} feature(s) "
+            f"across targets: {all_advisory}. Non-blocking — surfaced at Human Gate 2."
+        )
+    state_store.update(leakage_mi_advisory=all_advisory)
     print(f"\n[OK] Multi-target SHAP complete. Overall pass: {all_pass}")
     return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}
 

@@ -26,3 +26,133 @@ def test_spearman_for_regression():
 
     assert np.isclose(corr_reg, expected_spearman)
     assert np.isclose(corr_reg, 1.0)
+
+
+def test_prune_collinear_residuals():
+    from zindian.oracle_fusion_core import _prune_collinear
+
+    # 2 candidates with highly correlated predictions but different error residuals when y_true is active
+    # y_true is [1.0, 1.0, 1.0]
+    # pred_a = [1.1, 1.2, 1.3] -> residual_a = [0.1, 0.2, 0.3]
+    # pred_b = [1.2, 1.1, 1.3] -> residual_b = [0.2, 0.1, 0.3]
+    # Let's verify _prune_collinear behavior
+    candidates = [
+        {"name": "cand_a", "score": 0.8, "probs": np.array([1.1, 1.2, 1.3])},
+        {"name": "cand_b", "score": 0.75, "probs": np.array([1.2, 1.1, 1.3])},
+    ]
+
+    # Without y_true: raw Pearson correlation between [1.1, 1.2, 1.3] and [1.2, 1.1, 1.3]
+    # mean_a = 1.2, dev_a = [-0.1, 0.0, 0.1]
+    # mean_b = 1.2, dev_b = [0.0, -0.1, 0.1]
+    # corr = 0.5 (below 0.95), neither is dropped
+    pruned, dropped = _prune_collinear(
+        candidates, task_type="classification", direction="maximize", y_true=None
+    )
+    assert len(pruned) == 2
+    assert len(dropped) == 0
+
+    # Let's construct a pair that IS collinear on raw predictions (> 0.95),
+    # but when y_true is subtracted, their residuals are NOT collinear.
+    # y_true: [0.0, 0.0, 0.0] -> residuals = raw. Let's make raw collinear.
+    # pred_a = [1.0, 2.0, 3.0]
+    # pred_b = [1.1, 2.1, 3.1] (perfectly correlated raw: corr = 1.0)
+    # y_true = [1.0, 3.0, 2.0]
+    # residual_a = [0.0, -1.0, 1.0]
+    # residual_b = [0.1, -0.9, 1.1] -> wait, these are still perfectly correlated because b = a + 0.1
+    # Let's make residuals different:
+    # y_true = [1.0, 1.0, 2.0]
+    # residual_a = [0.0, 1.0, 1.0]
+    # residual_b = [0.1, 1.1, 1.1] -> still perfectly correlated.
+    # To make residuals non-correlated while raw is highly correlated, we need:
+    # raw_a = [1.0, 2.0, 3.0]
+    # raw_b = [1.05, 2.05, 3.05] (perfectly correlated, r = 1.0)
+    # If we subtract y_true = [1.0, 1.9, 3.2]
+    # residual_a = [0.0, 0.1, -0.2]
+    # residual_b = [0.05, 0.15, -0.15] -> b = a + 0.05 (still perfectly correlated).
+    # Ah! Subtracting the same constant vector y_true preserves Pearson/Spearman correlation!
+    # Wait, correlation is shift-invariant (corr(X - C, Y - C) == corr(X, Y) is NOT true!
+    # Let's check: Cov(X - C, Y - C) = Cov(X, Y).
+    # Var(X - C) = Var(X), Var(Y - C) = Var(Y).
+    # So Pearson correlation of residuals is EXACTLY EQUAL to Pearson correlation of raw values!
+    # Wait, is that true?
+    # Yes! Pearson correlation of (X - Z) and (Y - Z) where Z is a vector (y_true) is NOT equal to corr(X, Y).
+    # Because Z is a vector, not a scalar constant! Z varies across samples.
+    # Yes, Z (y_true) varies! E.g. y_true = [1.0, 5.0, -2.0].
+    # So corr(X - Z, Y - Z) != corr(X, Y).
+    # Let's verify this mathematically:
+    # X = [1.0, 2.0, 3.0], Y = [1.1, 2.2, 3.3] -> corr(X, Y) = 1.0
+    # Z = [1.0, 5.0, 10.0]
+    # X - Z = [0.0, -3.0, -7.0]
+    # Y - Z = [0.1, -2.8, -6.7]
+    # Let's compute their correlation:
+    # X - Z: mean = -3.333, dev = [3.333, 0.333, -3.667]
+    # Y - Z: mean = -3.133, dev = [3.233, 0.333, -3.567]
+    # Wait, these are still extremely close to 1.0 because Y is just 1.1 * X, and they both have Z subtracted.
+    # What if X and Y are highly correlated, but their errors are independent?
+    # e.g., X = Z + error_a, Y = Z + error_b.
+    # Since Z has large variance, X and Y will be highly correlated due to sharing the target Z.
+    # But X - Z = error_a, and Y - Z = error_b.
+    # If error_a and error_b are independent, the residuals (errors) will have 0 correlation!
+    # This is exactly the core concept of residual diversity / Kuncheva pruning!
+    # Excellent! Let's write the test:
+    Z = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    error_a = np.array([0.1, -0.1, 0.2, -0.2, 0.0])
+    error_b = np.array([-0.2, 0.2, -0.1, 0.1, 0.0])
+    # raw predictions:
+    X = Z + error_a
+    Y = Z + error_b
+
+    # Without y_true, X and Y are dominated by Z (variance of Z is ~250, variance of errors is ~0.05)
+    # So corr(X, Y) is extremely close to 1.0.
+    candidates = [
+        {"name": "cand_a", "score": 0.8, "probs": X},
+        {"name": "cand_b", "score": 0.75, "probs": Y},
+    ]
+
+    # Without y_true, they should be pruned (dropped) because corr > 0.95
+    pruned_no_y, dropped_no_y = _prune_collinear(
+        candidates, task_type="classification", direction="maximize", y_true=None
+    )
+    assert len(pruned_no_y) == 1
+    assert len(dropped_no_y) == 1
+    assert dropped_no_y[0]["dropped"] == "cand_b"
+
+    # With y_true = Z, residuals are error_a and error_b, which are negatively correlated, so they shouldn't be pruned!
+    pruned_y, dropped_y = _prune_collinear(
+        candidates, task_type="classification", direction="maximize", y_true=Z
+    )
+    assert len(pruned_y) == 2
+    assert len(dropped_y) == 0
+
+
+def test_prune_collinear_residuals_inverse():
+    from zindian.oracle_fusion_core import _prune_collinear
+
+    # Inverse case: low raw correlation, but high residual correlation.
+    # U = residual_a, V = residual_b. corr(U, V) > 0.95 (should be pruned when y_true is active).
+    # Z = y_true. X = Z + U, Y = Z + V. corr(X, Y) < 0.95 (should NOT be pruned when y_true is None).
+    U = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    V = np.array([1.0, 2.0, 3.0, 4.0, 6.0])  # corr(U, V) = 0.986
+    Z = -1.05 * U
+    X = Z + U
+    Y = Z + V
+
+    candidates = [
+        {"name": "cand_a", "score": 0.8, "probs": X},
+        {"name": "cand_b", "score": 0.75, "probs": Y},
+    ]
+
+    # Without y_true: raw predictions have correlation -0.6, so they should NOT be pruned.
+    pruned_no_y, dropped_no_y = _prune_collinear(
+        candidates, task_type="classification", direction="maximize", y_true=None
+    )
+    assert len(pruned_no_y) == 2
+    assert len(dropped_no_y) == 0
+
+    # With y_true = Z: residuals have correlation 0.986 > 0.95, so they SHOULD be pruned!
+    pruned_y, dropped_y = _prune_collinear(
+        candidates, task_type="classification", direction="maximize", y_true=Z
+    )
+    assert len(pruned_y) == 1
+    assert len(dropped_y) == 1
+    assert dropped_y[0]["dropped"] == "cand_b"

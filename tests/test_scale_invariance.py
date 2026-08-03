@@ -59,14 +59,24 @@ def test_effective_thresholds_classification():
 
 
 def test_fold_score_variance_unbiased_sample():
+    """The _fold_score_variance fallback (when metric_analysis is absent)
+    must return NB-corrected variance, not raw sample variance — per S3 DoD.
+    The NB factor for K=5 equal folds is (1/5 + 1/4) = 0.45.
+    """
     scores = [0.82, 0.84, 0.81, 0.85, 0.83]
     state = {"eda": {"fold_scores": scores}}
 
-    expected_variance = np.var(np.array(scores, dtype=np.float64), ddof=1)
+    raw_variance = np.var(np.array(scores, dtype=np.float64), ddof=1)
+    K = len(scores)
+    nb_factor = (1.0 / K) + (1.0 / (K - 1))  # 0.45 for K=5
+    expected_variance = raw_variance * nb_factor
 
     actual_variance = _fold_score_variance(state)
     assert actual_variance is not None
-    assert np.isclose(actual_variance, expected_variance)
+    assert np.isclose(actual_variance, expected_variance), (
+        f"expected NB-corrected variance {expected_variance} "
+        f"(raw {raw_variance} * nb_factor {nb_factor}), got {actual_variance}"
+    )
 
 
 def test_skill_12_variance_ddof():
@@ -91,3 +101,22 @@ def test_skill_12_variance_ddof():
 
     assert np.isclose(actual_sample_variance, expected_sample_variance)
     assert np.isclose(actual_nb_variance, expected_nb_variance)
+
+
+def test_skill_12_near_zero_variance_stays_finite():
+    config = {
+        "slug": "ey-frogs",
+        "task_type": "regression",
+        "metric": "rmse",
+        "metric_direction": "minimize",
+    }
+    tiny_scores = [0.50000000, 0.50000001, 0.50000002, 0.50000001, 0.50000000]
+    state = {"eda": {"fold_scores": tiny_scores, "target_std": 1.0}}
+
+    updated_state = run_skill_12(config, state)
+    analysis = updated_state["metric_analysis"]
+
+    assert analysis["fold_score_variance_sample"] >= 0.0
+    assert analysis["fold_score_variance_nb"] >= 0.0
+    assert np.isfinite(analysis["fold_score_variance_nb"])
+    assert np.isfinite(analysis["se_oof"])

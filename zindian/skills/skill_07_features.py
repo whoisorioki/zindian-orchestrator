@@ -38,6 +38,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
+from zindian.cv import load_explicit_cv_splits
 from zindian.state import resolve_active_cv_strategy_id, write_oof_record
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
@@ -674,6 +675,7 @@ def _dispatch_variant_training(
     num_boost_round = int(model_cfg.get("num_boost_round") or 500)
     early_stopping = int(model_cfg.get("early_stopping") or 50)
     ensemble_spec = model_cfg.get("ensemble")  # list of member dicts or None
+    split_iter = splitter
 
     # -- Shared LGB path (fastest, uses train_lightgbm_cv) --
     if use_lgb_shared_path and family in ("lgb", "dart") and not ensemble_spec:
@@ -692,7 +694,7 @@ def _dispatch_variant_training(
             target_col=target_col,
             n_splits=n_splits,
             random_seed=seed,
-            cv=splitter,
+            cv=split_iter,
             params=params,
             num_boost_round=num_boost_round,
             early_stopping_rounds=early_stopping,
@@ -749,6 +751,7 @@ def _dispatch_variant_training(
             "oof_probs": lgb_result.oof_probs,
             "test_probs": lgb_result.test_probs,
             "fold_scores": [float(s) for s in getattr(lgb_result, "fold_scores", [])],
+            "fold_sizes": getattr(lgb_result, "fold_sizes", None),
         }
         if task_type == "regression":
             ret[primary_key] = oof_score
@@ -758,8 +761,15 @@ def _dispatch_variant_training(
     oof_probs = np.zeros(len(y))
     test_probs_acc = np.zeros(len(X_test))
     fold_scores_list: list[float] = []
+    fold_sizes: list[tuple[int, int]] = []
 
-    for fold, (tr_idx, val_idx) in enumerate(splitter.split(X, y)):
+    if isinstance(split_iter, list):
+        fold_source = split_iter
+    else:
+        fold_source = list(split_iter.split(X, y))
+
+    for fold, (tr_idx, val_idx) in enumerate(fold_source):
+        fold_sizes.append((int(len(tr_idx)), int(len(val_idx))))
         # Impute NaNs for models that do not support them (e.g. lr)
         needs_impute = (family == "lr") or (
             ensemble_spec and any(m.get("family") == "lr" for m in ensemble_spec)
@@ -838,6 +848,7 @@ def _dispatch_variant_training(
         "oof_probs": oof_probs,
         "test_probs": test_probs_acc,
         "fold_scores": fold_scores_list,
+        "fold_sizes": fold_sizes,
     }
 
 
@@ -849,14 +860,16 @@ def _fit_model(
         model.fit(
             X[tr_idx],
             y[tr_idx],
-            eval_set=[(X[val_idx], y[val_idx])],
+            eval_X=X[val_idx],
+            eval_y=y[val_idx],
             callbacks=[lgb.early_stopping(early_stopping), lgb.log_evaluation(-1)],
         )
     elif family == "xgb":
         model.fit(
             X[tr_idx],
             y[tr_idx],
-            eval_set=[(X[val_idx], y[val_idx])],
+            eval_X=X[val_idx],
+            eval_y=y[val_idx],
             verbose=False,
         )
     else:
@@ -947,9 +960,18 @@ def train_variant(
     family = model_cfg.get("family", "lgb")
     ensemble_spec = model_cfg.get("ensemble")
     use_shared = (family in ("lgb", "dart")) and not ensemble_spec
+    explicit_splits = load_explicit_cv_splits(state)
 
-    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-    n_splits = getattr(splitter, "n_splits", 5)
+    splitter = (
+        explicit_splits
+        if explicit_splits is not None
+        else make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    )
+    n_splits = (
+        len(explicit_splits)
+        if explicit_splits is not None
+        else getattr(splitter, "n_splits", 5)
+    )
 
     print(
         f"\n  Training {variant_name} ({len(feature_cols)} features, family={family})..."
@@ -1240,7 +1262,13 @@ def _run_multi_target_variant(
             scores=oof_1d.tolist(),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=42,
-            model_config={"target_name": target_name, "variant": variant_name},
+            model_config={
+                "target_name": target_name,
+                "variant": variant_name,
+                "fold_sizes": (
+                    seed_results[0].get("fold_sizes") if seed_results else None
+                ),
+            },
         )
 
         # Save OOF and test probabilities to CSV files dynamically
@@ -1897,7 +1925,15 @@ def run(
             from zindian.state import compute_secondary_metrics
 
             y_true = np.asarray(train_feat[target_col].values, dtype=np.float64)
-            secondary_metrics = compute_secondary_metrics(y_true, result["oof_probs"])
+            eda_block = state.get("eda", {}) or {}
+            secondary_metrics = compute_secondary_metrics(
+                y_true,
+                result["oof_probs"],
+                temporal_present=bool(
+                    (config.get("temporal_signal") or {}).get("present", False)
+                ),
+                mae_naive_baseline=eda_block.get("MAE_naive_baseline"),
+            )
         except Exception as exc:
             print(f"  [WARN]  Failed to compute secondary metrics: {exc}")
 
@@ -1919,6 +1955,7 @@ def run(
                 "feature_count": len(feature_cols),
                 "multi_seed": [int(s) for s in SEEDS],
                 "fold_scores": result.get("fold_scores"),
+                "fold_sizes": result.get("fold_sizes"),
             },
             secondary_metrics=secondary_metrics,
         )

@@ -2,6 +2,36 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.4-closure-2026-08-03]
+
+### Added
+- **Formula correctness checker** (`scripts/formula_correctness_check.py`): Two independent techniques for verifying SoT-to-code formula alignment — numeric equivalence sampling (catches Finding A.1 double-/K bug) and unit-rescaling invariance (catches Finding A.3 MASE dimensional bug).
+- **SOT alignment checker** (`scripts/sot_alignment_check.py`): Automates verification of `docs/source_of_truth.md` Section 9 statuses against codebase reality. Includes combined S-item parser (handles "S1 & S9" entries) and claim-code coupling audit.
+- **Nadeau-Bengio exact-value regression tests** (`tests/test_nadeau_bengio_exact_value.py`): 10 tests wired to real production code, including skewed-GroupKFold and 1.0 safety-cap tests.
+- **Nadeau-Bengio SE exact-value test** (`tests/test_nadeau_bengio_se.py`): Verifies `se_oof` computation against hand-derived values.
+
+### Changed
+- `zindian/skills/skill_12_metric.py`: Added `_get_nb_factor(K, fold_sizes)` with per-fold mean ratio support and 1.0 safety cap (`gamma_bar = min(mean_ratio, 1.0)`).
+- `zindian/skills/skill_11_gate.py`: `_fold_score_variance` fallback now uses NB-corrected variance (was raw `np.var(ddof=1)`); added `mase` to `SCALE_INVARIANT_METRICS`; added `_nb_corrected_variance` and `_target_fold_variance` helpers with NB-corrected fallback branches; added `_effective_target_weight` for inverse-variance weighting; added `leakage_mi_advisory` surfacing at Human Gate 2 (S6).
+- `scripts/sot_alignment_check.py`: Fixed S7 check path (was `zindian/cv.py`, now `zindian/skills/skill_05_cv.py`); fixed S8 check (was `quantile`, now `CONF_POS_DEFAULT`/`CONF_NEG_DEFAULT`); fixed S10 check (was `skill_07_features.py`, now `skill_22_reproducibility_audit.py`); updated parser to handle combined S1+S9 entries.
+- `docs/source_of_truth.md`: Updated S7 status to "Partially addressed (verified against code)"; updated S8 status to "Decision recorded"; corrected S7 spatial_signal contradiction (old: "must declare spatial_buffer_km" future tense; new: "includes spatial_buffer_km: null" already present).
+- `tests/test_scale_invariance.py`: Updated `test_fold_score_variance_unbiased_sample` to expect NB-corrected variance (was expecting raw sample variance).
+- `tests/test_skill11_gate.py`: Updated gate condition tests for NB-corrected variance paths.
+
+### Fixed
+- **S3 fallback variance paths** (`skill_11_gate.py`): `_fold_score_variance` L48 and `_target_fold_variance` L206/L217 fallback branches now return NB-corrected variance, not raw sample variance. This was a real open S3 gap — the DoD required ALL variance paths to return NB-corrected values.
+- **A.3 MASE scale-invariance** (`skill_11_gate.py`): Added `mase` to `SCALE_INVARIANT_METRICS` so MASE uses raw `gate_margin` without target_std scaling.
+- **A.1 double-/K guard** (`skill_12_metric.py`, `skill_11_gate.py`): Confirmed `se_oof = sqrt(Var_NB)` — no extra `/K` in either file.
+- **C.1 sidecar trigger** (`docs/source_of_truth.md`): Confirmed `skill_20` row already references "Phase 3A completes".
+- **B.1 MI-advisory vs Pearson-blocking**: Reaffirmed non-blocking MI advisory design retained; primary Pearson/NMI blocking is the gate; advisory surfaced at Human Gate 2.
+- **A.4 fingerprint comparison** (`skill_22_reproducibility_audit.py`): Confirmed numeric `max_diff` comparison, NOT hash-string — closes A.4 as doc-only fix.
+- **mypy/pyright None-safety errors** (`skill_10_shap.py`, `skill_21_pseudo_label.py`): Added explicit `assert splitter is not None` before `.split()` calls.
+
+### Documentation
+- `docs/source_of_truth.md`: Resolved S7 spatial_signal contradiction (old SoT text said `spatial_buffer_km` "must declare" as future requirement; corrected to state template already includes `spatial_buffer_km: null`).
+- `docs/source_of_truth.md`: S-comment parser now handles combined S1+S9 entries via regex extracting all S-numbers from bold text.
+- Known limitations documented: presence-check cannot detect commented-out state writes; prior `sot_alignment_check.py` verdicts on S7/S8/S10 were from a broken checker and are unconfirmed.
+
 ## [v2.4 - 2026-08-01]
 
 ### Added

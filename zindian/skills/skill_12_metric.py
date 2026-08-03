@@ -15,12 +15,29 @@ import tabula.skill_state_autopatch  # noqa
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 import numpy as np
 
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
+
+
+def _get_nb_factor(K: int, fold_sizes: Sequence[tuple[int, int]] | None = None) -> float:
+    if K <= 1:
+        return 0.0
+    if fold_sizes and len(fold_sizes) == K:
+        ratios = []
+        for n_train, n_val in fold_sizes:
+            if n_train > 0:
+                ratios.append(float(n_val) / float(n_train))
+            else:
+                ratios.append(0.0)
+        mean_ratio = float(np.mean(ratios))
+        gamma_bar = min(mean_ratio, 1.0)
+        return (1.0 / K) + gamma_bar
+    else:
+        return (1.0 / K) + (1.0 / (K - 1))
 
 
 def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -53,6 +70,15 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
 
     target_config = config.get("target_config", {}) if config else {}
     targets = target_config.get("targets", []) if target_config else []
+    # S3 - implemented 2026-08-03
+    use_inverse_variance_weighting = bool(
+        (config.get("use_inverse_variance_weighting", False) if config else False)
+        or (
+            target_config.get("use_inverse_variance_weighting", False)
+            if isinstance(target_config, dict)
+            else False
+        )
+    )
 
     fold_scores = None
     recommended_threshold = 0.5
@@ -63,6 +89,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
     if targets:
         # Multi-target variance calculation
         target_fold_scores = {}
+        target_fold_sizes = {}
         for t in targets:
             t_name = t.get("name")
             if not t_name:
@@ -75,19 +102,49 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                     t_fold_scores = model_config.get("fold_scores")
                     if t_fold_scores:
                         target_fold_scores[t_name] = t_fold_scores
+                        target_fold_sizes[t_name] = model_config.get("fold_sizes")
 
         # If all targets have fold scores, calculate composite fold scores
         if len(target_fold_scores) == len(targets):
             first_scores = next(iter(target_fold_scores.values()))
             n_splits = len(first_scores) if isinstance(first_scores, list) else 0
             composite_fold_scores = []
+            per_target_analysis: Dict[str, Any] = {}
+            target_effective_weights: dict[str, float] = {}
+
+            for t in targets:
+                t_name = t.get("name")
+                if not t_name:
+                    continue
+                scores_arr = np.asarray(target_fold_scores[t_name], dtype=np.float64)
+                K = len(scores_arr)
+                variance_sample = float(np.var(scores_arr, ddof=1)) if K > 1 else 0.0
+                nb_factor = _get_nb_factor(K, target_fold_sizes.get(t_name))
+                variance_nb = float(variance_sample * nb_factor)
+
+                base_weight = float(t.get("weight", 0.5) or 0.0)
+                effective_weight = (
+                    base_weight / (variance_nb + 1e-8)
+                    if use_inverse_variance_weighting
+                    else base_weight
+                )
+                target_effective_weights[str(t_name)] = effective_weight
+                per_target_analysis[str(t_name)] = {
+                    "fold_scores": [float(value) for value in scores_arr.tolist()],
+                    "fold_score_variance": variance_nb,
+                    "fold_score_variance_sample": variance_sample,
+                    "weight": base_weight,
+                    "effective_weight": effective_weight,
+                }
 
             for i in range(n_splits):
                 weighted_sum = 0.0
                 total_weight = 0.0
                 for t in targets:
                     t_name = t.get("name")
-                    weight = t.get("weight", 0.5)
+                    weight = target_effective_weights.get(
+                        str(t_name), float(t.get("weight", 0.5) or 0.0)
+                    )
                     task_type = t.get("task_type", "classification")
                     raw_score = target_fold_scores[t_name][i]
 
@@ -114,8 +171,13 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                 fold_scores = composite_fold_scores
                 # Store composite fold variance separately
                 composite_variance = float(np.var(composite_fold_scores, ddof=1))
+                metric_analysis["per_target"] = per_target_analysis
                 metric_analysis["composite_fold_score_variance"] = composite_variance
+                metric_analysis["use_inverse_variance_weighting"] = (
+                    use_inverse_variance_weighting
+                )
 
+    fold_sizes = None
     if not fold_scores:
         oof_key = f"branch_{active_branch}_oof"
         if oof_key in state:
@@ -123,6 +185,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
             if isinstance(oof_dict, dict):
                 model_config = oof_dict.get("model_config", {}) or {}
                 fold_scores = model_config.get("fold_scores")
+                fold_sizes = model_config.get("fold_sizes")
                 recommended_threshold = model_config.get("threshold", 0.5)
 
     # Fallback to search any branch_.*_oof key if not found
@@ -136,6 +199,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                 model_config = val.get("model_config", {}) or {}
                 if "fold_scores" in model_config:
                     fold_scores = model_config["fold_scores"]
+                    fold_sizes = model_config.get("fold_sizes")
                     recommended_threshold = model_config.get("threshold", 0.5)
                     break
 
@@ -167,13 +231,14 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
     # Unbiased sample variance (ddof=1)
     fold_score_variance_sample = float(np.var(arr, ddof=1))
 
+    # S1 - implemented 2026-08-03
     # Nadeau-Bengio Corrected Variance (v2.4 S1): Var_NB = Var_sample(ddof=1) * (1/K + n_val/n_train)
     # For K-fold CV: n_val/n_train = 1/(K-1)
     K = len(arr)
     if K > 1:
-        nb_factor = (1.0 / K) + (1.0 / (K - 1))
+        nb_factor = _get_nb_factor(K, fold_sizes)
         fold_score_variance_nb = float(fold_score_variance_sample * nb_factor)
-        se_oof = float(np.sqrt(fold_score_variance_nb / K))
+        se_oof = float(np.sqrt(fold_score_variance_nb))
     else:
         fold_score_variance_nb = fold_score_variance_sample
         se_oof = 0.0

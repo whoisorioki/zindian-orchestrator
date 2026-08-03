@@ -40,7 +40,7 @@ from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
-from zindian.cv import make_cv_splitter
+from zindian.cv import load_explicit_cv_splits, make_cv_splitter
 from zindian.paths import resolve_competition_paths
 from zindian.state import (
     SkillStateStore,
@@ -257,6 +257,7 @@ def train_ensemble_and_predict(
     cv_strategy: dict[str, Any],
     feature_cols: list[str],
     config: ChallengeConfig,
+    explicit_splits: list[tuple[np.ndarray, np.ndarray]] | None = None,
     sample_weight_labelled: np.ndarray | None = None,
     sample_weight_pseudo: float = SAMPLE_WEIGHT_DEFAULT,
     seed: int | None = None,
@@ -287,15 +288,28 @@ def train_ensemble_and_predict(
     y_labelled_array: np.ndarray = np.asarray(y_labelled, dtype=np.int32)
     oof: np.ndarray = np.zeros(len(X_labelled), dtype=np.float64)
     preds: np.ndarray = np.zeros(len(X_test), dtype=np.float64)
-    splitter = make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
-    n_splits = int(getattr(splitter, "n_splits", N_SPLITS) or N_SPLITS)
+    splitter = (
+        None
+        if explicit_splits is not None
+        else make_cv_splitter(cv_strategy=cv_strategy, random_seed=seed)
+    )
+    n_splits = (
+        len(explicit_splits)
+        if explicit_splits is not None
+        else int(getattr(splitter, "n_splits", N_SPLITS) or N_SPLITS)
+    )
     has_pseudo = X_pseudo.shape[0] > 0
     pseudo_indices: np.ndarray = np.arange(
         len(X_labelled), len(X_labelled) + X_pseudo.shape[0], dtype=np.int64
     )
     n_labelled: int = int(len(X_labelled))
 
-    for tr_idx, va_idx in splitter.split(X_labelled, y_labelled_array):
+    if explicit_splits is not None:
+        split_iter = explicit_splits
+    else:
+        assert splitter is not None
+        split_iter = splitter.split(X_labelled, y_labelled_array)
+    for tr_idx, va_idx in split_iter:
         # Strict split isolation contract: validation rows are a subset of
         # the labelled rows; pseudo-labeled rows are appended to the
         # training side only and must never appear in any validation split.
@@ -570,6 +584,7 @@ def run(
     cv_strategy_type = (
         cv_strategy.get("type") if isinstance(cv_strategy, dict) else None
     )
+    explicit_splits = load_explicit_cv_splits(state)
 
     leaked_features = state.get("leaked_features") if isinstance(state, dict) else []
     if not isinstance(leaked_features, list):
@@ -767,6 +782,7 @@ def run(
                 cv_strategy=cv_strategy,
                 feature_cols=feature_cols,
                 config=config,
+                explicit_splits=explicit_splits,
                 sample_weight_pseudo=sample_weight_pseudo,
                 seed=int(seed_val),
             )

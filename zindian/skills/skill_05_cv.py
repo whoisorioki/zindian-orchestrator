@@ -28,6 +28,7 @@ from sklearn.cluster import KMeans
 from sklearn.model_selection import GroupKFold
 
 from zindian.config import ChallengeConfig, get_seed
+from zindian.cv import materialize_cv_splits
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
@@ -434,6 +435,9 @@ def run(strategy: str = "compare") -> dict:
         if len(coord_cols) == 2
         else None
     )
+    spatial_buffer_km = float(
+        ((config.get("spatial_signal") or {}).get("spatial_buffer_km") or 0.0)
+    )
 
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
@@ -468,6 +472,7 @@ def run(strategy: str = "compare") -> dict:
                     coords,
                     n_splits=int(decision.get("n_splits", N_SPLITS)),
                     task_type=task_type,
+                    spatial_buffer_km=spatial_buffer_km,
                 )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
                 selected_type = "GroupKFold"
@@ -519,6 +524,9 @@ def run(strategy: str = "compare") -> dict:
     print(f"\nSelected CV strategy: {selected_type}")
     print(f"Selection reason     : {selection_reason}")
 
+    buffered_splits = None
+    buffered_groups = None
+
     state_update = {
         "cv_strategy": {
             "type": selected_type,
@@ -533,6 +541,52 @@ def run(strategy: str = "compare") -> dict:
         "cv_group_col": decision.get("group_col"),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
+    materialized_n_splits = int(decision.get("n_splits", N_SPLITS))
+    if len(ft) < materialized_n_splits:
+        materialized_n_splits = max(2, len(ft))
+    if (
+        selected_type == "GroupKFold"
+        and decision.get("group_col") is None
+        and coords is not None
+    ):
+        buffered_splits, buffered_groups = build_spatial_splits(
+            X,
+            y,
+            coords,
+            n_splits=materialized_n_splits,
+            task_type=task_type,
+            spatial_buffer_km=spatial_buffer_km,
+        )
+        state_update["cv_split_indices"] = [
+            [
+                np.asarray(train_idx, dtype=np.int64).tolist(),
+                np.asarray(val_idx, dtype=np.int64).tolist(),
+            ]
+            for train_idx, val_idx in buffered_splits
+        ]
+        state_update["cv_split_groups"] = np.asarray(
+            buffered_groups, dtype=np.int64
+        ).tolist()
+    else:
+        state_update["cv_split_indices"] = materialize_cv_splits(
+            X,
+            y,
+            groups=(
+                np.asarray(ft[str(group_col)].values)
+                if group_col is not None and str(group_col) in ft.columns
+                else None
+            ),
+            cv_strategy={
+                **state_update["cv_strategy"],
+                "n_splits": materialized_n_splits,
+            },
+            random_seed=int(decision.get("random_state") or get_seed()),
+        )
+    state_update["cv_split_source"] = (
+        "skill_05_spatial"
+        if selected_type == "GroupKFold" and decision.get("group_col") is None
+        else "skill_05_configured"
+    )
     current_phase = state.get("dag_phase")
     if current_phase in (
         None,

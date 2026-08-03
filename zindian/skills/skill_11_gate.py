@@ -40,14 +40,13 @@ def _fold_score_variance(state: dict) -> float | None:
     ):
         return _to_float(metric_analysis.get("fold_score_variance"))
 
+    # Fallback: recompute from eda fold_scores when metric_analysis is absent.
+    # MUST apply NB correction, not raw sample variance — per S3 DoD.
     eda = state.get("eda", {}) or {}
     fold_scores = eda.get("fold_scores") if isinstance(eda, dict) else None
     if not fold_scores:
         return None
-    try:
-        return float(np.var(np.asarray(fold_scores, dtype=np.float64), ddof=1))
-    except Exception:
-        return None
+    return _nb_corrected_variance(fold_scores)
 
 
 def _effective_thresholds(
@@ -85,7 +84,7 @@ def _effective_thresholds(
         return variance_gate_threshold, gate_margin, None
 
     # SoT v2.2 Generalised Regression: explicit routing for each metric family
-    SCALE_INVARIANT_METRICS = frozenset({"rmsle"})
+    SCALE_INVARIANT_METRICS = frozenset({"rmsle", "mase"})
     SCALE_SENSITIVE_METRICS = frozenset(
         {
             "rmse",
@@ -186,6 +185,83 @@ def _baseline_score(state: dict, metric_key: str) -> tuple[float | None, str]:
     key = f"anchor_oof_{metric_key}"
     value = _to_float(state.get(key))
     return (value, key) if value is not None else (None, key)
+
+
+def _nb_corrected_variance(fold_scores: list[float]) -> float | None:
+    """Compute NB-corrected variance from fold scores when metric_analysis
+    is not available. Uses the equal-fold fallback NB factor (1/K + 1/(K-1))
+    since fold_sizes are not available in the fallback path.
+
+    This ensures the fallback branches of _target_fold_variance return
+    NB-corrected variance, not raw sample variance — per the S3 DoD
+    requirement that ALL variance paths return NB-corrected values.
+    """
+    try:
+        arr = np.asarray(fold_scores, dtype=np.float64)
+        K = len(arr)
+        if K <= 1:
+            return float(np.var(arr, ddof=1)) if K == 1 else 0.0
+        var_sample = float(np.var(arr, ddof=1))
+        # Equal-fold fallback NB factor: (1/K) + (1/(K-1))
+        # This matches _get_nb_factor(K, None) in skill_12_metric.py.
+        nb_factor = (1.0 / K) + (1.0 / (K - 1))
+        return float(var_sample * nb_factor)
+    except Exception:
+        return None
+
+
+def _target_fold_variance(state: dict, target_name: str) -> float | None:
+    metric_analysis = state.get("metric_analysis", {}) or {}
+    per_target = (
+        metric_analysis.get("per_target", {})
+        if isinstance(metric_analysis, dict)
+        else {}
+    )
+    target_analysis = (
+        per_target.get(target_name, {}) if isinstance(per_target, dict) else {}
+    )
+    if isinstance(target_analysis, dict):
+        # Primary path: read NB-corrected variance directly from metric_analysis
+        variance = _to_float(target_analysis.get("fold_score_variance"))
+        if variance is not None:
+            return variance
+        # Fallback 1 (L206): recompute from fold_scores if variance key missing.
+        # MUST apply NB correction, not raw sample variance — per S3 DoD.
+        fold_scores = target_analysis.get("fold_scores")
+        if fold_scores:
+            return _nb_corrected_variance(fold_scores)
+
+    multi_metrics = state.get("anchor_multi_target_metrics", {}) or {}
+    target_metrics = (
+        multi_metrics.get(target_name, {}) if isinstance(multi_metrics, dict) else {}
+    )
+    fold_scores = (
+        target_metrics.get("fold_scores") if isinstance(target_metrics, dict) else None
+    )
+    if fold_scores:
+        # Fallback 2 (L217): recompute from anchor_multi_target_metrics.
+        # MUST apply NB correction, not raw sample variance — per S3 DoD.
+        return _nb_corrected_variance(fold_scores)
+    return None
+
+
+def _effective_target_weight(
+    config: ChallengeConfig, state: dict, target_spec: dict
+) -> float:
+    target_config = config.get("target_config", {}) or {}
+    use_inverse_variance_weighting = bool(
+        config.get("use_inverse_variance_weighting", False)
+        or target_config.get("use_inverse_variance_weighting", False)
+    )
+    base_weight = float(target_spec.get("weight", 0.5) or 0.0)
+    if not use_inverse_variance_weighting:
+        return base_weight
+
+    target_name = str(target_spec.get("name", ""))
+    variance = _target_fold_variance(state, target_name)
+    if variance is None:
+        return base_weight
+    return base_weight / (variance + 1e-8)
 
 
 def _write_failure_diagnosis(store: SkillStateStore, diagnosis: dict) -> None:
@@ -355,6 +431,22 @@ def run() -> dict:
         }
 
     if not human_gate_approved:
+        # S6: Surface leakage_mi_advisory at Human Gate 2 if present.
+        # These features passed the primary Pearson/NMI blocking check but were
+        # flagged by the advisory MI regression subsample. Non-blocking — they do
+        # NOT prevent promotion if the operator approves. Shown here so the
+        # operator can make an informed decision before setting human_gate_2_*_approved.
+        mi_advisory = state.get("leakage_mi_advisory") or []
+        if mi_advisory:
+            print(
+                f"\n  [ADVISORY — Human Gate 2] MI regression check flagged "
+                f"{len(mi_advisory)} feature(s) that passed the primary Pearson "
+                f"block but showed elevated mutual information with the target:\n"
+                f"    {mi_advisory}\n"
+                f"  These are NON-BLOCKING. Review before approving: "
+                f"are these features genuinely predictive or latent target copies?\n"
+                f"  Set '{human_gate_key}' = true to proceed.\n"
+            )
         diagnosis["failure_reason"] = "human_gate_missing"
         _write_failure_diagnosis(store, diagnosis)
         return {
@@ -450,6 +542,30 @@ def _run_multi_target_gate(config, store, state) -> dict:
     }
 
     if not human_gate_approved:
+        # S6: Surface leakage_mi_advisory at Human Gate 2 — multi-target path.
+        # leakage_mi_advisory is a flattened union across all targets (set in
+        # skill_10's multi-target SHAP path after collecting per-target advisory
+        # lists from _compute_shap_audit). Per-target attribution is stored in
+        # shap_multi_target_results[target_name]["mi_advisory_feature_names"].
+        mi_advisory = state.get("leakage_mi_advisory") or []
+        if mi_advisory:
+            print(
+                f"\n  [ADVISORY \u2014 Human Gate 2] MI regression check flagged "
+                f"{len(mi_advisory)} feature(s) across all targets that passed "
+                f"the primary Pearson block but showed elevated mutual information:\n"
+                f"    Combined: {mi_advisory}"
+            )
+            # Surface per-target attribution when available for operator context
+            mt_shap = state.get("shap_multi_target_results") or {}
+            for t_name, t_result in mt_shap.items():
+                t_advisory = (t_result or {}).get("mi_advisory_feature_names", [])
+                if t_advisory:
+                    print(f"    \u2514\u2500 {t_name}: {t_advisory}")
+            print(
+                f"\n  These are NON-BLOCKING. Review before approving: "
+                f"are these features genuinely predictive or latent target copies?\n"
+                f"  Set '{human_gate_key}' = true to proceed.\n"
+            )
         diagnosis["failure_reason"] = "human_gate_missing"
         _write_failure_diagnosis(store, diagnosis)
         return {
@@ -464,7 +580,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
     for t in targets:
         target_name = t["name"]
         task_type = t["task_type"]
-        weight = t.get("weight", 0.5)
+        weight = _effective_target_weight(config, state, t)
 
         if task_type == "classification":
             f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
@@ -479,7 +595,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
             distance = rmse / eda_std if eda_std > 0 else rmse
         weighted_distances.append(distance * weight)
 
-    total_weight = sum(t.get("weight", 0.5) for t in targets)
+    total_weight = sum(_effective_target_weight(config, state, t) for t in targets)
     avg_score = (
         sum(weighted_distances) / total_weight
         if total_weight > 0

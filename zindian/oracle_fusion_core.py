@@ -684,8 +684,11 @@ def _run_single_target_fusion(
     for v in all_variants:
         print(f"  {v['name']:<36} {v['score']:>12.6f}")
 
+    # S4 - implemented 2026-08-03
+    # Activated v2.4 error-residual correlation pruning (S4) on 2026-08-03
+    # to evaluate error residuals instead of raw predictions.
     pruned_variants, dropped_pairs = _prune_collinear(
-        all_variants, task_type=task_type, direction=direction
+        all_variants, task_type=task_type, direction=direction, y_true=y_true
     )
     if not pruned_variants:
         return {

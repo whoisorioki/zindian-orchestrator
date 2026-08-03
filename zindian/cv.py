@@ -79,3 +79,51 @@ def get_cv_splits(
     if isinstance(splitter, GroupKFold) and groups is None:
         raise ValueError("Group CV requires `groups` to be provided")
     return splitter.split(X, y, groups) if groups is not None else splitter.split(X, y)
+
+
+def materialize_cv_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray | None = None,
+    cv_strategy: dict | None = None,
+    random_seed: int | None = None,
+) -> list[list[list[int]]]:
+    """Return concrete train/validation split arrays for the active strategy."""
+    return [
+        [
+            np.asarray(train_idx, dtype=np.int64).tolist(),
+            np.asarray(val_idx, dtype=np.int64).tolist(),
+        ]
+        for train_idx, val_idx in get_cv_splits(
+            X,
+            y,
+            groups=groups,
+            cv_strategy=cv_strategy,
+            random_seed=random_seed,
+        )
+    ]
+
+
+def load_explicit_cv_splits(
+    state: dict | None,
+) -> list[tuple[np.ndarray, np.ndarray]] | None:
+    """Load concrete CV splits persisted by Skill 05, if available."""
+    if not isinstance(state, dict):
+        return None
+
+    raw_splits = state.get("cv_split_indices")
+    if not isinstance(raw_splits, list) or not raw_splits:
+        return None
+
+    explicit_splits: list[tuple[np.ndarray, np.ndarray]] = []
+    for split in raw_splits:
+        if not isinstance(split, (list, tuple)) or len(split) != 2:
+            return None
+        train_idx, val_idx = split
+        explicit_splits.append(
+            (
+                np.asarray(train_idx, dtype=np.int64),
+                np.asarray(val_idx, dtype=np.int64),
+            )
+        )
+    return explicit_splits

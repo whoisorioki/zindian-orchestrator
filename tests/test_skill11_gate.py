@@ -156,11 +156,15 @@ def test_skill11_gate_blocks_without_human_approval_multi_target(tmp_path, monke
         "Target": {"oof_f1": 0.8},
         "total_goals": {"oof_rmse": 1.0},
     }
+    # Include mi_advisory_feature_names in shap_multi_target_results so the
+    # per-target attribution loop in the Gate 2 block is exercised.
     state["shap_multi_target_results"] = {
-        "Target": {"pruning_pass": True},
-        "total_goals": {"pruning_pass": True},
+        "Target": {"pruning_pass": True, "mi_advisory_feature_names": ["suspect_feat"]},
+        "total_goals": {"pruning_pass": True, "mi_advisory_feature_names": []},
     }
     state.pop("human_gate_2_variant-a_approved", None)
+    # Inject an advisory feature to exercise M2 multi-target surfacing
+    state["leakage_mi_advisory"] = ["suspect_feat"]
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
@@ -174,3 +178,33 @@ def test_skill11_gate_blocks_without_human_approval_multi_target(tmp_path, monke
     updated = json.loads(state_path.read_text(encoding="utf-8"))
     assert updated["dag_phase"] == "phase_3_gate_blocked"
     assert updated["phase_3_gate_diagnosis"]["failure_reason"] == "human_gate_missing"
+
+
+def test_skill11_gate_blocks_without_human_approval_multi_target_no_advisory(
+    tmp_path, monkeypatch
+):
+    """Regression guard: empty leakage_mi_advisory must not crash the multi-target path."""
+    comp = _make_phase3_comp(tmp_path)
+    config_path = comp / "challenge_config.json"
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    cfg["target_config"] = {
+        "targets": [{"name": "Target", "task_type": "classification", "weight": 1.0}]
+    }
+    config_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    state_path = comp / "SKILL_STATE.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["anchor_multi_target_metrics"] = {"Target": {"oof_f1": 0.8}}
+    state["shap_multi_target_results"] = {"Target": {"pruning_pass": True}}
+    state.pop("human_gate_2_variant-a_approved", None)
+    # Explicitly empty advisory list — must not surface advisory text
+    state["leakage_mi_advisory"] = []
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+
+    import zindian.skills.skill_11_gate as gate
+
+    result = gate.run()
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "human gate missing"

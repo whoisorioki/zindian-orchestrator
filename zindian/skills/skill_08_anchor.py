@@ -29,6 +29,7 @@ from zindian.state import (
     write_oof_record,
 )
 from zindian.ledger import Ledger
+from zindian.cv import load_explicit_cv_splits
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
 # -- Data -----------------------------------------------------------------------
@@ -106,6 +107,7 @@ def compute_oof_predictions(
     str,
     int,
     list[float],
+    list[tuple[int, int]] | None,
 ]:
     """
     Train LightGBM with KFold cross-validation on base features only.
@@ -181,15 +183,17 @@ def compute_oof_predictions(
     if group_col and group_col in train.columns:
         groups = np.asarray(train[group_col].values)
 
-    splitter = make_cv_splitter(
-        cv_strategy={"type": active_strategy, "n_splits": n_splits},
-        random_seed=random_seed,
-    )
     X_dummy = np.zeros((len(train), 1), dtype=np.float64)
-    if groups is not None:
-        split_iter = list(splitter.split(X_dummy, y, groups))
-    else:
-        split_iter = list(splitter.split(X_dummy, y))
+    split_iter = load_explicit_cv_splits(state)
+    if split_iter is None:
+        splitter = make_cv_splitter(
+            cv_strategy={"type": active_strategy, "n_splits": n_splits},
+            random_seed=random_seed,
+        )
+        if groups is not None:
+            split_iter = list(splitter.split(X_dummy, y, groups))
+        else:
+            split_iter = list(splitter.split(X_dummy, y))
 
     # Resolve regression metric for target transformation lifecycle (SoT v2.2)
     regression_metric = config.get("metric") if task_type == "regression" else None
@@ -243,6 +247,7 @@ def compute_oof_predictions(
                 result, "fold_scores", getattr(result, "fold_aucs", [])
             )
         ],
+        getattr(result, "fold_sizes", None),
     )
 
 
@@ -343,8 +348,7 @@ def run(
     print(f"  Training target: {training_target_col}")
     print(f"  Submission col : {submission_col}")
 
-    # -- Train --------------------------------------------------
-    print("\nTraining LightGBM anchor baseline…")
+    fold_sizes_list = None
     try:
         result = compute_oof_predictions(
             train,
@@ -357,19 +361,19 @@ def run(
             variant_name=variant_name,
         )
         if len(result) >= 11:
-            (
-                oof_preds,
-                test_preds,
-                oof_logloss,
-                oof_auc,
-                oof_f1,
-                best_t,
-                split_iter,
-                feature_cols,
-                cv_strategy_id,
-                feature_count,
-                fold_scores_list,
-            ) = result
+            oof_preds = result[0]
+            test_preds = result[1]
+            oof_logloss = result[2]
+            oof_auc = result[3]
+            oof_f1 = result[4]
+            best_t = result[5]
+            split_iter = result[6]
+            feature_cols = result[7]
+            cv_strategy_id = result[8]
+            feature_count = result[9]
+            fold_scores_list = result[10]
+            if len(result) >= 12:
+                fold_sizes_list = result[11]
         else:
             (
                 oof_preds,
@@ -514,7 +518,15 @@ def run(
         from zindian.state import compute_secondary_metrics
 
         y_true = np.asarray(train[training_target_col].values, dtype=np.float64)
-        secondary_metrics = compute_secondary_metrics(y_true, oof_preds)
+        eda_block = state.get("eda", {}) or {}
+        secondary_metrics = compute_secondary_metrics(
+            y_true,
+            oof_preds,
+            temporal_present=bool(
+                (config.get("temporal_signal") or {}).get("present", False)
+            ),
+            mae_naive_baseline=eda_block.get("MAE_naive_baseline"),
+        )
 
     # -- Log to DuckDB ledger -----------------------------------
     with Ledger() as ledger:
@@ -569,6 +581,7 @@ def run(
                 else config.get("cv_strategy", {}).get("type")
             ),
             "fold_scores": fold_scores_list,
+            "fold_sizes": fold_sizes_list,
         },
         secondary_metrics=secondary_metrics,
     )
@@ -738,6 +751,7 @@ def _run_multi_target(
 
         oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_t = result[:6]
         fold_scores = result[10] if len(result) > 10 else []
+        fold_sizes = result[11] if len(result) > 11 else None
         all_oof[target_name] = oof_preds
         all_test_preds[target_name] = test_preds
 
@@ -750,6 +764,7 @@ def _run_multi_target(
                 "oof_f1": oof_f1,
                 "threshold": best_t,
                 "fold_scores": fold_scores,
+                "fold_sizes": fold_sizes,
             }
         else:
             all_metrics[target_name] = {
@@ -758,6 +773,7 @@ def _run_multi_target(
                 "oof_f1": oof_f1,
                 "threshold": best_t,
                 "fold_scores": fold_scores,
+                "fold_sizes": fold_sizes,
             }
 
     # Save multi-target OOF
@@ -936,6 +952,7 @@ def _run_multi_target(
                 "n_splits": n_splits,
                 "threshold": all_metrics[target_name]["threshold"],
                 "fold_scores": all_metrics[target_name]["fold_scores"],
+                "fold_sizes": all_metrics[target_name].get("fold_sizes"),
                 "target_name": target_name,
             },
         )

@@ -62,7 +62,8 @@
         "present": false,
         "lat_col": null,
         "lon_col": null,
-        "group_col": null
+        "group_col": null,
+        "spatial_buffer_km": null
     },
     "missingness_level": null,
     "infrastructure": {
@@ -88,6 +89,7 @@
     "shap_leak_threshold": 3.0,
     "variance_gate_threshold": 0.01,
     "gate_margin": 0.001,
+    "use_inverse_variance_weighting": false,
     "cv_strategy": {
         "type": "",
         "n_splits": 5,

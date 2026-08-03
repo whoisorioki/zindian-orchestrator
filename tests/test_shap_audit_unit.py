@@ -45,6 +45,10 @@ def test_compute_shap_audit_monkeypatch(monkeypatch):
     assert "oof_probs" in result and len(result["oof_probs"]) == len(df)
     assert len(result["fold_scores"]) == 3
     assert "ranking" in result and not result["ranking"].empty
+    # M1 scope fix: mi_advisory_feature_names must always be present in return dict,
+    # defaulting to [] when no dominance flag fires (uniform SHAP => no dominant feature).
+    assert "mi_advisory_feature_names" in result
+    assert isinstance(result["mi_advisory_feature_names"], list)
 
 
 def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
@@ -138,3 +142,71 @@ def test_shap_fallback_on_single_feature(tmp_path, monkeypatch):
 
     updated_state = json.loads(state_path.read_text(encoding="utf-8"))
     assert updated_state.get("shap_audit_skipped_reason") == "single_feature"
+    # M1 scope fix regression guard: single-feature path must NOT raise NameError
+    # and must write leakage_mi_advisory as an empty list (not missing key).
+    assert (
+        "leakage_mi_advisory" not in updated_state
+        or updated_state["leakage_mi_advisory"] == []
+    )
+
+
+def test_systematic_mi_advisory_regression(monkeypatch):
+    # Create small synthetic regression dataset
+    n = 100
+    # feat1: independent noise
+    # feat2: high mutual info with target (target + tiny noise)
+    target_vals = np.linspace(0.0, 10.0, n)
+    df = pd.DataFrame(
+        {
+            "feat1": np.random.default_rng(42).normal(0.0, 1.0, n),
+            "feat2": target_vals + np.random.default_rng(42).normal(0.0, 0.01, n),
+            "Target": target_vals,
+        }
+    )
+    feature_cols = ["feat1", "feat2"]
+
+    class FakeModel:
+        def predict(self, X):
+            return np.zeros(X.shape[0], dtype=np.float64)
+
+    monkeypatch.setattr(
+        shap_mod, "_train_shap_fold_model", lambda *args, **kwargs: FakeModel()
+    )
+
+    class MockCfg:
+        def get(self, key, default=None):
+            if key == "enable_mi_regression_subsample":
+                return True
+            if key == "leak_nmi_threshold":
+                return 0.2
+            if key == "mi_max_samples":
+                return 100
+            return default
+
+    monkeypatch.setattr(
+        shap_mod.ChallengeConfig, "load", lambda *args, **kwargs: MockCfg()
+    )
+
+    # Fake SHAP explainer that returns constant values where feat1 gets higher SHAP than feat2
+    # This ensures feat2 is NOT SHAP-dominant.
+    class FakeExplainer:
+        def __init__(self, model):
+            pass
+
+        def shap_values(self, X, check_additivity=False):
+            # feat1 has shap importance 10.0, feat2 has 1.0
+            shaps = np.zeros((X.shape[0], X.shape[1]))
+            shaps[:, 0] = 10.0
+            shaps[:, 1] = 1.0
+            return shaps
+
+    monkeypatch.setattr(shap_mod.shap, "TreeExplainer", FakeExplainer)
+
+    result = shap_mod._compute_shap_audit(
+        df, feature_cols, "Target", n_splits=3, seed=42, task_type="regression"
+    )
+
+    # feat2 must be flagged by the systematic MI check because of its high mutual information with Target,
+    # even though feat1 was the top SHAP feature and was NOT flagged by Pearson (since it's independent).
+    assert "feat2" in result["mi_advisory_feature_names"]
+    assert "feat1" not in result["mi_advisory_feature_names"]
