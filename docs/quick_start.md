@@ -112,4 +112,4 @@ python -m zindian.cli ledger best
 # Show passed model variants
 python -m zindian.cli ledger passed
 ```
-**Last Updated:** July 2026
+**Last Updated:** August 2026

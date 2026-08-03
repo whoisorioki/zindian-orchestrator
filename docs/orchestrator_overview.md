@@ -15,7 +15,7 @@
 
 ---
 
-## Documentation Landscape
+# Documentation Landscape
 
 To understand and navigate the Zindian Orchestrator workspace, reference the following four documentation files:
 
@@ -136,7 +136,7 @@ The system **stops and waits for human approval** at 5 critical points:
 
 ---
 
-### 2. Reproducibility Contract 🔁
+### 2. Reproducibility Contract
 
 Everything must be repeatable. Run twice with same data = identical results.
 
@@ -151,7 +151,7 @@ Everything must be repeatable. Run twice with same data = identical results.
 
 ---
 
-### 3. No "Black Box" AutoML 🚫
+### 3. No "Black Box" AutoML
 
 The system doesn't use automated ML tools that make unexplainable decisions.
 

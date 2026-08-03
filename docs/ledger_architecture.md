@@ -1,7 +1,7 @@
 # Ledger Architecture
 
-**Version:** 1.0
-**Last Updated:** 2026-06-17
+**Version:** 2.4
+**Last Updated:** August 2026
 **Authority:** Binding for all experiment tracking
 
 ---
@@ -17,31 +17,43 @@ Define the DuckDB-based experiment tracking system, persistence guarantees, and 
 ### 2.1 Experiments Table
 
 ```sql
+CREATE SEQUENCE IF NOT EXISTS experiments_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS experiments (
-    exp_id INTEGER PRIMARY KEY,
-    branch_name TEXT NOT NULL,
-    oof_rmse REAL,
-    feature_count INTEGER,
-    calibration_method TEXT,
-    gate_result TEXT,
-    gate_reason TEXT,
-    dag_phase TEXT,
-    notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
+    branch_name         VARCHAR NOT NULL,
+    oof_score           FLOAT,
+    metric              VARCHAR,
+    oof_rmse            FLOAT,
+    feature_count       INTEGER,
+    calibration_method  VARCHAR,
+    gate_result         VARCHAR,
+    gate_reason         VARCHAR,
+    md5_target_hash     VARCHAR,
+    dag_phase           VARCHAR,
+    notes               VARCHAR,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 ### 2.2 Submissions Table
 
 ```sql
+CREATE SEQUENCE IF NOT EXISTS submissions_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS submissions (
-    submission_id INTEGER PRIMARY KEY,
-    exp_id INTEGER,
-    submission_path TEXT NOT NULL,
-    lb_score REAL,
-    lb_rank INTEGER,
-    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (exp_id) REFERENCES experiments(exp_id)
+    submission_id       INTEGER PRIMARY KEY DEFAULT nextval('submissions_id_seq'),
+    experiment_id       INTEGER,
+    branch_name         VARCHAR NOT NULL,
+    submission_rank     INTEGER,
+    public_score        FLOAT,
+    private_score       FLOAT,
+    my_rank             INTEGER,
+    selected_for_final  BOOLEAN DEFAULT FALSE,
+    selection_rationale VARCHAR,
+    comment             VARCHAR,
+    submitted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
 );
 ```
 
@@ -55,9 +67,10 @@ CREATE TABLE IF NOT EXISTS submissions (
 from zindian.ledger import Ledger
 
 with Ledger() as ledger:
-    exp_id = ledger.log_experiment(
+    experiment_id = ledger.log_experiment(
         branch_name="variant-10",
-        oof_rmse=0.5523,
+        oof_score=0.5523,
+        metric="rmse",
         feature_count=28,
         gate_result="PASS"
     )

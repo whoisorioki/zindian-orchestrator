@@ -6,8 +6,8 @@ skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
 version-specific claim below. This document is aligned with
-SoT version v2.3.
-**Last updated:** June 2026
+SoT version v2.4.
+**Last updated:** August 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
 Truth table.
@@ -61,7 +61,7 @@ equal weight:
                 specific session, with the finding still believed
                 current
 [TARGET]      — describes intended/future architecture (e.g. a
-                v2.3 schema field) that may not exist in every
+                v2.4 schema field) that may not exist in every
                 competition's actual current state yet
 [UNVERIFIED]  — carried forward from an earlier draft of this
                 document without a fresh check; treat with caution
@@ -93,7 +93,7 @@ rediscover.
 | Shared competition-agnostic constants | `zindian/constants.py` | [CONFIRMED] |
 | Competition-specific spatial/temporal values | Read from `challenge_config.json` only — never from `constants.py` | [CONFIRMED — this is an architectural rule (A5), not a fact about current file contents; treat as a hard requirement regardless of what any file currently contains] |
 | Skill module count and dual-file slots (`skill_00`, `skill_13`) | See note below | [UNVERIFIED] |
-| Generic baseline state key: `anchor_oof_score` | See dedicated subsection below | [TARGET — NOT yet confirmed present in any specific competition's `SKILL_STATE.json`] |
+| Generic baseline state key: `anchor_oof_score` | See dedicated subsection below | [CONFIRMED] |
 | Legacy metric-specific keys (`anchor_oof_rmse`, `anchor_oof_f1`, `anchor_oof_auc`) | Currently the ACTUAL working gate key on at least one real competition (EY-frogs used `anchor_oof_f1` as its real, correct gating key after an earlier `anchor_oof_rmse` mix-up was resolved) | [CONFIRMED, on EY-frogs specifically] |
 
 ### On the skill module count claim
@@ -856,16 +856,24 @@ before it is resolved in code.
 
 ---
 
-## v2.3 Refactor — Completed Items
+## v2.3 & v2.4 Refactor — Completed Items
 
-**Phase 1 (Critical Fixes):**
+**v2.4 Statistical Migration (August 2026):**
+- ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance $\text{Var}_{\text{NB}}$ and 1-SE promotion margins in `skill_11`/`skill_12`.
+- ✅ **S2 (MASE Metric):** Shipped naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
+- ✅ **S3 (Inverse-Variance Weighting):** Shipped dynamic target weighting $w_k^{\text{eff}} = w_k / (\sigma_{k,NB}^2 + \epsilon)$ for multi-target composite scores.
+- ✅ **S4 (Residual Diversity):** Shipped Kuncheva residual vector correlation in `skill_13` model fusion collinearity pruning.
+- ✅ **S6 (Two-Tier Leak Audit):** Shipped Pearson primary/blocking + advisory subsampled MI audit in `skill_10`.
+- ✅ **S7 (Spatial Buffering):** Wired `spatial_buffer_km` parameter for spatial splits in `skill_05`.
+- ✅ **S8 (Hybrid Adaptive Pseudo-labeling):** Quantile-based pseudo-label retraining and post-retraining recombination locked.
+- ✅ **S10 (Path 2 Fingerprinting):** Shipped 3-tier tolerance verification in `skill_22`.
+
+**v2.3 Core Refactor (June 2026):**
 - ✅ **DRIFT-1** — Hardcoded targets in skill_07 (RESOLVED)
 - ✅ **GAP-2** — Composite fold variance for multi-target (RESOLVED)
 - ✅ **R5** — Carbon tracking infrastructure (IMPLEMENTED)
-
-**Phase 2 (High-Priority):**
 - ✅ **DRIFT-2** — FeatureExtractor ABC (RESOLVED)
-- ✅ **GAP-1** — skill_21 retraining loop (VERIFIED — already implemented)
+- ✅ **GAP-1** — skill_21 retraining loop (VERIFIED)
 
 **New Test Coverage:**
 - test_a5_compliance.py — Zero hardcoded competition strings

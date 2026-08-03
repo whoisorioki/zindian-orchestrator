@@ -4,7 +4,7 @@ An **autonomous multi-phase ML competition framework** for tabular supervised le
 
 ## What Is This
 
-Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. It enforces reproducible execution through atomic state writes, fixed random seeds, per-fold CV oversight, and five mandatory human approval gates. The system is designed around the **Source of Truth** (`docs/source_of_truth.md` v2.3), which is the single architectural authority. When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
+Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. It enforces reproducible execution through atomic state writes, fixed random seeds, per-fold CV oversight, and five mandatory human approval gates. The system is designed around the **Source of Truth** (`docs/source_of_truth.md` v2.4 Target Spec), which is the single architectural authority. When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
 
 **System properties:**
 - **Phase-gated execution** — 4 phases with 5 human gates; state transitions recorded atomically in `SKILL_STATE.json`
@@ -157,7 +157,7 @@ python scripts/test_phase_1.py
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | **[docs/orchestrator_overview.md](docs/orchestrator_overview.md)** | **Complete system guide (non-technical + technical)** | **Everyone** |
-| [docs/source_of_truth.md](docs/source_of_truth.md) | Official architectural spec (v2.3) | Developers, reviewers |
+| [docs/source_of_truth.md](docs/source_of_truth.md) | Authoritative architectural spec (v2.4 Target Spec) | Developers, reviewers |
 | [docs/quick_start.md](docs/quick_start.md) | Guide for setting up local runs | Developers, users |
 | [docs/cli_integration_guide.md](docs/cli_integration_guide.md) | CLI command syntax reference | Operators, users |
 | [docs/ledger_architecture.md](docs/ledger_architecture.md) | Experiment ledger schema specifications | DAAD Reviewers, DBAs |
@@ -193,28 +193,40 @@ python scripts/test_phase_1.py
 
 ---
 
-## Key Features (v2.3)
+## Key Features (v2.4)
+
+### Statistical Migration Specs (S1-S10)
+- **S1 & S9:** Nadeau-Bengio corrected fold variance ($\text{Var}_{\text{NB}}$) and 1-SE promotion margins in variant gating.
+- **S2:** MASE metric diagnostics for temporal regression tasks.
+- **S3:** Dynamic inverse-variance target weighting for multi-target composite scores.
+- **S4:** Kuncheva residual vector correlation for collinearity pruning in model fusion.
+- **S6:** Two-tier leakage audits (Pearson primary/blocking + advisory subsampled MI audit).
+- **S7:** Spatial buffering CV splits.
+- **S8:** Hybrid adaptive pseudo-labeling.
+- **S10:** 3-tier band verification for derived artifact fingerprints.
 
 ### Human Gates (5 Checkpoints)
 The orchestrator pauses execution and requests human Operator validation at:
 1. **Gate 1:** After anchor model training completes.
 2. **Gate 2:** Before promoting feature variants to state (evaluated per-branch).
 3. **Gate 3:** Before triggering model fusion (blending).
-4. **Gate 5:** Before close, to select the final 2 submissions.
+4. **Gate 4:** Before starting test prediction inference.
+5. **Gate 5:** Before close, to select the final 2 submissions.
 
-### Reproducibility Contract (R1-R5)
+### Reproducibility Contract (R1-R6)
 - **R1:** Config-pinned reproducibility seed.
 - **R2:** End-to-end runs yield bit-identical predictions.
 - **R3:** Pinning of runtime dependencies in `requirements.txt`.
 - **R4:** Submissions are fully regenerable from the competition folder config + state.
 - **R5:** Carbon telemetry (real-time CPU/GPU memory & CO2 estimates computed per-skill).
+- **R6:** 3-tier tolerance verification for derived artifacts.
 
 ---
 
 ## Development Status
 
-### v2.3 Complete
-- All skill modules implemented and verified.
+### v2.4 Complete
+- All statistical migration target specifications (S1-S10) implemented.
 - 5 human gates operational.
 - Carbon tracking (R5) telemetry instrumented.
 - Multi-target composite scoring pipeline functional.
@@ -285,12 +297,13 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| **2.3** | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
+| **2.4** | August 2026 | Nadeau-Bengio corrected variance, 1-SE promotion margins, Kuncheva residual diversity, MI audits, spatial buffer CV, adaptive pseudo-labeling, 3-tier FP tolerance |
+| 2.3 | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
 | 2.2.1 | May 2026 | Multi-target pipeline, regression support |
 | 2.2 | April 2026 | Core skill modules, 5 human gates |
 | 2.0 | March 2026 | Phase 0-5 complete |
 
 ---
 
-**Last Updated:** June 2026
-**Status:** v2.3 Production Ready
+**Last Updated:** August 2026
+**Status:** v2.4 Production Ready
