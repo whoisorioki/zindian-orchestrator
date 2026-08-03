@@ -34,7 +34,7 @@ repos:
         name: check-requirements
 
         entry: |
-          python -c "
+          python3 -c "
           import os, sys
           if os.path.exists('requirements.in') and os.path.exists('requirements.txt'):
               if os.path.getmtime('requirements.txt') < os.path.getmtime('requirements.in'):

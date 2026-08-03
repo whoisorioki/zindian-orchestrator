@@ -210,3 +210,36 @@ def test_systematic_mi_advisory_regression(monkeypatch):
     # even though feat1 was the top SHAP feature and was NOT flagged by Pearson (since it's independent).
     assert "feat2" in result["mi_advisory_feature_names"]
     assert "feat1" not in result["mi_advisory_feature_names"]
+
+
+def test_train_shap_fold_model_eval_set(monkeypatch):
+    captured_kwargs = []
+
+    class MockLGBM:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fit(self, X, y, **kwargs):
+            captured_kwargs.append(kwargs)
+
+    monkeypatch.setattr(shap_mod.lgb, "LGBMClassifier", MockLGBM)
+    monkeypatch.setattr(shap_mod.lgb, "LGBMRegressor", MockLGBM)
+
+    train_x = np.zeros((5, 2))
+    train_y = np.zeros(5)
+    val_x = np.zeros((2, 2))
+    val_y = np.zeros(2)
+
+    shap_mod._train_shap_fold_model(
+        train_x, train_y, val_x, val_y, seed=42, task_type="classification"
+    )
+    shap_mod._train_shap_fold_model(
+        train_x, train_y, val_x, val_y, seed=42, task_type="regression"
+    )
+
+    assert len(captured_kwargs) == 2
+    for kwargs in captured_kwargs:
+        assert "eval_set" in kwargs
+        assert "eval_X" not in kwargs
+        assert "eval_y" not in kwargs
+

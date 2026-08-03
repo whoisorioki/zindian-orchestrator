@@ -2,6 +2,7 @@
 """SOT Alignment Check: Automates verification of docs/source_of_truth.md statuses against codebase reality."""
 
 import re
+from typing import Any
 import sys
 import argparse
 from pathlib import Path
@@ -16,7 +17,7 @@ ZINDIAN_DIR = WORKSPACE_DIR / "zindian"
 # If must_exist is True, the pattern must exist in the file.
 # If must_exist is False, the pattern must NOT exist in the file.
 # Special check: if the file itself does not exist, the check fails (unless must_exist is False and file is missing).
-SOT_CHECKS = {
+SOT_CHECKS: dict[str, dict[str, Any]] = {
     "1": {
         "name": "S1/S9 — Bessel's Correction & Absolute Promotion Margins",
         "checks": [

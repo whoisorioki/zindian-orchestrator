@@ -860,16 +860,14 @@ def _fit_model(
         model.fit(
             X[tr_idx],
             y[tr_idx],
-            eval_X=X[val_idx],
-            eval_y=y[val_idx],
+            eval_set=[(X[val_idx], y[val_idx])],
             callbacks=[lgb.early_stopping(early_stopping), lgb.log_evaluation(-1)],
         )
     elif family == "xgb":
         model.fit(
             X[tr_idx],
             y[tr_idx],
-            eval_X=X[val_idx],
-            eval_y=y[val_idx],
+            eval_set=[(X[val_idx], y[val_idx])],
             verbose=False,
         )
     else:

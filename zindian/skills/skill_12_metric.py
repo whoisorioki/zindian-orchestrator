@@ -23,7 +23,9 @@ from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 
-def _get_nb_factor(K: int, fold_sizes: Sequence[tuple[int, int]] | None = None) -> float:
+def _get_nb_factor(
+    K: int, fold_sizes: Sequence[tuple[int, int]] | None = None
+) -> float:
     if K <= 1:
         return 0.0
     if fold_sizes and len(fold_sizes) == K:
