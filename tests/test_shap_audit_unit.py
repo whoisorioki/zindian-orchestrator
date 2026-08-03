@@ -242,4 +242,3 @@ def test_train_shap_fold_model_eval_set(monkeypatch):
         assert "eval_set" in kwargs
         assert "eval_X" not in kwargs
         assert "eval_y" not in kwargs
-
