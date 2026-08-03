@@ -1,7 +1,7 @@
 # Zindian Orchestrator - Complete Overview
 
-**Version:** 2.3
-**Last Updated:** June 2026
+**Version:** 2.4
+**Last Updated:** August 2026
 **Status:** Production Ready
 
 ---
@@ -83,10 +83,10 @@ Every decision is evaluated through three simultaneous perspectives:
 **Output:** Approved models that passed all safety checks
 
 **Key Activities:**
-- SHAP analysis (detect target leakage)
-- Calibration (for classification)
-- Fold variance analysis
-- Gate evaluation (5 conditions must pass)
+- Two-Tier SHAP & Leakage Audit (Pearson blocking + advisory MI)
+- Probability Calibration (for classification)
+- Nadeau-Bengio Fold Variance Analysis (ddof=1)
+- Gate evaluation (5 conditions must pass, incorporating 1-SE promotion margin)
 - **HUMAN GATE 2** - Approve each variant
 - **HUMAN GATE 3** - Approve fusion strategy
 
@@ -198,10 +198,11 @@ Handles competitions predicting multiple targets simultaneously.
 **Example:** Predict both temperature AND humidity from weather data.
 
 **How it works:**
-- Trains separate model per target
-- Computes weighted composite score
-- Normalizes by target standard deviation
-- Single gate decision for all targets
+- Trains separate models per target.
+- Computes a weighted composite distance score where lower is better.
+- Supports **Inverse-Variance Effective Weighting** ($w_k^{\text{eff}} = w_k / (\sigma_{k,\text{NB}}^2 + \epsilon)$) using Nadeau-Bengio corrected variances.
+- Normalizes distance scores by target standard deviation (except RMSLE which is dimensionless).
+- Evaluates a single composite gate decision for all targets.
 
 ---
 
@@ -377,15 +378,15 @@ ELSE:
 **Skills:** 10 → 09 → 12 → 11 → 21 → 13
 
 **Phase 3A (Audit):**
-- SHAP leak detection (per-fold OOF only)
-- Calibration (classification only)
-- Fold variance analysis (ddof=1)
+- Two-tier leakage audit (Pearson primary/blocking + advisory MI)
+- Probability calibration (classification only)
+- Fold variance analysis (Nadeau-Bengio corrected, ddof=1)
 
 **Phase 3B (Promotion):**
-- Gate evaluation (5 conditions)
+- Gate evaluation (5 conditions, including 1-SE promotion margin)
 - **HUMAN GATE 2** (per variant)
-- Pseudo-labeling (optional, classification only)
-- Oracle fusion (diversity check)
+- Hybrid adaptive pseudo-labeling (optional, classification only, class-wise quantile thresholding)
+- Oracle fusion (residual diversity collinearity pruning via Kuncheva correlation)
 - **HUMAN GATE 3** (before fusion)
 
 ---
@@ -448,10 +449,10 @@ if task_type == "regression":
 else:
     effective_threshold = variance_gate_threshold  # Bounded metrics
 
-fold_score_variance < effective_threshold
+fold_score_variance_nb < effective_threshold
 ```
 
-### Condition 3: OOF Improvement Over Baseline
+### Condition 3: OOF Improvement Over Baseline (with 1-SE margin)
 ```python
 # Baseline selection (precedence order)
 if pseudo_label_result.retraining_required:
@@ -469,6 +470,9 @@ if task_type == "regression":
         effective_margin = gate_margin * target_std
 else:
     effective_margin = gate_margin
+
+# Apply 1-SE promotion margin (Condition 3 / S9)
+effective_margin = max(effective_margin, 1.0 * se_oof)
 
 # Directional check
 if metric_direction == "maximize":
@@ -489,9 +493,13 @@ SKILL_STATE[f"human_gate_2_{branch}_approved"] == True
 
 ---
 
-## SHAP Leak Detection (skill_10)
+## Two-Tier Leakage Audit & SHAP (skill_10)
 
-**Contract:**
+The system performs a two-tier data leakage audit to prevent target contamination before variants are promoted:
+1. **Tier 1 (Pearson blocking):** Computes linear Pearson correlation between all features and the target. Features exceeding the threshold are blocked.
+2. **Tier 2 (Advisory MI):** Computes a subsampled Mutual Information regression score as a non-blocking advisory signal surfaced at Gate 2.
+
+**SHAP Contract:**
 ```python
 for fold in cv_folds:
     # Train on training fold
@@ -873,6 +881,6 @@ if "pseudo_label_result" in state_store.state:
 
 ---
 
-**Document Version:** 1.1
-**Orchestrator Version:** 2.3
-**Last Updated:** July 2026
+**Document Version:** 1.2
+**Orchestrator Version:** 2.4
+**Last Updated:** August 2026

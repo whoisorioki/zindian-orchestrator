@@ -78,3 +78,28 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
     *   During local testing, network isolation is enforced by the CI/CD pipeline environment variables (`ZINDIAN_DISABLE_NETWORK=1`).
     *   Ensure the mock API wrappers (in `zindi_stub_backup_DISABLED/`) are reviewed if testing isolated stub logic.
     *   Verify credentials exist in your `.env` file before executing live sync or submit operations.
+
+---
+
+## 6. CI Pipeline and Dependency Issues
+*   **Problem 1: `pip-compile` / `pip-tools` TypeError Mismatches**
+    *   **Symptoms:** CI steps verifying the lockfile fail during compilation with:
+        `TypeError: RequirementCommand.make_requirement_preparer() missing 1 required keyword-only argument: 'allow_editables'`
+    *   **Cause:** Compatibility drift between the runner upgrading `pip` globally to the latest version and the installed `pip-tools`.
+    *   **Resolution:** Pin `pip` and `pip-tools` to a known compatible pair in the workflow step:
+        ```yaml
+        python -m pip install --upgrade "pip<25.2"
+        pip install "pip-tools==7.5.3"
+        ```
+
+*   **Problem 2: Pyright `reportMissingImports` Errors in CI**
+    *   **Symptoms:** Pre-commit checks fail on Pyright with hundreds of errors reporting missing imports for runtime dependencies (e.g., `pandas`, `lightgbm`, `shap`).
+    *   **Cause:** `pyrightconfig.json` is configured to look inside a local `.venv` folder, which does not exist or isn't populated on a fresh checkout in the CI environment.
+    *   **Resolution:** Create and populate the virtualenv in the runner before running `pre-commit`:
+        ```yaml
+        python -m venv .venv
+        .venv/bin/python -m pip install --upgrade "pip<25.2"
+        .venv/bin/pip install -r requirements.txt
+        .venv/bin/pip install pre-commit
+        .venv/bin/pre-commit run --all-files
+        ```
