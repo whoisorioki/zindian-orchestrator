@@ -422,7 +422,10 @@ def prompt_human_gate(
                 sys.exit(0)
 
             if choice == "A":
-                store.update(human_gate_1_approved=True)
+                store.update(
+                    human_gate_1_approved=True,
+                    human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
+                )
                 print("✓ Gate 1 approved.")
                 return True
             elif choice == "B":
@@ -497,6 +500,7 @@ def prompt_human_gate(
                             anchor_oof_score_challenged=challenged_oof,
                             anchor_challenge=challenge_meta,
                             human_gate_1_approved=True,
+                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
                         )
                         print("✓ Challenged anchor accepted. Gate 1 approved.")
                         return True
@@ -507,6 +511,7 @@ def prompt_human_gate(
                             anchor_oof_score=original_oof,
                             anchor_challenge=challenge_meta,
                             human_gate_1_approved=True,
+                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
                         )
                         print("✓ Original anchor retained. Gate 1 approved.")
                         return True
@@ -559,6 +564,7 @@ def prompt_human_gate(
                             anchor_oof_score=override_oof,
                             cv_strategy_override=override_meta,
                             human_gate_1_approved=True,
+                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
                         )
                         print(
                             f"✓ CV strategy override ({override_strategy}) accepted. Gate 1 approved."
@@ -573,6 +579,7 @@ def prompt_human_gate(
                             anchor_oof_score=original_oof,
                             cv_strategy_override=override_meta,
                             human_gate_1_approved=True,
+                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
                         )
                         print("✓ Original CV strategy retained. Gate 1 approved.")
                         return True
@@ -593,7 +600,13 @@ def prompt_human_gate(
                 print("\nAborted by user.")
                 sys.exit(0)
             if choice == "YES":
-                store.update(**{f"human_gate_2_{variant_name}_approved": True})
+                now_iso = datetime.now(timezone.utc).isoformat()
+                store.update(
+                    **{
+                        f"human_gate_2_{variant_name}_approved": True,
+                        f"human_gate_2_{variant_name}_approved_at": now_iso,
+                    }
+                )
                 print(f"✓ Variant '{variant_name}' approved.")
                 return True
             elif choice == "NO":
@@ -612,7 +625,10 @@ def prompt_human_gate(
                 print("\nAborted by user.")
                 sys.exit(0)
             if choice == "YES":
-                store.update(human_gate_3_approved=True)
+                store.update(
+                    human_gate_3_approved=True,
+                    human_gate_3_approved_at=datetime.now(timezone.utc).isoformat(),
+                )
                 print("✓ Gate 3 approved.")
                 return True
             elif choice == "NO":
@@ -633,7 +649,10 @@ def prompt_human_gate(
                 print("\nAborted by user.")
                 sys.exit(0)
             if choice == "YES":
-                store.update(human_gate_4_approved=True)
+                store.update(
+                    human_gate_4_approved=True,
+                    human_gate_4_approved_at=datetime.now(timezone.utc).isoformat(),
+                )
                 print("✓ Gate 4 approved.")
                 return True
             elif choice == "NO":

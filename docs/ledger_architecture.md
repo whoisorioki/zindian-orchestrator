@@ -131,7 +131,9 @@ with Ledger() as ledger:
 
 ### 5.2 Write Operations
 
-Serialize via an atomic directory lock (cross-platform, zero dependencies) or external packages like portalocker:
+In-process write serialization across threads (e.g. main execution thread and deep-research daemon threads) is guaranteed via a class-level `threading.Lock` (`Ledger._write_lock`).
+
+For multi-process access across distinct CLI invocations, serialize via an atomic directory lock (cross-platform, zero dependencies) or external packages like portalocker:
 ```python
 lock_dir = Path("reports/experiments.db.lockdir")
 try:

@@ -382,14 +382,32 @@ def run():
     # Example: VH_01, VV_03, blue_12 → bands: VH, VV, blue
     detected_bands: list[str] = []
     _seen: set[str] = set()
+    format_prefix_month: set[str] = set()
+    format_month_prefix: set[str] = set()
+
     for c in feature_cols:
         if "_" in c:
             parts = c.split("_")
-            candidate = parts[0]
-            month = parts[-1]
-            if month.isdigit() and candidate not in _seen:
-                detected_bands.append(candidate)
-                _seen.add(candidate)
+            if len(parts) >= 2:
+                if parts[-1].isdigit() and (1 <= int(parts[-1]) <= 12 or len(parts[-1]) == 2):
+                    candidate = parts[0]
+                    format_prefix_month.add(candidate)
+                    if candidate not in _seen:
+                        detected_bands.append(candidate)
+                        _seen.add(candidate)
+                elif parts[0].isdigit() and (1 <= int(parts[0]) <= 12 or len(parts[0]) == 2):
+                    candidate = parts[-1]
+                    format_month_prefix.add(candidate)
+
+    ambiguous_warnings: list[str] = []
+    if format_prefix_month and format_month_prefix:
+        all_candidates = sorted(list(format_prefix_month.union(format_month_prefix)))
+        msg = (
+            f"Ambiguous band detection: multiple candidate groupings found {all_candidates}. "
+            f"Defaulting to prefix-month pattern {detected_bands}. "
+            f"Specify explicit config to override."
+        )
+        ambiguous_warnings.append(msg)
 
     # ── 2a: Per-band summary statistics ──────────────────────────────
     band_summary_stats: dict[str, dict[str, float]] = {}
@@ -703,6 +721,7 @@ def run():
         "eda_completed_at": datetime.now(timezone.utc).isoformat(),
         "dead_features": zero_variance,
         "high_corr_pairs_count": len(high_corr_pairs),
+        "detected_bands": detected_bands,
         **target_std_dict,  # Per-target std for regression
         "mnar_columns": mnar_cols,
         "mcar_columns": mcar_cols,
@@ -713,8 +732,14 @@ def run():
         "MAE_naive_baseline": mae_naive,
     }
 
+    existing_warnings = list(state.get("metadata_warnings") or [])
+    for w in ambiguous_warnings:
+        if w not in existing_warnings:
+            existing_warnings.append(w)
+
     updates: dict[str, Any] = {
         "eda": eda_updates,
+        "metadata_warnings": existing_warnings,
     }
     if allowed:
         updates["dag_phase"] = "phase_1_eda_complete"

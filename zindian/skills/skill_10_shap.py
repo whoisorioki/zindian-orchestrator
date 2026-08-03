@@ -21,15 +21,16 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any, cast
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from zindian._safe_import import safe_import
+
+lgb = safe_import("lightgbm")
 
 try:
-    import shap
-
+    shap = safe_import("shap")
     SHAP_AVAILABLE = True
-except ImportError:
+except Exception:
     SHAP_AVAILABLE = False
     shap = None
 from sklearn.metrics import f1_score, roc_auc_score
@@ -579,7 +580,8 @@ def run(
         raise FileNotFoundError("Competition directory could not be resolved")
 
     config = ChallengeConfig.load()
-    state = SkillStateStore(paths.state_path).read()
+    store = SkillStateStore(paths.state_path)
+    state = store.read()
 
     # Multi-target detection
     target_config = config.get("target_config")
@@ -598,7 +600,21 @@ def run(
         )
     feature_cols = _feature_columns(frame, target)
 
-    print(f"Competition      : {config.slug}")
+    # Exclude inference-fit PCA columns from the SHAP audit frame.
+    # PCA components in the persisted CSV are fit on the full train set
+    # (mode="inference"), not fold-restricted. Including them in the SHAP
+    # audit inflates importance, corrupts pruning_pass, and leaks held-out
+    # row statistics into the SHAP OOF score — without affecting the primary
+    # OOF scores (which re-fit PCA per fold in train_lightgbm_cv).
+    pca_cols_excluded = [c for c in feature_cols if c.startswith("pca_")]
+    if pca_cols_excluded:
+        feature_cols = [c for c in feature_cols if not c.startswith("pca_")]
+        store.update(shap_pca_cols_excluded=pca_cols_excluded)
+        print(
+            f"  [INFO] Excluding {len(pca_cols_excluded)} PCA column(s) from SHAP "
+            f"audit (inference-fit — fold-restricted recomputation not available "
+            f"in the audit path). Columns remain in the trained model feature set."
+        )
     print(f"Target           : {target}")
     print(f"Features         : {len(feature_cols)}")
     print(f"DAG phase        : {state.get('dag_phase')}")
@@ -914,6 +930,20 @@ def _run_multi_target_shap(
             continue
 
         feature_cols = _feature_columns(frame_with_target, target_name)
+
+        # Exclude inference-fit PCA columns — same reason as single-target path above.
+        pca_cols_mt = [c for c in feature_cols if c.startswith("pca_")]
+        if pca_cols_mt:
+            feature_cols = [c for c in feature_cols if not c.startswith("pca_")]
+            existing_excluded = state.get("shap_pca_cols_excluded") or []
+            merged = list(dict.fromkeys(existing_excluded + pca_cols_mt))
+            state_store = SkillStateStore(paths.state_path)
+            state_store.update(shap_pca_cols_excluded=merged)
+            print(
+                f"  [INFO] Excluding {len(pca_cols_mt)} PCA column(s) from "
+                f"SHAP audit for target '{target_name}'."
+            )
+
         full_audit = _compute_shap_audit(
             frame_with_target,
             feature_cols,

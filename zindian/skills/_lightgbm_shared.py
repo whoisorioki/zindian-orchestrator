@@ -13,21 +13,10 @@ from typing import (
 
 import numpy as np
 import pandas as pd
-import os
-import sys
 
-try:
-    orig_path = sys.path.copy()
-    sys.path = [
-        p
-        for p in sys.path
-        if p not in ("", ".", os.getcwd(), os.path.abspath(os.getcwd()))
-    ]
-    if "lightgbm" in sys.modules:
-        del sys.modules["lightgbm"]
-    import lightgbm as lgb
-finally:
-    sys.path = orig_path
+from zindian._safe_import import safe_import
+
+lgb = safe_import("lightgbm")
 
 from sklearn.metrics import f1_score, roc_auc_score, root_mean_squared_error
 from sklearn.preprocessing import StandardScaler

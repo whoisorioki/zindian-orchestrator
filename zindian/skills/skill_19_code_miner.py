@@ -34,14 +34,14 @@ from zindian.config import ChallengeConfig
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
+from zindian._safe_import import safe_import
+
 genai: Any = None
 GEMINI_AVAILABLE = False
 try:
-    import google.genai as _genai_module
-
-    genai = _genai_module
+    genai = safe_import("google.genai")
     GEMINI_AVAILABLE = True
-except ImportError:
+except Exception:
     pass
 
 MODEL_NAME = "gemini-2.5-flash"

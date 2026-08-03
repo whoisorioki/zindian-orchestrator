@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -74,6 +75,12 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 class SkillStateStore:
     path: Path
 
+    # Class-level lock: serializes all read-modify-write operations across
+    # ALL instances in the same process. Required because run_deep_research
+    # spawns a daemon thread that creates its own SkillStateStore instance;
+    # an instance-level lock would not protect against that cross-instance race.
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
+
     def read(self) -> Dict[str, Any]:
         if not self.path.exists():
             state = skill_state_skeleton()
@@ -110,29 +117,32 @@ class SkillStateStore:
         return state
 
     def update(self, **patch: Any) -> Dict[str, Any]:
-        state = self.read()
-        state.update(patch)
-        return self.write(state)
+        with self._lock:
+            state = self.read()
+            state.update(patch)
+            return self.write(state)
 
     def increment(self, key: str, delta: int = 1) -> int:
         """Increment a numeric field and return new value."""
-        state = self.read()
-        if key not in state:
-            state[key] = 0
-        state[key] = state[key] + delta
-        self.write(state)
-        return state[key]
+        with self._lock:
+            state = self.read()
+            if key not in state:
+                state[key] = 0
+            state[key] = state[key] + delta
+            self.write(state)
+            return state[key]
 
     def append_selected(self, submission_id: int) -> None:
         """Append submission to selected_submissions list."""
-        state = self.read()
-        sel = state.get("selected_submissions")
-        if not isinstance(sel, list):
-            sel = []
-        if submission_id not in sel:
-            sel.append(submission_id)
-        state["selected_submissions"] = sel
-        self.write(state)
+        with self._lock:
+            state = self.read()
+            sel = state.get("selected_submissions")
+            if not isinstance(sel, list):
+                sel = []
+            if submission_id not in sel:
+                sel.append(submission_id)
+            state["selected_submissions"] = sel
+            self.write(state)
 
 
 def resolve_active_cv_strategy_id(state_obj: dict, config_obj: dict) -> str:

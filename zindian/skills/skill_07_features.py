@@ -32,7 +32,8 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 import importlib
-import lightgbm as lgb
+from zindian._safe_import import safe_import
+lgb = safe_import("lightgbm")
 from zindian.cv import make_cv_splitter
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder

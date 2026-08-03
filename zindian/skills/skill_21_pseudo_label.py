@@ -32,7 +32,9 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Iterable, cast
 
-import lightgbm as lgb
+from zindian._safe_import import safe_import
+
+lgb = safe_import("lightgbm")
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier

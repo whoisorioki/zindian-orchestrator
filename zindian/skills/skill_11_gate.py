@@ -315,23 +315,10 @@ def run() -> dict:
     shap_pass = bool(state.get("shap_completed_at")) and (
         bool(state.get("pruning_pass", False))
         or state.get("shap_audit_skipped_reason") == "single_feature"
+        or state.get("shap_audit_skipped_reason") == "pca_columns_excluded"
     )
     variants_passed = int(state.get("variants_passed") or 0)
     branch_name = str(best_variant or "unknown")
-
-    if human_gate_approved:
-        print(
-            f"  [Human Gate Override] Automated gate checks bypassed because human gate '{human_gate_key}' is APPROVED. Promoting branch."
-        )
-        variants_passed = max(variants_passed, 1)
-        shap_pass = True
-        # Set dummy values to satisfy early gate failures
-        if fold_score_variance is None:
-            fold_score_variance = 0.0
-        effective_variance_threshold = fold_score_variance + 1.0
-        if baseline_score is None:
-            baseline_score = best_score
-        improved = True
 
     task_type = str(config.get("task_type", "classification"))
     direction = str(config.get("metric_direction", "maximize"))
@@ -405,9 +392,7 @@ def run() -> dict:
             "diagnosis": diagnosis,
         }
 
-    if human_gate_approved:
-        improved = True
-    elif direction == "maximize":
+    if direction == "maximize":
         improved = (best_score - baseline_score) > effective_gate_margin
     else:
         improved = (baseline_score - best_score) > effective_gate_margin
@@ -523,12 +508,6 @@ def _run_multi_target_gate(config, store, state) -> dict:
     all_pass = all(
         shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
     )
-
-    if human_gate_approved:
-        print(
-            f"  [Human Gate Override] Automated gate failed, but manual override '{human_gate_key}' is APPROVED. Promoting branch."
-        )
-        all_pass = True
 
     if not all_pass:
         return {"status": "BLOCKED", "reason": "multi-target SHAP gate failed"}

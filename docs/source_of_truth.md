@@ -9,9 +9,9 @@
 
 ### v2.4 Target Specification Summary
 This document defines the authoritative architecture for v2.3 and the target specifications for the v2.4 statistical migration:
-- **S1 & S9 (Nadeau-Bengio + 1-SE):** Corrected fold variance $\text{Var}_{\text{NB}}$ and 1-SE promotion margins in `skill_11`/`skill_12`.
+- **S1 & S9 (Nadeau-Bengio + 1-SE):** Corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
 - **S2 (MASE Metric):** Naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
-- **S3 (Inverse-Variance Weighting):** Dynamic variance weighting $w_k^{\text{eff}} = w_k / (\sigma_k^2 + \epsilon)$ for multi-target composite scores in Section 2 & `skill_11`.
+- **S3 (Inverse-Variance Weighting):** Dynamic variance weighting `w_k_eff = w_k / (sigma_k^2 + epsilon)` for multi-target composite scores in Section 2 & `skill_11`.
 - **S4 (Residual Diversity):** Kuncheva residual vector correlation in `skill_13` collinearity pruning.
 - **S6 (Two-Tier Leak Audit):** Pearson primary/blocking + advisory subsampled MI audit surfaced at Gate 2 in `skill_10`.
 - **S7 (Spatial Buffering):** `spatial_buffer_km` config parameterization for spatial CV splits in `skill_05`.
@@ -96,16 +96,16 @@ the spatial location block identifier from
 `config["spatial_signal"]["group_col"]` is used as the group
 column for `GroupKFold`.
 
-**A9 — The research sidecar is non-blocking at every consumption
-point.**
-Sidecar skills write recommendations to `SKILL_STATE.json`.
+**A9 — The research sidecar is non-blocking at every consumption point.**
+Sidecar skills (`skill_18`, `skill_19`, `skill_20`) write recommendations to `SKILL_STATE.json` under `sidecar_recommendations`.
 Skills that read sidecar output treat it as optional enrichment.
 The correct pattern at every consumption point is:
 
 ```python
-sidecar_recommendations = SKILL_STATE.get(
-    "sidecar_recommendations", default=[]
-)
+sidecar_recommendations = [
+    rec for rec in SKILL_STATE.get("sidecar_recommendations", [])
+    if isinstance(rec, dict) and rec.get("status") == "pending"
+]
 if not sidecar_recommendations:
     log("No sidecar recommendations — proceeding from fingerprint")
 else:
@@ -277,7 +277,7 @@ To avoid schema bloat in the root of `SKILL_STATE.json` while maintaining versat
 
 - `r2`: Coefficient of determination (regression tasks only)
 
-> **Target Met (S2-adjacent):** `zero_fraction`: Target sparsity diagnostic (fraction of ground-truth targets where $y_{true} == 0$).
+> **Target Met (S2-adjacent):** `zero_fraction`: Target sparsity diagnostic (fraction of ground-truth targets where `y_true == 0`).
 > **Target Met (S2):** `mase` (Mean Absolute Scaled Error) diagnostic. Added to `secondary_metrics` ONLY when `config["temporal_signal"]["present"] == True`. MASE is omitted for non-temporal competitions.
 
 For classification tasks, the `secondary_metrics` field may be omitted or set to `null`. For multi-target competitions, secondary_metrics is computed and stored per-target inside that target's own OOF record — there is no separate composite secondary_metrics block.
@@ -311,24 +311,24 @@ an evaluation matrix determined by `config["metric"]`:
 
 1. **Target Pre-Transformation Matrix:**
    * If `config["metric"] == "rmsle"`: Transform targets to
-     log-space: $y' = \ln(y + 1)$.
+     log-space: `y_trans = ln(y + 1)`.
    * If `config["metric"] == "root_mean_squared_error"` or
-     `"mean_absolute_error"`: Maintain identity scale: $y' = y$.
+     `"mean_absolute_error"`: Maintain identity scale: `y_trans = y`.
 
 2. **Prediction Domain Mapping Matrix:**
    * If `config["metric"] == "rmsle"`: Clip log-space predictions
-     to eliminate negative values ($\hat{y}' = \max(0, \hat{y}')$),
+     to eliminate negative values (`y_pred_log = max(0, y_pred_log)`),
      then execute inverse exponential mapping to restore original
-     scale: $\hat{y} = e^{\hat{y}'} - 1$.
+     scale: `y_pred = exp(y_pred_log) - 1`.
    * If `config["metric"] == "root_mean_squared_error"` or
      `"mean_absolute_error"`: Apply domain clipping directly to
      the raw output using bounds specified in
      `config["target_domain_bounds"]`:
-     $\hat{y} = \max(\text{min\_bound}, \min(\text{max\_bound}, \hat{y}))$.
+     `y_pred = max(min_bound, min(max_bound, y_pred))`.
 
 3. **Score Computation:**
    * RMSLE is computed in original space:
-     $$\sqrt{\frac{1}{N} \sum_{i=1}^{N} (\ln(y_i + 1) - \ln(\hat{y}_i + 1))^2}$$
+     `sqrt( (1/N) * sum( (ln(y_i + 1) - ln(y_hat_i + 1))^2 ) )`
    * RMSE (root_mean_squared_error) and MAE (mean_absolute_error) are computed in original space with standard scikit-learn functions, operating on the domain-clipped predictions.
 
 Breaking this contract in any skill invalidates all cross-branch score comparisons. A contract violation is a hard halt — not a warning.
@@ -355,13 +355,13 @@ For each target_spec in target_config["targets"]:
 composite_score = sum(weighted_distances) / total_weight
 ```
 
-> **Target Met (Item 4):** Inverse-variance effective weighting. When `use_inverse_variance_weighting: True` is configured, target weight $w_k$ is scaled inversely by target fold variance:
-> $$w_k^{eff} = \frac{w_k}{\sigma_{k,NB}^2 + \epsilon}$$
-> where $\sigma_{k,NB}^2$ is the Nadeau-Bengio corrected variance for target $k$'s fold scores, $\epsilon = 10^{-8}$ prevents division by zero, and the NB factor is fold-size aware when `fold_sizes` are available:
-> $$\sigma_{k,NB}^2 = \text{Var}_{sample}(ddof=1) \times \bar{\gamma}_k$$
-> $$\bar{\gamma}_k = \min\left(\frac{1}{K}\sum_{i=1}^{K}\frac{n_{val,i}}{n_{train,i}}, 1.0\right)$$
-> If `fold_sizes` are absent, the fallback remains the equal-fold geometry correction $\bar{\gamma}_k = \frac{1}{K} + \frac{1}{K-1}$.
-> Epsilon-regime note: with the competitions currently represented in this workspace, no live competition state file is available to prove or disprove a near-zero-variance target from data. Operationally, the $\epsilon=10^{-8}$ safeguard only becomes relevant for degenerate near-constant fold-score sequences; the helper remains finite in that regime and is covered by `tests/test_scale_invariance.py::test_skill_12_near_zero_variance_stays_finite`.
+> **Target Met (Item 4):** Inverse-variance effective weighting. When `use_inverse_variance_weighting: True` is configured, target weight `w_k` is scaled inversely by target fold variance:
+> `w_k_eff = w_k / (sigma_{k,NB}^2 + epsilon)`
+> where `sigma_{k,NB}^2` is the Nadeau-Bengio corrected variance for target k's fold scores, `epsilon = 1e-8` prevents division by zero, and the NB factor is fold-size aware when `fold_sizes` are available:
+> `sigma_{k,NB}^2 = Var_sample(ddof=1) * gamma_bar_k`
+> `gamma_bar_k = min((1/K) * sum(n_{val,i} / n_{train,i}), 1.0)`
+> If `fold_sizes` are absent, the fallback remains the equal-fold geometry correction `gamma_bar_k = 1/K + 1/(K-1)`.
+> Epsilon-regime note: with the competitions currently represented in this workspace, no live competition state file is available to prove or disprove a near-zero-variance target from data. Operationally, the `epsilon=1e-8` safeguard only becomes relevant for degenerate near-constant fold-score sequences; the helper remains finite in that regime and is covered by `tests/test_scale_invariance.py::test_skill_12_near_zero_variance_stays_finite`.
 > **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use).
 
 `composite_direction` is fixed as `"minimize_composite_distance"` — every term is already a "lower is better" distance, regardless of how many targets individually maximize or minimize.
@@ -1435,8 +1435,8 @@ For each feature variant branch:
 
 > **Systematic MI Leakage Audit (S6):**
 > - **Two-Tier Leak Audit:** Decoupled systematic pre-filtering MI audit runs independently on all regression features, every time, regardless of whether the SHAP dominance ratio check fires.
->   - **Classification:** NMI $\ge$ threshold remains primary/blocking.
->   - **Regression — Primary (blocking):** Pearson $|r| \ge$ `regression_threshold` (0.98) flags feature to `leaked_features`, blocks promotion, and triggers `skill_07` regenerate directive (checked on SHAP-dominant feature).
+>   - **Classification:** NMI >= threshold remains primary/blocking.
+>   - **Regression — Primary (blocking):** Pearson |r| >= `regression_threshold` (0.98) flags feature to `leaked_features`, blocks promotion, and triggers `skill_07` regenerate directive (checked on SHAP-dominant feature).
 >   - **Regression — Verification (advisory, non-blocking):** If `enable_mi_regression_subsample: true` in config, subsampled `mutual_info_regression` runs systematically on all feature columns. Features flagged by MI are written to `SKILL_STATE.json["leakage_mi_advisory"]` (not `leaked_features`), do NOT block `skill_11` promotion, and do NOT trigger auto-regeneration.
 >   - **Surfacing:** Non-empty `leakage_mi_advisory` entries are surfaced to the operator at **Human Gate 2** for review ("Pearson clean, but MI flagged X — approve anyway?"). Threshold parameters are read from `challenge_config.json` per A5.
 
@@ -1532,10 +1532,10 @@ generalising uniformly across the distribution.
 
 > **Nadeau-Bengio Corrected Variance & 1-SE Promotion Margin (S1 & S9):**
 > `skill_12_metric` computes Nadeau-Bengio corrected CV fold score variance (`fold_score_variance_nb`) and standard error (`se_oof`), and writes both to `metric_analysis`. `skill_11_gate` reads `se_oof` from state and applies a 1-SE promotion margin:
-> $$\text{Var}_{NB} = \text{Var}_{sample}(ddof=1) \times \left(\frac{1}{K} + \frac{n_{val}}{n_{train}}\right)$$
-> $$\text{SE}_{OOF} = \sqrt{\text{Var}_{NB}}$$
-> $$\text{effective\_gate\_margin} = \max\left(\text{gate\_margin}_{scale\_adjusted}, 1 \times \text{SE}_{OOF}\right)$$
-> S1 and S9 shipped together as required. Note that sample size scaling (including the $1/K$ factor) is already mathematically incorporated into $\text{Var}_{NB}$ itself via the K-fold geometry correction factor; dividing by $K$ again in $\text{SE}_{OOF}$ is a double-scaling error. `fold_score_variance` (the primary reported variance) is the NB-corrected value.
+> `Var_NB = Var_sample(ddof=1) * (1/K + n_val/n_train)`
+> `SE_OOF = sqrt(Var_NB)`
+> `effective_gate_margin = max(gate_margin_scale_adjusted, 1 * SE_OOF)`
+> S1 and S9 shipped together as required. Note that sample size scaling (including the `1/K` factor) is already mathematically incorporated into `Var_NB` itself via the K-fold geometry correction factor; dividing by K again in `SE_OOF` is a double-scaling error. `fold_score_variance` (the primary reported variance) is the NB-corrected value.
 >
 > **NB scope — single-target vs multi-target (verified against code, 2026-08-03):** The Nadeau-Bengio correction is applied to the **single-target** `fold_score_variance` and to each **per-target** `fold_score_variance` in the multi-target `per_target` block (`skill_12_metric.py` L121–123, L239–247). The multi-target **`composite_fold_score_variance` is NOT Nadeau-Bengio corrected** — it is computed as the raw unbiased sample variance (`ddof=1`) of the composite fold scores (`skill_12_metric.py` L173: `composite_variance = float(np.var(composite_fold_scores, ddof=1))`). This is a deliberate, code-verified asymmetry: the composite is an aggregate diagnostic, while the per-target and single-target variances feed the gate's 1-SE margin and inverse-variance weighting. `skill_11_gate` consumes the NB-corrected per-target variances via `_target_fold_variance()` (L191–220) and the single-target NB `fold_score_variance` + `se_oof` via `_effective_thresholds()` (L134–138).
 
@@ -1659,8 +1659,8 @@ runs.**
 ```
 
 > **Target Met (Item 4):** Inverse-variance weighting mirror in the multi-target gate. On competitions where `target_config` has more than one entry, gate conditions 2 and 3 consume the same inverse-variance effective weights as the composite score:
-> $$w_k^{eff} = \frac{w_k}{\sigma_k^2 + \epsilon}$$
-> where $\sigma_k^2$ is the unbiased sample variance (`ddof=1`) of target $k$'s fold scores and $\epsilon = 10^{-8}$. The effective variance threshold and gate margin for multi-target gate comparisons are computed using these $w_k^{eff}$ weights exactly as documented in the Composite Score Computation section (Section 2). **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use). This mirror must ship together with the Section 2 inverse-variance implementation — the two formulas are the same formula and must never diverge.
+> `w_k_eff = w_k / (sigma_k^2 + epsilon)`
+> where `sigma_k^2` is the unbiased sample variance (`ddof=1`) of target k's fold scores and `epsilon = 1e-8`. The effective variance threshold and gate margin for multi-target gate comparisons are computed using these `w_k_eff` weights exactly as documented in the Composite Score Computation section (Section 2). **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use). This mirror must ship together with the Section 2 inverse-variance implementation — the two formulas are the same formula and must never diverge.
 
 Gate failure writes a complete diagnosis to
 `SKILL_STATE.json` and triggers an automated
@@ -1694,7 +1694,7 @@ Guard conditions — ALL must be true before running:
 ```
 
 > **Pending (S8):** Hybrid Adaptive Pseudo-labeling.
-> - **Mechanism:** Class-wise quantile selection with a 0.70 floor (e.g. top $P\%$ per class, bounded below by 0.70 probability).
+> - **Mechanism:** Class-wise quantile selection with a 0.70 floor (e.g. top P% per class, bounded below by 0.70 probability).
 > - **Preconditions & Guards:** OOF isotonic/platt calibration (from `skill_09`) mandatory. Aggregated row count guarded by `min_pseudo_samples` parameter.
 > - **Ranking & Multi-target:** Deterministic `method='first'` tie-breaking. Scoped independently per classification target in multi-target competitions.
 > - **Recombination Timing:** Enforced **post-retraining**, immediately after the pseudo-label retraining loop finishes, before passing candidate branches to `skill_11`.
@@ -1862,7 +1862,7 @@ For each pair of candidates:
     If correlation > 0.95:
         Drop the lower-scoring candidate
 
-> **Residual Diversity / Kuncheva Pruning (S4):** `_prune_collinear` in `oracle_fusion_core.py` (L190-244) threads ground-truth `y_true` into the function body to calculate error residual vectors $e_m = y_{pred, m} - y_{true}$. Diversity pruning correlates error residual vectors ($e_A, e_B$) rather than raw predictions ($y_{pred, A}, y_{pred, B}$). Task-type correlation methods (Pearson for classification residuals, Spearman rank for regression residuals) are preserved. Call site at L687-691 passes `y_true=y_true`. Verified by `test_prune_collinear_residuals` in `tests/test_correlation_pruning.py` (L31-118).
+> **Residual Diversity / Kuncheva Pruning (S4):** `_prune_collinear` in `oracle_fusion_core.py` (L190-244) threads ground-truth `y_true` into the function body to calculate error residual vectors `e_m = y_pred_m - y_true`. Diversity pruning correlates error residual vectors (`e_A, e_B`) rather than raw predictions (`y_pred_A, y_pred_B`). Task-type correlation methods (Pearson for classification residuals, Spearman rank for regression residuals) are preserved. Call site at L687-691 passes `y_true=y_true`. Verified by `test_prune_collinear_residuals` in `tests/test_correlation_pruning.py` (L31-118).
 
 All candidates must have:
     Seeds set and logged
@@ -2146,6 +2146,34 @@ every consumption point (see A9).
 
 ---
 
+### Sidecar State Interface & Consumption Contract
+
+Sidecar recommendations are stored in `SKILL_STATE.json` under the `sidecar_recommendations` key as a list of recommendation objects.
+
+**Recommendation Item Schema:**
+```json
+{
+  "recommendation_id": "rec_001",
+  "source_skill": "skill_19_code_miner",
+  "target_phase": "phase_2_feature_engineering",
+  "payload": {
+    "feature_idea": "monthly_ratio_VH_VV",
+    "rationale": "SAR polarization ratio for vegetation density",
+    "confidence": 0.85
+  },
+  "timestamp": "2026-08-03T18:00:00Z",
+  "status": "pending"
+}
+```
+
+**Consumption & Fallback Rules:**
+1. **Safe Access Pattern:** Every consuming skill must access `sidecar_recommendations` using `SKILL_STATE.get("sidecar_recommendations", [])`. Direct bracket indexing (`SKILL_STATE["sidecar_recommendations"]`) is strictly prohibited.
+2. **Filtering:** Consuming skills filter for items where `status == "pending"`.
+3. **Non-Blocking Fallback:** If `sidecar_recommendations` is absent, empty, or unreadable, the consuming skill proceeds seamlessly using standard fingerprint defaults. No exception is raised and execution is never halted.
+4. **State Update:** Upon consuming a recommendation, the consuming skill updates that item's `status` to `"consumed"` (or `"dismissed"`) in `SKILL_STATE.json`.
+
+---
+
 ### Trigger Schedule
 
 | Skill | Trigger | Informs |
@@ -2245,9 +2273,9 @@ or submitted.
 >   - `engineered_feature_matrix_{branch_name}` — written by `skill_07` (engineered features, per branch).
 >   - `oof_predictions_{branch_name}` — written by `skill_08` / `skill_21` (OOF predictions, per branch).
 > - **Tolerance-Based 3-Tier Verification Bands:**
->   - **Tier 1 ($\le 10^{-6}$ relative delta):** Bit/float identical pass.
->   - **Tier 2 ($10^{-6}$ to $10^{-5}$ relative delta):** Soft-warning issued; requires explicit operator sign-off at Human Gate 5.
->   - **Tier 3 ($> 10^{-5}$ relative delta):** Hard-halt — non-reproducible artifact rejected.
+>   - **Tier 1 (<= 1e-6 relative delta):** Bit/float identical pass.
+>   - **Tier 2 (1e-6 to 1e-5 relative delta):** Soft-warning issued; requires explicit operator sign-off at Human Gate 5.
+>   - **Tier 3 (> 1e-5 relative delta):** Hard-halt — non-reproducible artifact rejected.
 > - **Status (verified against code, 2026-08-03):** `skill_22_reproducibility_audit.py` implements the 3-tier verifier (`_audit_derived_artifact_fingerprints()` L206) but is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` and no skill currently *writes* this dict. When the key is absent or empty, the audit silently passes (L216). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
 
 **R3 — No custom packages.**
@@ -3231,15 +3259,15 @@ These items document statistical limitations from v2.3 and their updated v2.4 ta
 - **S4 — Correlation-Based Pruning**:
   *Status:* `oracle_fusion_core.py` `_prune_collinear()` accepts `y_true: np.ndarray | None = None` and computes error residuals when provided. The call site at L687 passes `y_true=y_true` (stale parking comment removed). Activated and covered by unit tests. (2026-08-03)
 - **S5 — Target Covariance Breakdown**:
-  *Status:* **[Deferred]** Recombination policy A12 (`freeze_unaugmented_targets_at_original` or `block_composite_until_all_targets_augmented_or_none`) isolates multi-target augmentation. Joint consistency regularization deferred.
+  *Status:* **[Deferred]** Recombination policy A12 (freeze_unaugmented_targets_at_original or block_composite_until_all_targets_augmented_or_none) isolates multi-target augmentation. Joint consistency regularization deferred.
 - **S6 — Multicollinear Leakage Splitting / Systematic MI Audit**:
   *Status:* **Partially addressed.** M1 fixed: `skill_10_shap` now persists `leakage_mi_advisory` to `SKILL_STATE.json` via `state_store.update()` (single-target L839, multi-target L1121). M2 fixed: `skill_11_gate` surfaces `leakage_mi_advisory` at Human Gate 2 on both single-target (L412–422) and multi-target (L523–541) paths, and it never blocks promotion or triggers auto-regeneration. Systematic pre-filtering MI audit runs independently on all regression features, every time, regardless of whether the SHAP dominance ratio check fires, preserving the subsampling and latency guards. **Remaining gap (unchanged from v2.3):** univariate NMI/Pearson still misses multicollinearity-split leaks — a leak distributed across two correlated features can evade both the Pearson and the per-feature MI checks. The MI verification adds recall on non-linear univariate leaks but is advisory, so it does not fully close the split-leak gap. (2026-08-03)
 - **S7 — Spatial Autocorrelation Bias**:
   *Status:* **Partially addressed (verified against code, 2026-08-03).** `skill_05_cv.py` `_apply_spatial_buffer()` (L86–117) and `build_spatial_splits()` (L120–200) are implemented, `spatial_buffer_km` is read from config (L438–440), and the buffered splits ARE written to `SKILL_STATE["cv_split_indices"]` (L547–560) when the spatial-clustering fallback branch fires. `skill_07`, `skill_08`, `skill_10`, and `skill_21` all consume these via `load_explicit_cv_splits(state)` from `zindian/cv.py` (L107–129) — so the earlier claim that buffered splits are "not wired to downstream model training" is **outdated and corrected here**. **Remaining gap:** (1) `skill_09_calibration` and `skill_12_metric` do not consume `cv_split_indices` — they call `get_cv_splits()`/`make_cv_splitter()` directly, so they do not see the buffered splits. (2) The non-fallback live CV path (when a `group_col` is present) has no buffer. S7 closes only when buffered splits from `skill_05` are the actual source passed to ALL model-training skills, including `skill_09` and `skill_12`.
 - **S8 — Fixed Pseudo-label Thresholding & Adaptive Quantiles**:
-    *Status:* **Decision recorded (project owner, 2026-08-03):** Hybrid Adaptive spec locked — class-wise quantile selection with 0.70 floor, calibration mandatory precondition, `min_pseudo_samples` aggregate-count guard, deterministic `method='first'` ranking, per-target scoping under multi-target. Recombination policy timing locked to **post-retraining** (verified in `skill_21_pseudo_label.py` `_run_multi_target_pseudo_label` L1088–1124). **Implementation status:** the current `skill_21` still uses fixed absolute thresholds (`CONF_POS_DEFAULT = 0.85`, `CONF_NEG_DEFAULT = 0.15` at L52–53); the class-wise quantile mechanism is specified but not yet implemented. This is an explicit, owner-confirmed decision record — not a silent marker removal.
+    *Status:* **Decision recorded (project owner, 2026-08-03):** Hybrid Adaptive spec locked — class-wise quantile selection with 0.70 floor, calibration mandatory precondition, `min_pseudo_samples` aggregate-count guard, deterministic `method='first'` ranking, per-target scoping under multi-target. Recombination policy timing locked to **post-retraining** (verified in `skill_21_pseudo_label.py` `_run_multi_target_pseudo_label` L1088–1124). **Implementation status:** the current `skill_21` still uses fixed absolute thresholds (CONF_POS_DEFAULT = 0.85, CONF_NEG_DEFAULT = 0.15 at L52–53); the class-wise quantile mechanism is specified but not yet implemented. This is an explicit, owner-confirmed decision record — not a silent marker removal.
 - **S10 — Floating-Point Integrity limits**:
-  *Status:* **Decision recorded (2026-08-03):** Path 2 `skill_22`-only verification confirmed — no fingerprinting logic added to `skill_01` (raw-file MD5 hashing preserved). `skill_22_reproducibility_audit.py` implements the 3-tier tolerance verification: $\le 10^{-6}$ → PASS, $10^{-6}$–$10^{-5}$ → SOFT WARN (Gate 5 sign-off required), $> 10^{-5}$ → HARD HALT (`_audit_derived_artifact_fingerprints()` L206). **Remaining gap (verified against code):** `skill_22` is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` but no skill currently *writes* this dict. When the key is absent or empty (current state on all competitions), `_audit_derived_artifact_fingerprints` silently passes (L216: `if not isinstance(fingerprints, dict) or not fingerprints: return True, []`). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
+  *Status:* **Decision recorded (2026-08-03):** Path 2 `skill_22`-only verification confirmed — no fingerprinting logic added to `skill_01` (raw-file MD5 hashing preserved). `skill_22_reproducibility_audit.py` implements the 3-tier tolerance verification: <= 1e-6 → PASS, 1e-6–1e-5 → SOFT WARN (Gate 5 sign-off required), > 1e-5 → HARD HALT (`_audit_derived_artifact_fingerprints()` L206). **Remaining gap (verified against code):** `skill_22` is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` but no skill currently *writes* this dict. When the key is absent or empty (current state on all competitions), `_audit_derived_artifact_fingerprints` silently passes (L216: `if not isinstance(fingerprints, dict) or not fingerprints: return True, []`). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
 
 ---
 *Version: v2.4 Target Spec (Patched from v2.3)*

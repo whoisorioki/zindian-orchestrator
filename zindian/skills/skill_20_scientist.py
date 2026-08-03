@@ -12,15 +12,23 @@ from pathlib import Path
 from typing import Any
 import time
 
-import google.genai as genai
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif
-from google.genai import types
+
+from zindian._safe_import import safe_import
+
+lgb = safe_import("lightgbm")
+
+try:
+    genai = safe_import("google.genai")
+    types = safe_import("google.genai.types")
+except Exception:
+    genai = None
+    types = None
 
 from zindian.paths import resolve_competition_paths
 from zindian.config import get_seed, ChallengeConfig

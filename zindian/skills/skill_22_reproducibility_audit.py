@@ -386,10 +386,126 @@ def audit_pipeline(slug: str | None = None) -> bool:
     return False
 
 
+def _resolve_history_log_path(root: Path) -> Path:
+    """Resolve the cross-competition history log path (repo root, not per-competition)."""
+    history_dir = root / "competition_history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    return history_dir / "history_log.jsonl"
+
+
+def _build_history_log_entry(config: dict, state: dict) -> dict[str, Any]:
+    """Build one history_log.jsonl entry per SoT Section 7 schema."""
+    from datetime import datetime, timezone
+
+    cv_strategy = config.get("cv_strategy", {}) or {}
+    override = state.get("cv_strategy_override", {}) or {}
+    override_active = bool(override.get("active", False))
+
+    anchor_oof = state.get("anchor_oof_score")
+    best_promoted = (
+        state.get("best_variant_oof_score")
+        or state.get("last_ensemble_oof_metric")
+        or anchor_oof
+    )
+    best_lb = state.get("anchor_lb_score") or state.get("best_lb_score")
+    oof_to_lb_delta = None
+    if isinstance(anchor_oof, (int, float)) and isinstance(best_lb, (int, float)):
+        oof_to_lb_delta = float(anchor_oof) - float(best_lb)
+
+    feature_types_used: list[str] = []
+    fe_cfg = config.get("feature_engineering") or {}
+    for key in (
+        "polynomials",
+        "interactions",
+        "ratios",
+        "conditions",
+        "target_dependent_bins",
+    ):
+        if fe_cfg.get(key):
+            feature_types_used.append(key)
+    if fe_cfg.get("pca"):
+        feature_types_used.append("pca")
+
+    pseudo = state.get("pseudo_label_result", {}) or {}
+    slug = config.get("slug") or state.get("slug") or "unknown"
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    return {
+        "slug": slug,
+        "competition_id": slug,
+        "completed_at": completed_at,
+        "task_type": config.get("task_type"),
+        "metric": config.get("metric"),
+        "metric_direction": config.get("metric_direction"),
+        "cv_strategy": cv_strategy.get("type"),
+        "cv_strategy_type": cv_strategy.get("type"),
+        "cv_strategy_override": override_active,
+        "cv_strategy_override_rationale": (
+            override.get("rationale") if override_active else None
+        ),
+        "anchor_oof_score": anchor_oof,
+        "best_promoted_oof_score": best_promoted,
+        "best_public_lb_score": best_lb,
+        "oof_to_lb_delta": oof_to_lb_delta,
+        "feature_types_used": feature_types_used,
+        "pseudo_label_ran": bool(pseudo.get("ran", False)),
+        "final_rank": None,
+        "variants_passed": state.get("variants_passed", 0),
+        "promoted_branches": state.get("selected_submissions", []),
+        "gate_thresholds": {
+            "shap_leak_threshold": config.get("shap_leak_threshold", 3.0),
+            "variance_gate_threshold": config.get("variance_gate_threshold", 0.01),
+            "gate_margin": config.get("gate_margin", 0.001),
+        },
+        "competition_close_date": completed_at,
+        "selected_submissions": state.get("selected_submissions") or [],
+        "reproducibility_audit_passed": bool(
+            state.get("reproducibility_audit", {}).get("success")
+        ),
+    }
+
+
+def write_history_log_entry(root: Path, config: dict, state: dict) -> Path:
+    """
+    Append (or replace, if one already exists for this competition_id) the
+    cross-competition history log entry. One entry per competition close.
+
+    Idempotent: reruns of skill_22 update this competition's entry in place
+    rather than appending duplicates; entries for other competition_ids remain untouched.
+    """
+    path = _resolve_history_log_path(root)
+    new_entry = _build_history_log_entry(config, state)
+    competition_id = new_entry["competition_id"]
+
+    existing_lines: list[str] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                existing_lines.append(line)
+                continue
+            if entry.get("competition_id") != competition_id and entry.get("slug") != competition_id:
+                existing_lines.append(json.dumps(entry))
+
+    existing_lines.append(json.dumps(new_entry))
+    path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _append_history_log(paths, config: dict, state: dict) -> Path:
+    """Backwards-compatible wrapper calling write_history_log_entry."""
+    return write_history_log_entry(paths.root, config, state)
+
+
 def run(slug: str | None = None) -> dict[str, Any]:
     from datetime import datetime, timezone
     from zindian.paths import resolve_competition_paths
     from zindian.state import SkillStateStore
+    from zindian.config import ChallengeConfig
 
     paths = resolve_competition_paths(require_competition=False)
     actual_slug = slug or (
@@ -398,7 +514,7 @@ def run(slug: str | None = None) -> dict[str, Any]:
 
     success = audit_pipeline(slug=actual_slug)
 
-    state = {}
+    state: dict[str, Any] = {}
     if paths.state_path and paths.state_path.exists():
         state_store = SkillStateStore(paths.state_path)
         state = state_store.read()
@@ -407,6 +523,21 @@ def run(slug: str | None = None) -> dict[str, Any]:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         state_store.write(state)
+
+    if success:
+        try:
+            config: dict[str, Any] = {}
+            if paths.competition_dir:
+                try:
+                    config = ChallengeConfig.load()._data
+                except Exception:
+                    pass
+            if actual_slug and "slug" not in config:
+                config["slug"] = actual_slug
+            history_path = write_history_log_entry(paths.root, config, state)
+            print(f"  [OK] Cross-competition history log updated -> {history_path}")
+        except Exception as _hist_err:
+            print(f"  [WARN] Could not write history log: {_hist_err}")
 
     return {"success": success, "state": state}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import duckdb
 import json
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,8 @@ from .paths import resolve_competition_paths
 
 class Ledger:
     """DuckDB wrapper for experiments and submissions tracking."""
+
+    _write_lock = threading.Lock()
 
     def __init__(self, path: str | None = None):
         """Initialize DuckDB connection to ledger."""
@@ -24,88 +27,89 @@ class Ledger:
 
     def _ensure_schema(self) -> None:
         """Create tables and add any missing columns to existing tables."""
-        # Create sequences first
-        try:
-            self.conn.execute(
-                "CREATE SEQUENCE IF NOT EXISTS experiments_id_seq START 1"
-            )
-        except Exception:
-            pass
-
-        try:
-            self.conn.execute(
-                "CREATE SEQUENCE IF NOT EXISTS submissions_id_seq START 1"
-            )
-        except Exception:
-            pass
-
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS experiments (
-                experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
-                branch_name         VARCHAR NOT NULL,
-                oof_score           FLOAT,
-                metric              VARCHAR,
-                oof_rmse            FLOAT,
-                feature_count       INTEGER,
-                calibration_method  VARCHAR,
-                gate_result         VARCHAR,
-                gate_reason         VARCHAR,
-                md5_target_hash     VARCHAR,
-                dag_phase           VARCHAR,
-                notes               VARCHAR,
-                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """
-        )
-
-        # Safe migration: add columns that may be absent in pre-existing databases.
-        for col_def in (
-            "oof_score FLOAT",
-            "metric VARCHAR",
-        ):
-            col_name = col_def.split()[0]
+        with self._write_lock:
+            # Create sequences first
             try:
                 self.conn.execute(
-                    f"ALTER TABLE experiments ADD COLUMN IF NOT EXISTS {col_def}"
+                    "CREATE SEQUENCE IF NOT EXISTS experiments_id_seq START 1"
                 )
             except Exception:
-                # DuckDB < 0.8 does not support IF NOT EXISTS on ALTER TABLE;
-                # fall back to checking the column list manually.
-                try:
-                    cols = [
-                        r[0]
-                        for r in self.conn.execute(
-                            "PRAGMA table_info('experiments')"
-                        ).fetchall()
-                    ]
-                    if col_name not in cols:
-                        self.conn.execute(
-                            f"ALTER TABLE experiments ADD COLUMN {col_def}"
-                        )
-                except Exception:
-                    pass  # Column already exists — safe to ignore.
+                pass
 
-        self.conn.execute(
+            try:
+                self.conn.execute(
+                    "CREATE SEQUENCE IF NOT EXISTS submissions_id_seq START 1"
+                )
+            except Exception:
+                pass
+
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS experiments (
+                    experiment_id       INTEGER PRIMARY KEY DEFAULT nextval('experiments_id_seq'),
+                    branch_name         VARCHAR NOT NULL,
+                    oof_score           FLOAT,
+                    metric              VARCHAR,
+                    oof_rmse            FLOAT,
+                    feature_count       INTEGER,
+                    calibration_method  VARCHAR,
+                    gate_result         VARCHAR,
+                    gate_reason         VARCHAR,
+                    md5_target_hash     VARCHAR,
+                    dag_phase           VARCHAR,
+                    notes               VARCHAR,
+                    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
             """
-            CREATE TABLE IF NOT EXISTS submissions (
-                submission_id       INTEGER PRIMARY KEY DEFAULT nextval('submissions_id_seq'),
-                experiment_id       INTEGER,
-                branch_name         VARCHAR NOT NULL,
-                submission_rank     INTEGER,
-                public_score        FLOAT,
-                private_score       FLOAT,
-                my_rank             INTEGER,
-                selected_for_final  BOOLEAN DEFAULT FALSE,
-                selection_rationale VARCHAR,
-                comment             VARCHAR,
-                submitted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
             )
-        """
-        )
 
-        self.conn.commit()
+            # Safe migration: add columns that may be absent in pre-existing databases.
+            for col_def in (
+                "oof_score FLOAT",
+                "metric VARCHAR",
+            ):
+                col_name = col_def.split()[0]
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE experiments ADD COLUMN IF NOT EXISTS {col_def}"
+                    )
+                except Exception:
+                    # DuckDB < 0.8 does not support IF NOT EXISTS on ALTER TABLE;
+                    # fall back to checking the column list manually.
+                    try:
+                        cols = [
+                            r[0]
+                            for r in self.conn.execute(
+                                "PRAGMA table_info('experiments')"
+                            ).fetchall()
+                        ]
+                        if col_name not in cols:
+                            self.conn.execute(
+                                f"ALTER TABLE experiments ADD COLUMN {col_def}"
+                            )
+                    except Exception:
+                        pass  # Column already exists — safe to ignore.
+
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS submissions (
+                    submission_id       INTEGER PRIMARY KEY DEFAULT nextval('submissions_id_seq'),
+                    experiment_id       INTEGER,
+                    branch_name         VARCHAR NOT NULL,
+                    submission_rank     INTEGER,
+                    public_score        FLOAT,
+                    private_score       FLOAT,
+                    my_rank             INTEGER,
+                    selected_for_final  BOOLEAN DEFAULT FALSE,
+                    selection_rationale VARCHAR,
+                    comment             VARCHAR,
+                    submitted_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
+                )
+            """
+            )
+
+            self.conn.commit()
 
     def log_experiment(
         self,
@@ -140,37 +144,38 @@ class Ledger:
             oof_score = oof_rmse
             metric = metric or "rmse"
 
-        cursor = self.conn.execute(
-            """
-            INSERT INTO experiments (
-                branch_name, oof_score, metric, oof_rmse,
-                feature_count, calibration_method,
-                gate_result, gate_reason, md5_target_hash, dag_phase, notes
+        with self._write_lock:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO experiments (
+                    branch_name, oof_score, metric, oof_rmse,
+                    feature_count, calibration_method,
+                    gate_result, gate_reason, md5_target_hash, dag_phase, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING experiment_id
+            """,
+                [
+                    branch_name,
+                    oof_score,
+                    metric,
+                    oof_rmse,  # also write to legacy column for any direct SQL queries
+                    feature_count,
+                    calibration_method,
+                    gate_result,
+                    gate_reason,
+                    md5_target_hash,
+                    dag_phase,
+                    notes,
+                ],
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING experiment_id
-        """,
-            [
-                branch_name,
-                oof_score,
-                metric,
-                oof_rmse,  # also write to legacy column for any direct SQL queries
-                feature_count,
-                calibration_method,
-                gate_result,
-                gate_reason,
-                md5_target_hash,
-                dag_phase,
-                notes,
-            ],
-        )
 
-        row = cursor.fetchone()
-        if row is None:
-            raise RuntimeError("Failed to insert experiment")
-        experiment_id = row[0]
-        self.conn.commit()
-        return experiment_id
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("Failed to insert experiment")
+            experiment_id = row[0]
+            self.conn.commit()
+            return experiment_id
 
     def log_submission(
         self,
@@ -190,34 +195,35 @@ class Ledger:
 
         Returns: submission_id
         """
-        cursor = self.conn.execute(
-            """
-            INSERT INTO submissions (
-                experiment_id, branch_name, submission_rank, public_score,
-                private_score, my_rank, selected_for_final, selection_rationale, comment
+        with self._write_lock:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO submissions (
+                    experiment_id, branch_name, submission_rank, public_score,
+                    private_score, my_rank, selected_for_final, selection_rationale, comment
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING submission_id
+            """,
+                [
+                    experiment_id,
+                    branch_name,
+                    submission_rank,
+                    public_score,
+                    private_score,
+                    my_rank,
+                    selected_for_final,
+                    selection_rationale,
+                    comment,
+                ],
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING submission_id
-        """,
-            [
-                experiment_id,
-                branch_name,
-                submission_rank,
-                public_score,
-                private_score,
-                my_rank,
-                selected_for_final,
-                selection_rationale,
-                comment,
-            ],
-        )
 
-        row = cursor.fetchone()
-        if row is None:
-            raise RuntimeError("Failed to insert submission")
-        submission_id = row[0]
-        self.conn.commit()
-        return submission_id
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("Failed to insert submission")
+            submission_id = row[0]
+            self.conn.commit()
+            return submission_id
 
     def get_experiment(self, experiment_id: int) -> Optional[Dict[str, Any]]:
         """Retrieve experiment by ID."""
@@ -317,25 +323,27 @@ class Ledger:
         self, submission_id: int, selected: bool = True, rationale: Optional[str] = None
     ) -> None:
         """Mark submission as selected (or deselected) for final private judging."""
-        self.conn.execute(
-            """UPDATE submissions
-               SET selected_for_final = ?, selection_rationale = ?
-               WHERE submission_id = ?""",
-            [selected, rationale, submission_id],
-        )
-        self.conn.commit()
+        with self._write_lock:
+            self.conn.execute(
+                """UPDATE submissions
+                   SET selected_for_final = ?, selection_rationale = ?
+                   WHERE submission_id = ?""",
+                [selected, rationale, submission_id],
+            )
+            self.conn.commit()
 
     def update_gate_result(
         self, experiment_id: int, gate_result: str, gate_reason: Optional[str] = None
     ) -> None:
         """Update gate result for an experiment."""
-        self.conn.execute(
-            """UPDATE experiments
-               SET gate_result = ?, gate_reason = ?
-               WHERE experiment_id = ?""",
-            [gate_result, gate_reason, experiment_id],
-        )
-        self.conn.commit()
+        with self._write_lock:
+            self.conn.execute(
+                """UPDATE experiments
+                   SET gate_result = ?, gate_reason = ?
+                   WHERE experiment_id = ?""",
+                [gate_result, gate_reason, experiment_id],
+            )
+            self.conn.commit()
 
     def query(
         self, sql: str, params: Optional[List[Any]] = None
