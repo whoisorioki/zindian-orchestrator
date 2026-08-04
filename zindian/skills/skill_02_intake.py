@@ -264,6 +264,19 @@ def extract_config(data: dict, slug: str) -> dict:
                     config["public_split_pct"] = ci.get("public_split_pct")
                     field_sources["public_split_pct"] = "monitor"
 
+                # Normalize fractional split ratios (0.5 -> 50.0%)
+                if config.get("public_split_pct") is not None:
+                    pub = float(config["public_split_pct"])
+                    if 0.0 < pub <= 1.0:
+                        config["public_split_pct"] = round(pub * 100.0, 1)
+                if (
+                    config.get("public_split_pct") is not None
+                    and config.get("private_split_pct") is None
+                ):
+                    config["private_split_pct"] = round(
+                        100.0 - float(config["public_split_pct"]), 1
+                    )
+
                 # Log which fields came from API vs monitor fallback
                 api_fields = [k for k, v in field_sources.items() if v == "api"]
                 monitor_fields = [k for k, v in field_sources.items() if v == "monitor"]
