@@ -713,6 +713,7 @@ def run(
             "phase_1_complete",
             "phase_1_integrity",
             "phase_1_integrity_locked",  # Bootstrap phase string
+            "phase_1_eda_complete",
         )
         if current_phase in allowed_write_phases:
             write_config(final_to_write, paths)
