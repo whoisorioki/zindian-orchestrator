@@ -30,6 +30,8 @@ except Exception:
     genai = None
     types = None
 
+GENAI_AVAILABLE = genai is not None and types is not None
+
 from zindian.paths import resolve_competition_paths
 from zindian.config import get_seed, ChallengeConfig
 from zindian.state import SkillStateStore
@@ -39,11 +41,41 @@ _api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 _client: Any = None
 
 
+class DummyClient:
+    pass
+
+
+class ErrorClient:
+    def __init__(
+        self,
+        message: str = "google.genai SDK is not available. Install required dependencies.",
+    ) -> None:
+        self._message = message
+
+    @property
+    def models(self) -> Any:
+        raise RuntimeError(self._message)
+
+
 def _get_client():
     global _client
     if _client is not None:
         return _client
     _api_key_env = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+    if not GENAI_AVAILABLE or genai is None or types is None:
+        if os.getenv("ZINDIAN_DISABLE_NETWORK") == "1":
+            _client = DummyClient()
+            print(
+                "[Scientist] google.genai unavailable; network disabled — dummy client initialized."
+            )
+            return _client
+
+        _client = ErrorClient(
+            "google.genai SDK is not available. Install required dependencies."
+        )
+        return _client
+
     http_config = types.HttpOptions(  # type: ignore[call-arg]
         client_args={
             "timeout": 60.0,
@@ -54,10 +86,6 @@ def _get_client():
         _client = genai.Client(api_key=_api_key_env, http_options=http_config)
         print("[Scientist] GEMINI_API_KEY found — client initialized.")
     elif os.getenv("ZINDIAN_DISABLE_NETWORK") == "1":
-
-        class DummyClient:
-            pass
-
         _client = DummyClient()
         print("[Scientist] Network disabled — dummy client initialized.")
     else:
@@ -68,16 +96,10 @@ def _get_client():
             print(
                 f"[Scientist] Client initialization failed: {e}. Fallback to lazy error client."
             )
-
-            class ErrorClient:
-                @property
-                def models(self):
-                    raise ValueError(
-                        "No API key was provided. Please pass a valid API key. Learn how to"
-                        " create an API key at https://ai.google.dev/gemini-api/docs/api-key."
-                    )
-
-            _client = ErrorClient()
+            _client = ErrorClient(
+                "No API key was provided. Please pass a valid API key. Learn how to"
+                " create an API key at https://ai.google.dev/gemini-api/docs/api-key."
+            )
     return _client
 
 
@@ -417,14 +439,19 @@ Generate feature engineering hypotheses as a raw JSON array now.
     for attempt in range(3):
         try:
             print(f"[Scientist] Attempt {attempt + 1}/3...")
-            response = CLIENT.models.generate_content(
-                model=MODEL_NAME,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
+            gen_config = (
+                types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=list[FeatureHypothesis],
                     temperature=0.2,
-                ),
+                )
+                if GENAI_AVAILABLE and types is not None
+                else None
+            )
+            response = CLIENT.models.generate_content(
+                model=MODEL_NAME,
+                contents=user_prompt,
+                config=gen_config,
             )
             hypotheses = _coerce_hypotheses(getattr(response, "parsed", None))
             if not hypotheses:
