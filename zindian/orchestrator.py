@@ -990,8 +990,7 @@ def run_phase(
         from .skills.skill_15_reporter import run_phase_summary, _write_json_summary
 
         _phase = phase.lower().strip()
-        if _phase in ("2b", "3b"):
-            run_phase_summary(_phase)
+        run_phase_summary(_phase)
         _write_json_summary(
             _phase,
             paths,
@@ -1003,7 +1002,7 @@ def run_phase(
                 "cv_strategy_type",
             ],
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[orchestrator] Warning: Failed to write phase summary report: {e}")
 
     return results

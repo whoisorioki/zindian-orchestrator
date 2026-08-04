@@ -57,6 +57,28 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 
                 new_value = {"eda_file": f"scores/eda_{key}.json", "count": len(value)}
                 data_copy[key] = new_value
+            # Externalize large cv_split_indices lists (>0 elements)
+            elif (
+                key == "cv_split_indices" and isinstance(value, list) and len(value) > 0
+            ):
+                splits_file = scores_dir / "cv_split_indices.json"
+                with open(splits_file, "w") as sf:
+                    json.dump(value, sf)
+
+                data_copy[key] = {
+                    "cv_splits_file": "scores/cv_split_indices.json",
+                    "count": len(value),
+                }
+            # Externalize any other top-level list (>100 elements) to prevent state bloat
+            elif isinstance(value, list) and len(value) > 100:
+                list_file = scores_dir / f"{key}.json"
+                with open(list_file, "w") as sf:
+                    json.dump(value, sf)
+
+                data_copy[key] = {
+                    "list_file": f"scores/{key}.json",
+                    "count": len(value),
+                }
             else:
                 data_copy[key] = value
         data = data_copy
@@ -88,7 +110,7 @@ class SkillStateStore:
             return state
         obj = json.loads(self.path.read_text(encoding="utf-8"))
 
-        # Hydrate externalized scores and EDA metrics
+        # Hydrate externalized scores, EDA metrics, CV split indices, and large lists
         for key, value in obj.items():
             if not isinstance(value, dict):
                 continue
@@ -103,6 +125,16 @@ class SkillStateStore:
                     with open(eda_path, "r") as sf:
                         loaded = json.load(sf)
                         value.update(loaded)
+            elif "cv_splits_file" in value:
+                splits_path = self.path.parent / value["cv_splits_file"]
+                if splits_path.exists():
+                    with open(splits_path, "r") as sf:
+                        obj[key] = json.load(sf)
+            elif "list_file" in value:
+                list_path = self.path.parent / value["list_file"]
+                if list_path.exists():
+                    with open(list_path, "r") as sf:
+                        obj[key] = json.load(sf)
 
         return validate_skill_state(obj)
 

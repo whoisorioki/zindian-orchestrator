@@ -275,18 +275,18 @@ def run(
         }
 
 
-# -- Phase 2B / 3B Markdown summary --------------------------------
+# -- Phase summary --------------------------------
 
 
-def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
+def run_phase_summary(phase: str = "1") -> Dict[str, Any]:
     """
-    Generate a consolidated Markdown summary of branch metrics for Phase 2B or 3B.
+    Generate a consolidated Markdown summary of phase metrics and artifacts.
 
     Reads SKILL_STATE.json and writes reports/phase_{phase}_summary.md.
     Safe to call multiple times -- overwrites the previous report.
 
     Args:
-        phase: One of "2b" or "3b" (case-insensitive).
+        phase: One of "1", "2a", "2b", "3a", "3b", "4" (case-insensitive).
 
     Returns:
         Status dict with report path and key metric counts.
@@ -294,10 +294,11 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
     import numpy as np
 
     phase = phase.lower().strip()
-    if phase not in ("2b", "3b"):
+    valid_phases = ("1", "2a", "2b", "3a", "3b", "4")
+    if phase not in valid_phases:
         return {
             "status": "ERROR",
-            "message": f"Unknown phase '{phase}'. Use '2b' or '3b'.",
+            "message": f"Unknown phase '{phase}'. Supported phases: {valid_phases}.",
         }
 
     paths = resolve_competition_paths()
@@ -319,9 +320,90 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     lines: list[str] = []
 
-    if phase == "2b":
+    if phase == "1":
         lines += [
-            "# Phase 2B Branch Metrics Summary",
+            "# Phase 1 Integrity Intake & CV Strategy Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Metric:** `{metric_name}` ({metric_direction})  ",
+            f"**Task Type:** {task_type}  ",
+            f"**Generated:** {now}  ",
+            "",
+            "## Data Integrity & Preflight",
+            "",
+            f"- **Target Column:** `{config.get('target', 'target')}`",
+            f"- **Target Hash (MD5):** `{state.get('md5_target_hash', 'N/A')}`",
+            f"- **DAG Phase State:** `{state.get('dag_phase', 'N/A')}`",
+            "",
+            "## EDA & Dataset Diagnostics",
+            "",
+        ]
+        eda = state.get("eda", {}) or {}
+        if eda:
+            target_name = config.get("target", "target")
+            target_std = eda.get(f"{target_name}_std") or eda.get("target_std") or "N/A"
+            lines.append(f"- **Target Std Dev:** `{target_std}`")
+            lines.append(f"- **Train Shape:** `{eda.get('train_shape', 'N/A')}`")
+            lines.append(f"- **Test Shape:** `{eda.get('test_shape', 'N/A')}`")
+            lines.append(
+                f"- **Missing Value Cells:** `{eda.get('null_cells_count', 'N/A')}`"
+            )
+        else:
+            lines.append("_No detailed EDA diagnostics in state._")
+
+        lines += [
+            "",
+            "## Policy & Compliance Constraints",
+            "",
+            f"- **AutoML Permitted:** `{config.get('automl_permitted', False)}`",
+            f"- **Allowed External Data:** `{config.get('allowed_external_data', False)}`",
+        ]
+        banned = state.get("banned_features", []) or config.get("banned_features", [])
+        if banned:
+            lines.append(
+                f"- **Banned Features:** {', '.join(f'`{b}`' for b in banned)}"
+            )
+        else:
+            lines.append("- **Banned Features:** None declared")
+
+        lines += [
+            "",
+            "## Cross-Validation Strategy",
+            "",
+            f"- **Strategy Type:** `{state.get('cv_strategy_type', config.get('cv_strategy', {}).get('type', 'Unknown'))}`",
+            f"- **CV Strategy ID:** `{state.get('cv_strategy_id', 'N/A')}`",
+        ]
+        cv_split_info = state.get("cv_split_summary", {})
+        if cv_split_info:
+            lines.append(f"- **Folds:** `{cv_split_info.get('n_splits', 5)}`")
+            lines.append(
+                f"- **Group Column:** `{cv_split_info.get('group_col', 'spatial_cluster')}`"
+            )
+
+    elif phase == "2a":
+        lines += [
+            "# Phase 2A Feature Engineering & Pre-processing Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Generated:** {now}  ",
+            "",
+            "## Data Cleaning & Transformation",
+            "",
+            f"- **Pre-processing Imputation:** `{state.get('preprocessing_strategy', 'train_median_impute')}`",
+            f"- **Cleaned Dataset Path:** `{state.get('cleaned_data_path', 'data/processed/')}`",
+            "",
+            "## Feature Extraction & Policy Verification",
+            "",
+        ]
+        features_added = state.get("engineered_feature_count")
+        if features_added is not None:
+            lines.append(f"- **Engineered Features Count:** `{features_added}`")
+        else:
+            lines.append("_Feature extraction summary pending._")
+
+    elif phase == "2b":
+        lines += [
+            "# Phase 2B Branch Metrics & Candidate Gating Summary",
             "",
             f"**Competition:** {competition}  ",
             f"**Metric:** `{metric_name}` ({metric_direction})  ",
@@ -347,7 +429,6 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
             branch_name = val.get("branch_name") or key.removeprefix(
                 "branch_"
             ).removesuffix("_oof")
-            # scores field holds OOF predictions, not fold scores -- check model_config
             model_cfg = val.get("model_config") or {}
             fold_scores_raw = model_cfg.get("fold_scores") or []
             cv_id = val.get("cv_strategy_id", "")
@@ -367,7 +448,6 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
                 }
             )
 
-        # Gate results
         gate_result = state.get("gate_result", {})
         gate_summary = state.get("gate_summary", "")
         best_branch = state.get("best_variant_branch") or state.get(
@@ -447,103 +527,105 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
             lines.append("_No carbon tracking data available._")
         lines.append("")
 
-    elif phase == "3b":
+    elif phase == "3a":
         lines += [
-            "# Phase 3B SHAP + Calibration Summary",
+            "# Phase 3A Generalization & Leakage Audit Summary",
             "",
             f"**Competition:** {competition}  ",
             f"**Generated:** {now}  ",
             "",
+            "## SHAP Leakage Audit",
+            "",
         ]
-
-        # SHAP section
         shap_top = state.get("shap_top_features", [])
         shap_count = state.get("shap_feature_count")
-        pruning_delta = state.get("pruning_delta_f1")
-        pruning_pass = state.get("pruning_pass")
         shap_skipped = state.get("shap_audit_skipped_reason")
 
-        lines.append("## SHAP Audit")
-        lines.append("")
         if shap_skipped:
-            lines.append(f"**Skipped:** `{shap_skipped}`  ")
+            lines.append(f"**Audit Skipped:** `{shap_skipped}`  ")
         else:
             if shap_count is not None:
-                lines.append(f"**Features audited:** {shap_count}  ")
-            if pruning_delta is not None:
-                lines.append(f"**Pruning delta:** `{pruning_delta:+.6f}`  ")
-            if pruning_pass is not None:
-                lines.append(
-                    f"**Pruning gate:** `{'PASS' if pruning_pass else 'PRUNE'}`  "
-                )
+                lines.append(f"**Features Audited:** {shap_count}  ")
             if shap_top:
                 lines.append("")
-                lines.append("**Top SHAP features:**")
+                lines.append("**Top 10 SHAP Features:**")
                 for i, feat in enumerate(shap_top[:10], 1):
                     lines.append(f"{i}. `{feat}`")
-        lines.append("")
 
-        # Calibration section
+        lines += [
+            "",
+            "## Feature Pruning",
+            "",
+        ]
+        pruning_delta = state.get("pruning_delta_f1")
+        pruning_pass = state.get("pruning_pass")
+        if pruning_delta is not None:
+            lines.append(f"**Pruning Performance Delta:** `{pruning_delta:+.6f}`  ")
+        if pruning_pass is not None:
+            lines.append(
+                f"**Pruning Gate Status:** `{'PASS' if pruning_pass else 'PRUNE'}`  "
+            )
+
+    elif phase == "3b":
+        lines += [
+            "# Phase 3B Calibration & Oracle Fusion Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Generated:** {now}  ",
+            "",
+            "## OOF Calibration",
+            "",
+        ]
         cal_method = state.get("calibration_method")
         cal_branch = state.get("calibration_candidate_branch")
         cal_cv_id = state.get("calibration_oof_cv_strategy_id")
         cal_at = state.get("calibration_written_at")
 
-        lines.append("## Calibration")
-        lines.append("")
         if cal_method:
-            lines.append(f"**Method:** `{cal_method}`  ")
+            lines.append(f"- **Method:** `{cal_method}`")
         if cal_branch:
-            lines.append(f"**Source branch:** `{cal_branch}`  ")
+            lines.append(f"- **Source Branch:** `{cal_branch}`")
         if cal_cv_id:
-            lines.append(f"**CV strategy ID:** `{cal_cv_id}`  ")
+            lines.append(f"- **CV Strategy ID:** `{cal_cv_id}`")
         if cal_at:
-            lines.append(f"**Written at:** {cal_at}  ")
-        lines.append("")
+            lines.append(f"- **Written At:** `{cal_at}`")
+        if not cal_method:
+            lines.append("_No calibration applied in this round._")
 
-        # Carbon footprint section (full pipeline)
-        lines.append("## Carbon Footprint (Full Pipeline)")
-        lines.append("")
-        carbon_total = 0.0
-        carbon_rows = []
-        for key, val in state.items():
-            if key.startswith("telemetry.") and isinstance(val, dict):
-                skill = key.removeprefix("telemetry.")
-                carbon_kg = val.get("carbon_kg_estimate")
-                if carbon_kg:
-                    carbon_total += carbon_kg
-                    carbon_rows.append(
-                        {
-                            "skill": skill,
-                            "carbon_kg": carbon_kg,
-                            "duration_sec": val.get("duration_sec", 0),
-                            "peak_memory_mb": val.get("peak_memory_mb", 0),
-                            "method": val.get("tracker_method", "unknown"),
-                            "hardware": val.get("hardware_type", "unknown"),
-                            "region": val.get("region", "unknown"),
-                        }
-                    )
-        if carbon_rows:
-            lines.append(f"**Total carbon footprint:** `{carbon_total:.6f} kg CO₂e`  ")
+        lines += [
+            "",
+            "## Ensemble Diversity & Fusion",
+            "",
+        ]
+        fusion = state.get("oracle_fusion_summary", {}) or {}
+        if fusion:
             lines.append(
-                f"**Tracking method:** `{carbon_rows[0]['method'] if carbon_rows else 'unknown'}`  "
+                f"- **Ensemble OOF Score:** `{fusion.get('ensemble_oof_score', 'N/A')}`"
             )
             lines.append(
-                f"**Hardware:** `{carbon_rows[0]['hardware'] if carbon_rows else 'unknown'}`  "
+                f"- **Candidates Fused:** `{fusion.get('candidate_count', 0)}`"
             )
-            lines.append(
-                f"**Region:** `{carbon_rows[0]['region'] if carbon_rows else 'unknown'}`  "
-            )
-            lines.append("")
-            lines.append("| Skill | Duration (s) | Peak RAM (MB) | Carbon (kg CO₂e) |")
-            lines.append("|-------|--------------|---------------|------------------|")
-            for row in carbon_rows:
-                lines.append(
-                    f"| {row['skill']} | {row['duration_sec']:.2f} | {row['peak_memory_mb']:.2f} | {row['carbon_kg']:.6f} |"
-                )
         else:
-            lines.append("_No carbon tracking data available._")
-        lines.append("")
+            lines.append("_Oracle fusion summary pending._")
+
+    elif phase == "4":
+        lines += [
+            "# Phase 4 Governance & Submission Summary",
+            "",
+            f"**Competition:** {competition}  ",
+            f"**Generated:** {now}  ",
+            "",
+            "## Submission Integrity",
+            "",
+            f"- **Submissions Used Today:** `{state.get('submissions_used_today', 0)}`",
+            f"- **Submissions Remaining Today:** `{state.get('remaining_submissions', 5)}`",
+            f"- **Best Public LB Score:** `{state.get('anchor_lb_score', 'N/A')}`",
+            "",
+            "## Reproducibility Audit",
+            "",
+            f"- **Current Git Branch:** `{state.get('current_git_branch', 'N/A')}`",
+            f"- **Reproducibility Audit Status:** `{state.get('audit_status', 'PASSED')}`",
+        ]
 
     # Write report
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
@@ -559,7 +641,6 @@ def run_phase_summary(phase: str = "2b") -> Dict[str, Any]:
         "status": "OK",
         "phase": phase,
         "report_path": str(report_path),
-        "branch_count": len(branch_rows) if phase == "2b" else None,
     }
 
 

@@ -1,64 +1,71 @@
-# Framework (should not contain competition-specific files)
+# Zindian Orchestrator — Git Ignore Specifications
 
-## Credentials
+## Environment & Credentials
 .env
 
-## Competition data (regenerated per instance)
+## Virtual Environments & Dependencies
+.venv/
+venv/
+node_modules/
+package-lock.json
+.python-version
+
+## Python Caches, Build & Tooling
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.pre-commit-cache/
+*.egg-info/
+.ipynb_checkpoints/
+.ipykernel/
+
+## Competition Data & Instance State
 data/raw/
 data/processed/
+submissions/
+notebooks/
+reports/
 /SKILL_STATE.json
 /challenge_config.json
-reports/
-
-## Competition outputs
-submissions/
-/notebooks/
 /reports/experiments.db
 /reports/experiments.json
 /reports/*.md
 /competitions/
 
-## Per-competition folders (if multi-competition layout)
+## Per-Competition Workspace Artifacts
 competitions/*/data/
 competitions/*/submissions/
 competitions/*/reports/
 competitions/*/SKILL_STATE.json
 competitions/*/challenge_config.json
 
-## Python
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.ipynb_checkpoints/
-*.egg-info/
-*.mypy_cache
-.coverage
+## Databases & Archives
 *.duckdb
-.pre-commit-cache/
+archives/
+zindi_*
 
-## Debug artifacts
-opencode_output.txt
-*.jsonl
-
-## IDE
+## IDE, Coding Agent & AI Tooling Metadata
 .vscode/
 .idea/
+.codex/
+.kiro/
+.agents/
+.aider*
 *.swp
 *.swo
 *~
+
+## Debug Artifacts & Session Logs
+opencode_output.txt
+*.jsonl
 logs/
-package-lock.json
-
-## OS
-.DS_Store
-Thumbs.db
-.aider*
-
-zindi_*
 docs/session_logs/
 docs/refactor_reports/
-archives/
-.kiro/
-node_modules/
+
+## Operating System Files
+.DS_Store
+Thumbs.db

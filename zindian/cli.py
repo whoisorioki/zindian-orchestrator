@@ -4,6 +4,7 @@
 Consolidated 21 commands covering the Competition Data Lifecycle.
 """
 
+import os
 import sys
 import argparse
 import json
@@ -119,6 +120,9 @@ def main():
         help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)",
     )
     phase_parser.add_argument(
+        "--competition", "--slug", "-c", help="Competition folder path or slug"
+    )
+    phase_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show detailed skill output"
     )
     phase_parser.add_argument("--variant", help="Variant name to pass to phase skills")
@@ -188,6 +192,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    comp_arg = getattr(args, "competition", None) or getattr(args, "slug", None)
+    if comp_arg:
+        os.environ["ZINDIAN_COMPETITION_SLUG"] = str(comp_arg)
+        os.environ["ZINDIAN_COMPETITION"] = str(comp_arg)
 
     # ---------------------------------------------------------
     # Core Command Handlers
