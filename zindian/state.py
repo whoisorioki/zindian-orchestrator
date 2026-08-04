@@ -130,11 +130,15 @@ class SkillStateStore:
                 if splits_path.exists():
                     with open(splits_path, "r") as sf:
                         obj[key] = json.load(sf)
+                else:
+                    obj[key] = []
             elif "list_file" in value:
                 list_path = self.path.parent / value["list_file"]
                 if list_path.exists():
                     with open(list_path, "r") as sf:
                         obj[key] = json.load(sf)
+                else:
+                    obj[key] = []
 
         return validate_skill_state(obj)
 

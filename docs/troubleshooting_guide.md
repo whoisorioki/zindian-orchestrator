@@ -103,3 +103,13 @@ This guide consolidates troubleshooting steps and fixes for common errors, runti
         .venv/bin/pip install pre-commit
         .venv/bin/pre-commit run --all-files
         ```
+
+---
+
+## 7. SKILL_STATE Sidecar Externalization (`scores/` Directory)
+*   **Architecture:** To prevent `SKILL_STATE.json` bloat while maintaining state integrity, heavy data structures are automatically externalized to sidecar JSON files under `competitions/<slug>/scores/`:
+    *   `cv_split_indices`: Externalized if non-empty (`len > 0`) because fold index arrays contain thousands of row indices.
+    *   Large metric dicts (e.g. `eda`): Externalized to `scores/eda_<key>.json` if key count > 10.
+    *   Large top-level lists (e.g. `sidecar_recommendations`): Externalized to `scores/<key>.json` if element count > 100.
+*   **Pointer Structure:** In `SKILL_STATE.json`, the key is replaced by a pointer dictionary (e.g. `{"cv_splits_file": "scores/cv_split_indices.json", "count": 5}` or `{"list_file": "scores/<key>.json", "count": 120}`).
+*   **Hydration & Fallback:** `SkillStateStore.read()` automatically hydrates pointer dictionaries back into full list/dict objects on load. If an externalized sidecar file is missing or removed, `read()` safely falls back to `[]` (empty list) for list pointers, preventing downstream `AttributeError` exceptions when state consumers iterate over list keys.
