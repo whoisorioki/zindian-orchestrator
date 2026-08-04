@@ -98,20 +98,12 @@ def resolve_competition_paths(
         if len(matches) == 1:
             comp_dir = matches[0].parent
         elif len(matches) > 1:
-
-            def _state_sort_key(path: Path) -> tuple[int, float]:
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    ts = data.get("last_updated")
-                    if isinstance(ts, str) and ts:
-                        norm = ts.replace("Z", "+00:00")
-                        return (1, datetime.fromisoformat(norm).timestamp())
-                except Exception:
-                    pass
-                return (0, path.stat().st_mtime)
-
-            best = max(matches, key=_state_sort_key)
-            comp_dir = best.parent
+            if require_competition:
+                slugs = [m.parent.name for m in matches]
+                raise ValueError(
+                    f"Ambiguous competition context: multiple competitions found ({slugs}). "
+                    f"Please specify a slug explicitly, set ZINDIAN_COMPETITION, or run from within a competition directory."
+                )
 
     # 5) Fallback error or legacy root fallback
     if comp_dir is None:
