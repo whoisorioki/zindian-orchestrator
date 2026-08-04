@@ -16,10 +16,6 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
-# Default target column names (can be overridden per-competition)
-TARGET_COL = "target"
-SUBMISSION_TARGET_COL = "target"
-
 
 def compute_md5(series: pd.Series) -> str:
     """Compute MD5 hash of a pandas Series values.
@@ -204,9 +200,14 @@ def run(re_verify: bool = False) -> dict:
                 )
 
         if submission_target_col not in sub.columns:
-            raise AssertionError(
-                f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"
-            )
+            sub_cols_lower = {c.lower(): c for c in sub.columns}
+            if submission_target_col and submission_target_col.lower() in sub_cols_lower:
+                submission_target_col = sub_cols_lower[submission_target_col.lower()]
+                print(f"[INFO] Resolved submission target column to '{submission_target_col}' in SampleSubmission.csv")
+            else:
+                raise AssertionError(
+                    f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"
+                )
         print("[OK] Required columns present (warnings may have been emitted)")
 
     # Validate target values (skip in INIT mode)
