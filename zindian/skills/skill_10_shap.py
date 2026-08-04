@@ -164,7 +164,7 @@ def _train_shap_fold_model(
     *,
     seed: int,
     task_type: str = "classification",
-) -> lgb.LGBMClassifier | lgb.LGBMRegressor:
+) -> Any:
     if task_type == "regression":
         model = lgb.LGBMRegressor(
             n_estimators=500,
@@ -289,7 +289,7 @@ def _compute_shap_audit(
             print(f"  Fold {fold_idx}/{n_splits}: rmse={fold_rmse:.6f}")
         else:
             val_probs = np.asarray(
-                cast(lgb.LGBMClassifier, model).predict_proba(X[val_idx]),
+                cast(Any, model).predict_proba(X[val_idx]),
                 dtype=np.float64,
             )
             n_classes = val_probs.shape[1]
@@ -653,7 +653,7 @@ def run(
                 oof_probs[val_idx] = val_preds
             else:
                 val_probs = np.asarray(
-                    cast(lgb.LGBMClassifier, model).predict_proba(X[val_idx]),
+                    cast(Any, model).predict_proba(X[val_idx]),
                     dtype=np.float64,
                 )[:, 1]
                 oof_probs[val_idx] = val_probs

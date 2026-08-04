@@ -875,12 +875,13 @@ def main():
     active_strategy = "N/A"
     if cfg:
         cv_strategy = f"{cfg.get('cv_strategy', {}).get('type', 'N/A')} — {cfg.get('cv_strategy', {}).get('selection_reason', 'N/A')[:30]}..."
-        override_active = state.get("cv_strategy_override", {}).get("active", False)
+        override_dict = state.get("cv_strategy_override") or {}
+        override_active = override_dict.get("active", False)
         if override_active:
-            cv_override_active = f"YES — {state.get('cv_strategy_override', {}).get('override_strategy', 'N/A')}"
-            active_strategy = state.get("cv_strategy_override", {}).get(
-                "override_strategy", "N/A"
+            cv_override_active = (
+                f"YES — {override_dict.get('override_strategy', 'N/A')}"
             )
+            active_strategy = override_dict.get("override_strategy", "N/A")
         else:
             active_strategy = cfg.get("cv_strategy", {}).get("type", "N/A")
 

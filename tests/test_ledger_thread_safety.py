@@ -9,7 +9,6 @@ locking errors, row corruption, or lost writes.
 from __future__ import annotations
 
 import threading
-import pytest
 from pathlib import Path
 
 from zindian.ledger import Ledger

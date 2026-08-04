@@ -196,7 +196,7 @@ python scripts/test_phase_1.py
 ## Key Features (v2.4)
 
 ### Statistical Migration Specs (S1-S10)
-- **S1 & S9:** Nadeau-Bengio corrected fold variance ($\text{Var}_{\text{NB}}$) and 1-SE promotion margins in variant gating.
+- **S1 & S9:** Nadeau-Bengio corrected fold variance (`Var_NB`) and 1-SE promotion margins in variant gating.
 - **S2:** MASE metric diagnostics for temporal regression tasks.
 - **S3:** Dynamic inverse-variance target weighting for multi-target composite scores.
 - **S4:** Kuncheva residual vector correlation for collinearity pruning in model fusion.

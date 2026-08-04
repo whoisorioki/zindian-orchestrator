@@ -2,6 +2,16 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.4-docs-update-2026-08-04]
+
+### Added
+- **Complete Skill & Phase Architecture Matrix** (`docs/quick_start.md`): Added comprehensive mapping for all 25 skill files (`skill_00` to `skill_22`) across 23 contiguous slots, detailing their assigned DAG phases (`Phase 1` to `Phase 4` or Sidecar Daemons `00`, `18`, `19`, `20`), Static vs Dynamic type classification, and state/report pipeline connections.
+- **F4 Multi-Tenancy Ambiguity Resolution Rules** (`docs/quick_start.md`): Documented 5-step competition path resolution order and the `ValueError` hard-fail rule when multiple `competitions/*/` subdirectories exist on disk without an explicit slug.
+
+### Changed
+- `AGENTS.md`: Updated ground truth verification for skill module count claim to `[CONFIRMED]` (25 Python files across 23 contiguous slots `00` through `22`).
+- `tests/test_gate_option_b.py`, `tests/test_ambiguous_auto_detect_warnings.py`, `zindian/skills/skill_10_shap.py`: Added explicit type annotations for `failing_cases` and `initial_state`, and fixed return type annotation of `_train_shap_fold_model` to resolve mypy/pre-commit type errors.
+
 ## [v2.4-closure-2026-08-03]
 
 ### Added

@@ -97,9 +97,13 @@ python -m zindian.cli sync
 
 #### 6. `phase` - Execute Pipeline Phase
 ```bash
-python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--verbose] [--variant <name>]
+python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--verbose] [--variant <name>] [--non-interactive]
 ```
-*   **Description:** Executes a complete pipeline phase with all corresponding skills. Shows the execution status of each skill.
+*   **Description:** Executes a complete pipeline phase with all corresponding skills.
+*   **`--variant <name>` Behavior Across Phases**:
+    - **Phase 2B**: In Anchor Mode (without `--variant`), trains anchor baseline (`skill_08`) and prompts Gate 1. In Variant Mode (`--variant <name>`), checks Gate 1, skips anchor training, generates variant features & model (`skill_07`), registers sidecar `variants/<name>.json`, and prompts Gate 2 (`human_gate_2_<name>_approved`).
+    - **Phase 3A**: Loads `features_train_<name>.csv` and sidecar `variants/<name>.json` for targeted SHAP leak detection (`skill_10`), calibration (`skill_09`), and gate evaluation (`skill_11`).
+    - **Phase 3B & 4**: Auto-resolves registered & approved variants directly from `SKILL_STATE.json` for Oracle Fusion blending (`skill_13`) and final inference generation (`skill_14`).
 
 #### 7. `status` - Show current state
 ```bash

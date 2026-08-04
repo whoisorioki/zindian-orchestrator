@@ -74,7 +74,25 @@ class TestPreflightModeCheck:
         )
 
         # Action: Run orchestrator using conftest wrapped path resolution
-        result = run_phase("2A")
+        from zindian.paths import CompetitionPaths
+
+        tmp_paths = CompetitionPaths(
+            root=tmp_path,
+            competition_dir=tmp_path,
+            config_path=config_path,
+            state_path=state_path,
+            data_raw_dir=raw_dir,
+            data_processed_dir=tmp_path / "data" / "processed",
+            reports_dir=tmp_path / "reports",
+            notebooks_dir=tmp_path / "notebooks",
+            submissions_dir=tmp_path / "submissions",
+        )
+        with patch(
+            "zindian.paths.resolve_competition_paths", return_value=tmp_paths
+        ), patch(
+            "zindian.orchestrator.resolve_competition_paths", return_value=tmp_paths
+        ):
+            result = run_phase("2A")
 
         # Assert: Preflight validation occurred
         assert result is not None

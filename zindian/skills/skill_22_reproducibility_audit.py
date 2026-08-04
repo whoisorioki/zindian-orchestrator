@@ -488,7 +488,10 @@ def write_history_log_entry(root: Path, config: dict, state: dict) -> Path:
             except json.JSONDecodeError:
                 existing_lines.append(line)
                 continue
-            if entry.get("competition_id") != competition_id and entry.get("slug") != competition_id:
+            if (
+                entry.get("competition_id") != competition_id
+                and entry.get("slug") != competition_id
+            ):
                 existing_lines.append(json.dumps(entry))
 
     existing_lines.append(json.dumps(new_entry))

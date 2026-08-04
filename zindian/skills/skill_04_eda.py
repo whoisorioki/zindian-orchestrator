@@ -389,13 +389,17 @@ def run():
         if "_" in c:
             parts = c.split("_")
             if len(parts) >= 2:
-                if parts[-1].isdigit() and (1 <= int(parts[-1]) <= 12 or len(parts[-1]) == 2):
+                if parts[-1].isdigit() and (
+                    1 <= int(parts[-1]) <= 12 or len(parts[-1]) == 2
+                ):
                     candidate = parts[0]
                     format_prefix_month.add(candidate)
                     if candidate not in _seen:
                         detected_bands.append(candidate)
                         _seen.add(candidate)
-                elif parts[0].isdigit() and (1 <= int(parts[0]) <= 12 or len(parts[0]) == 2):
+                elif parts[0].isdigit() and (
+                    1 <= int(parts[0]) <= 12 or len(parts[0]) == 2
+                ):
                     candidate = parts[-1]
                     format_month_prefix.add(candidate)
 

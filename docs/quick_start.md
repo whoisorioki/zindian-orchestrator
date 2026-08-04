@@ -1,115 +1,280 @@
 # Zindian Orchestrator — Quick Start Guide
 
-This guide walks you through setting up Zindian Orchestrator and running your first competition pipeline.
+This guide walks you through initializing a competition workspace, running preflight verification, executing the 5-phase competition pipeline, and tracking experiments using the **Zindian Orchestrator CLI** and **Preflight Engine** aligned with **Source of Truth v2.4**.
 
 ---
 
-## 1. Environment Setup
+## 1. Environment & Setup
 
-Activate your virtual environment and install the dependencies:
+Activate your Python environment and verify installation:
 
-*   **Unix/macOS:**
-    ```bash
-    source .venv/bin/activate
-    ```
-*   **Windows (PowerShell):**
-    ```powershell
-    .venv\Scripts\Activate.ps1
-    ```
+* **Unix/macOS:**
+  ```bash
+  source .venv/bin/activate
+  ```
+* **Windows (PowerShell / Git Bash):**
+  ```powershell
+  .venv\Scripts\Activate.ps1
+  ```
 
-Install the pinned dependencies:
+Install pinned dependencies:
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-Verify that the environment works by running the automated test suite:
+Verify repository health with the automated test suite:
 ```bash
-python -m pytest
-```
-
-Alternatively, run the mock Phase 1 simulation script to verify skill module imports and executions on dummy data:
-```bash
-python scripts/test_phase_1.py
+pytest tests/ -q
 ```
 
 ---
 
-## 2. Initialize the Experiments Database
+## 2. Bootstrapping & Multi-Tenancy Resolution
 
-Initialize the DuckDB audit ledger, which records all training experiments and Zindi submissions:
+Zindian Orchestrator enforces **competition-aware multi-tenancy**. All competition-specific state, configs, ledger DBs, and data artifacts reside inside `competitions/<slug>/`.
+
+### Competition Path Resolution Order
+When executing CLI commands or running skills, `resolve_competition_paths()` resolves the active competition in the following strict order:
+1. Explicit `--competition <path_or_slug>` CLI flag or function `slug` parameter.
+2. Current working directory (if executing from inside `competitions/<slug>/`).
+3. `ZINDIAN_COMPETITION_SLUG` (or `COMPETITION_SLUG` / `ZINDIAN_COMPETITION`) environment variable.
+4. `.env` file entry defining `ZINDIAN_COMPETITION_SLUG`.
+5. Auto-detect when **exactly one** `competitions/*/SKILL_STATE.json` exists.
+
+> [!IMPORTANT]
+> **F4 Ambiguity Hard-Fail Rule**: If multiple `competitions/*/` folders exist on disk and no explicit slug, environment variable, `.env` file, or working directory is specified, the orchestrator **hard-fails with a `ValueError`** (`require_competition=True`). It does **not** dynamically pick a competition based on `last_updated` timestamps, preventing accidental state corruption or cross-competition pollution.
+
+### Step 2.1: Initialize the Competition Workspace
+Run `tabula init` or `zindian-cli bootstrap` with your competition slug:
+
+```bash
+# Using Tabula CLI
+python -m tabula init one-step-ahead-of-drought-forecasting-global-water-storage-challenge --yes
+
+# Or using Zindian CLI
+python -m zindian.cli bootstrap one-step-ahead-of-drought-forecasting-global-water-storage-challenge --yes
+```
+
+This creates the competition structure:
+```
+competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/
+├── challenge_config.json   # Competition contract
+├── SKILL_STATE.json        # State & Human Gate memory
+├── data/
+│   ├── raw/                # Train.csv, Test.csv, SampleSubmission.csv
+│   └── processed/          # Engineered features & OOF arrays
+├── reports/
+│   └── experiments.db      # Isolated DuckDB experiment ledger
+├── notebooks/
+└── submissions/            # Submission CSVs
+```
+
+And automatically sets your active competition in `.env`:
+```env
+ZINDIAN_COMPETITION_SLUG=one-step-ahead-of-drought-forecasting-global-water-storage-challenge
+```
+
+---
+
+## 3. Competition Data Intake & Configuration
+
+### Step 3.1: Ingest Data Files
+Move the competition dataset files (`Train.csv`, `Test.csv`, `SampleSubmission.csv`) into `competitions/<slug>/data/raw/`:
+```bash
+cp /path/to/downloads/Train.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
+cp /path/to/downloads/Test.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
+cp /path/to/downloads/SampleSubmission.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
+```
+
+### Step 3.2: Configure `challenge_config.json`
+Populate `competitions/<slug>/challenge_config.json` with competition task parameters, metric, spatio-temporal signals, and submission limits:
+
+```json
+{
+  "name": "One Step Ahead of Drought: Forecasting Global Water Storage Challenge",
+  "slug": "one-step-ahead-of-drought-forecasting-global-water-storage-challenge",
+  "task_type": "regression",
+  "target_col": "Target",
+  "metric": "root_mean_squared_error",
+  "metric_direction": "minimize",
+  "submission_budget": {
+    "total": 30,
+    "daily": 5,
+    "used": 0
+  },
+  "reproducibility": {
+    "seed": 42
+  },
+  "spatial_signal": {
+    "present": true,
+    "lat_col": "latitude",
+    "lon_col": "longitude",
+    "group_col": "location_id",
+    "spatial_buffer_km": 50.0
+  },
+  "cv_strategy": {
+    "type": "GroupKFold",
+    "n_splits": 5,
+    "shuffle": false,
+    "random_state": 42,
+    "group_col": "location_id",
+    "selection_reason": "GroupKFold by location_id prevents spatial autocorrelation leakage"
+  }
+}
+```
+
+---
+
+## 4. Initialize Competition Experiment Ledger
+
+Provision the competition-isolated DuckDB audit ledger (`experiments.db`), which tracks all model variants, OOF scores, gate outcomes, and submission metadata:
+
 ```bash
 python -m zindian.cli init-ledger
 ```
-This creates the DuckDB ledger file located at `reports/experiments.db`.
+> **Ledger Path**: `competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/reports/experiments.db`
 
 ---
 
-## 3. Bootstrap a New Competition
+## 5. Preflight Compliance Engine
 
-Use the CLI tool to bootstrap a new competition workspace. This creates the required folders and generates default configurations:
+Before executing pipeline phases, run the preflight verification check to guarantee environment lock and Source of Truth (SoT v2.4) compliance.
+
 ```bash
-python -m zindian.cli bootstrap my-tabular-challenge
+python -m zindian.cli preflight --competition competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge --non-interactive
 ```
-This creates a new folder under `competitions/my-tabular-challenge/` with:
-- `challenge_config.json` (competition contract template)
-- `SKILL_STATE.json` (agent memory template)
-- Empty directories for data, notebooks, and reports.
+
+### Preflight Operational Modes
+
+1. **INIT Mode**: Triggers when `challenge_config.json` is unpopulated.
+   - Validates workspace directory structure and write permissions.
+   - Verifies raw dataset presence (`Train.csv`, `Test.csv`).
+
+2. **ENFORCE Mode**: Triggers when `challenge_config.json` is configured.
+   - **Schema Completeness**: Validates 29 required top-level configuration keys.
+   - **Human Gate Memory**: Audits standard human gate keys (`human_gate_1_approved`, `human_gate_3_approved`, `human_gate_4_approved`, `human_gate_5_selection`, and flat `human_gate_2_<variant>_approved` booleans).
+   - **AST Static Code Audits**:
+     - `scan_automl_imports`: Hard prohibition of AutoML imports (`auto-sklearn`, `tpot`, `h2o`, etc.).
+     - `scan_cross_skill_imports`: Blocks cross-skill module dependencies.
+     - `scan_oof_cv_strategy_tags`: Verifies all `write_oof_record()` calls pass `cv_strategy_id`.
+   - **Section 1 Assumptions Audit**: Validates A1 (scoping), A2 (tabular format), A3 (submission budget $\le 30$), A4 (target presence), A5 (zero hardcoded competition strings), A6 (atomic state writes), A8 (GroupKFold spatial routing), and A9 (safe `.get()` reads).
 
 ---
 
-## 4. Run the Pipeline Phases
+## 6. Pipeline Phase Execution & Variant Management
 
-The orchestrator executes standard data science workflows in 5 sequential phases:
+Execute the orchestrator DAG sub-phases sequentially using `zindian-cli phase`:
 
-### Phase 1: Competition Fingerprint
-Reads competition rules, examines raw data, and locks the configuration:
 ```bash
+# Phase 1: Competition Fingerprint & Data Integrity
 python -m zindian.cli phase 1
-```
 
-### Phase 2A: Data Cleaning
-Cleans raw tables and prepares base features:
-```bash
+# Phase 2A: Feature Preprocessing & Imputation
 python -m zindian.cli phase 2A
-```
 
-### Phase 2B: Baseline Anchor Model
-Trains the initial baseline model and triggers **Human Gate 1** (to approve the baseline score):
-```bash
+# Phase 2B: Baseline Anchor Model Training (No --variant)
 python -m zindian.cli phase 2B
-```
+# -> Trains baseline anchor model (skill_08), prompts Human Gate 1 to approve baseline.
 
-### Phase 3A: Generalization Audit
-Runs SHAP feature-leak checks, probability calibration, and variant gating:
-```bash
-python -m zindian.cli phase 3A
-```
+# Phase 2B: Feature Variant Branch Training (--variant <name>)
+python -m zindian.cli phase 2B --variant lgb_hydrological_lags
+# -> Checks Gate 1, skips skill_08 anchor training, runs skill_07 feature engineering,
+#    registers variants/lgb_hydrological_lags.json, trains variant model, and prompts Human Gate 2.
 
-### Phase 3B: Model Fusion
-Applies Oracle Fusion to blend predictions and triggers **Human Gate 3**:
-```bash
+# Phase 3A: Targeted Variant Generalization Audit (SHAP & MI Audit)
+python -m zindian.cli phase 3A --variant lgb_hydrological_lags
+# -> Loads variant features and model sidecars to run leak detection, SHAP audit, and calibration.
+
+# Phase 3B: Model Fusion & Human Gate 3 (Oracle Fusion)
 python -m zindian.cli phase 3B
+# -> Auto-reads registered & approved variants from SKILL_STATE.json to execute Oracle Fusion.
+
+# Phase 4: Final Inference, Reproducibility Audit, and Submission Selection
+python -m zindian.cli phase 4
+# -> Generates test predictions using promoted variant/fusion ensemble from SKILL_STATE.json.
 ```
 
-### Phase 4: Governance & Inference
-Formats test predictions to the submission schema, runs reproducibility checks, and selects the final submissions:
-```bash
-python -m zindian.cli phase 4
-```
+### Complete Skill & Phase Architecture Matrix (All 25 Skill Modules)
+
+The orchestrator manages **25 skill modules** across 23 contiguous slots (`skill_00` to `skill_22`). Skills execute sequentially within DAG sub-phases or asynchronously as background daemons:
+
+| Skill Slot & Module Name | Phase Mapping | Type | Primary Role & Pipeline Connection |
+| :--- | :--- | :--- | :--- |
+| **`skill_00_zindi_monitor.py`**<br>*(Shim: `skill_00_discussion_monitor.py`)* | Sidecar / Phase 0 Daemon | **Dynamic** | Polls Zindi platform for rules, discussions, and submission limits; updates `community_signals` and compliance state. |
+| **`skill_01_integrity.py`** | **Phase 1** | **Static** | Computes MD5 checksums (`Train.csv`, `Test.csv`, `SampleSubmission.csv`), checks tabular extensions, audits environment hashes. |
+| **`skill_02_intake.py`** | **Phase 1** | **Dynamic** | Reads raw headers, populates `challenge_config.json` (targets, spatial/temporal columns, metric) before Phase 1 config lock. |
+| **`skill_03_legality.py`** | **Phase 1** (`policy_writer`) & **Phase 2A** (`policy_gate`) | **Static** | **Split Execution**: `policy_writer()` synthesizes compliance rules (`reports/feature_policy.json`); `policy_gate()` blocks banned features. |
+| **`skill_04_eda.py`** | **Phase 1** | **Static** | Computes target std ($\sigma_y$), missingness (MCAR/MNAR), correlation matrix; offloads heavy dicts to `reports/eda_report.json`. |
+| **`skill_05_cv.py`** | **Phase 1** | **Dynamic** | Configures CV strategy. Routes spatial datasets (`lat`/`lon`) to 3D sphere projected `KMeans` spatial clustering with 50 km buffer exclusion. |
+| **`skill_06_preprocessing.py`** | **Phase 2A** | **Static** | Applies MNAR missingness indicators, median/mode MCAR imputation, and drops constant columns (`data/processed/`). |
+| **`skill_07_features.py`** | **Phase 2B** (Dual Call) | **Dynamic** | Synthesizes baseline/variant features, integrates Skill 20 sidecar hypotheses, registers `variants/<name>.json`, trains variant models. |
+| **`skill_08_anchor.py`** | **Phase 2B** | **Dynamic** | Trains baseline anchor model, computes OOF predictions tagged with `cv_strategy_id`, sets `anchor_oof_score`, prompts **Human Gate 1**. |
+| **`skill_09_calibration.py`** | **Phase 3A** | **Dynamic** | Fits foldwise Platt Scaling / Isotonic Regression for classification, or residual variance scaling for regression tasks. |
+| **`skill_10_shap.py`** | **Phase 3A** | **Dynamic** | Computes per-fold validation SHAP values; enforces `shap_leak_threshold` (3.0 ratio) to flag feature target leakage before promotion. |
+| **`skill_11_gate.py`** | **Phase 3B** | **Dynamic** | Evaluates variants using Nadeau-Bengio inverse-variance weighting & 1-SE margin against 3 baseline modes (`anchor`, `challenged`, `augmented`). |
+| **`skill_12_metric.py`** | **Phase 3A** | **Static** | Computes `MAE_naive` benchmark, target-scaled thresholds ($\sigma_y$), and Nadeau-Bengio fold sample variance correction factors ($ddof=1$). |
+| **`skill_13_oracle_fusion.py`**<br>*(Shim: `skill_13_ensemble.py`)* | **Phase 3B** | **Dynamic** | Prunes collinear predictions (correlation $>0.95$), computes Nelder-Mead / Ridge blend weights, prompts **Human Gate 3**. |
+| **`skill_14_inference.py`** | **Phase 4** | **Dynamic** | Generates test predictions using two-mode feature transformers (`mode="inference"`). Enforces bounds $[y_{\min}, y_{\max}]$ and $[0.0, 1.0]$. |
+| **`skill_15_reporter.py`** | **Phase 1** (and all boundaries) | **Static** | Logs phase events, computes resource telemetry (time/memory/carbon), and generates markdown phase summary reports. |
+| **`skill_16_submit.py`** | **Phase 4** | **Dynamic** | Enforces 2-tier submission budget guard (daily/total limits), submits formatted CSV via Zindi API client, and syncs leaderboard scores. |
+| **`skill_17_governance.py`** | **Phase 4** | **Static** | Applies structural state lock (`_apply_structural_lock`). Verifies approvals for Human Gates 1, 2, 3, 4, and 5 before submission. |
+| **`skill_18_librarian.py`** | Deep Research Sidecar | **Dynamic** | Asynchronously queries literature APIs (ArXiv, Semantic Scholar) for domain ML strategies (`reports/domain_hypotheses.json`). |
+| **`skill_19_code_miner.py`** | Deep Research Sidecar | **Dynamic** | Mines Kaggle/GitHub competitive code patterns using Gemini LLM queries (`reports/ml_priorart.json`). |
+| **`skill_20_scientist.py`** | Deep Research Sidecar | **Dynamic** | Formulates and empirically validates feature hypotheses against raw dataset schema (`reports/validated_hypotheses.json`). |
+| **`skill_21_pseudo_label.py`** | **Phase 3B** | **Dynamic** | Generates pseudo-labels on test data for high-confidence predictions; initiates retraining loop under `_augmented` namespace contract. |
+| **`skill_22_reproducibility_audit.py`** | **Phase 4** | **Static** | Performs 3-tier fingerprint audit (file MD5 hashes, OOF strategy tags, lockfile integrity) and appends record to historical log. |
 
 ---
 
-## 5. Query the Experiments Ledger
+## 7. Querying the Competition Ledger
 
-To review all training runs, variant promotions, and scores logged in DuckDB, use the ledger query command:
+Query experiments and submission records logged in DuckDB:
+
 ```bash
-# Show all experiments logged
+# List all logged experiments
 python -m zindian.cli ledger experiments
 
-# Show the best performing experiment
+# Display the best performing model variant
 python -m zindian.cli ledger best
 
-# Show passed model variants
+# Display all model variants that passed Human Gate 2
 python -m zindian.cli ledger passed
+
+# Display failed or blocked variants
+python -m zindian.cli ledger failed
+
+# Display submission log history
+python -m zindian.cli ledger submissions
 ```
+
+---
+
+## 8. CLI Command Quick Reference (21 Commands)
+
+| Command Category | Command | Description |
+| :--- | :--- | :--- |
+| **Pipeline Control** | `phase <1\|2A\|2B\|3A\|3B\|4>` | Executes specified pipeline phase after preflight check |
+| **Status & Sync** | `status` | Prints active competition, current phase, OOF/LB scores, and budget |
+| | `sync` | Synchronizes state with git branch and Zindi board |
+| | `report` | Generates Phase Summary Markdown Report (`skill_15`) |
+| **Preflight & Audit** | `preflight` | Runs preflight compliance and environment checks |
+| | `preflight-sim` | Runs preflight simulation across fixture competitions |
+| | `audit` | Runs end-to-end reproducibility audit (`skill_22`) |
+| | `audit-framework` | Runs workspace and environment audit script |
+| **Workspace & Ledger**| `bootstrap <slug>` | Bootstraps a new competition workspace |
+| | `init-ledger` | Provisions DuckDB `experiments.db` ledger |
+| | `ledger <subcommand>` | Queries DuckDB ledger (`experiments`, `best`, `passed`, `failed`, `submissions`) |
+| **Submission & Zindi** | `submit <file>` | Validates and submits prediction CSV to Zindi (`skill_16`) |
+| | `submissions` | Displays Zindi submission board history |
+| | `leaderboard` | Pulls current Zindi competition leaderboard |
+| **Utilities** | `verify-state` | Validates SKILL_STATE schema integrity |
+| | `verify-phase-b` | Verifies Phase B package hardening assertions |
+| | `write-oof-meta` | Writes per-OOF metadata sidecars alongside CSVs |
+| | `compile-requirements`| Recompiles pinned `requirements.txt` via `pip-compile` |
+| | `check-deployment` | Audits SKILL_STATE storage optimization |
+| | `archive <slug>` | Archives competition workspace to `.tar.gz` |
+
+---
+
+**Source of Truth Version:** v2.4
 **Last Updated:** August 2026

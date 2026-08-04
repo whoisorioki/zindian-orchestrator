@@ -500,7 +500,9 @@ def prompt_human_gate(
                             anchor_oof_score_challenged=challenged_oof,
                             anchor_challenge=challenge_meta,
                             human_gate_1_approved=True,
-                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
+                            human_gate_1_approved_at=datetime.now(
+                                timezone.utc
+                            ).isoformat(),
                         )
                         print("✓ Challenged anchor accepted. Gate 1 approved.")
                         return True
@@ -511,7 +513,9 @@ def prompt_human_gate(
                             anchor_oof_score=original_oof,
                             anchor_challenge=challenge_meta,
                             human_gate_1_approved=True,
-                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
+                            human_gate_1_approved_at=datetime.now(
+                                timezone.utc
+                            ).isoformat(),
                         )
                         print("✓ Original anchor retained. Gate 1 approved.")
                         return True
@@ -564,7 +568,9 @@ def prompt_human_gate(
                             anchor_oof_score=override_oof,
                             cv_strategy_override=override_meta,
                             human_gate_1_approved=True,
-                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
+                            human_gate_1_approved_at=datetime.now(
+                                timezone.utc
+                            ).isoformat(),
                         )
                         print(
                             f"✓ CV strategy override ({override_strategy}) accepted. Gate 1 approved."
@@ -579,7 +585,9 @@ def prompt_human_gate(
                             anchor_oof_score=original_oof,
                             cv_strategy_override=override_meta,
                             human_gate_1_approved=True,
-                            human_gate_1_approved_at=datetime.now(timezone.utc).isoformat(),
+                            human_gate_1_approved_at=datetime.now(
+                                timezone.utc
+                            ).isoformat(),
                         )
                         print("✓ Original CV strategy retained. Gate 1 approved.")
                         return True

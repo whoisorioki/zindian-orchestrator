@@ -4,10 +4,10 @@ import json
 import os
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, ClassVar, Dict
 
 from .schemas import skill_state_skeleton, validate_skill_state
 
@@ -79,7 +79,7 @@ class SkillStateStore:
     # ALL instances in the same process. Required because run_deep_research
     # spawns a daemon thread that creates its own SkillStateStore instance;
     # an instance-level lock would not protect against that cross-instance race.
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
+    _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def read(self) -> Dict[str, Any]:
         if not self.path.exists():

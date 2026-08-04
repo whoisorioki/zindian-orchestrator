@@ -12,7 +12,6 @@ import json
 import threading
 from pathlib import Path
 
-import pytest
 
 from zindian.state import SkillStateStore
 from zindian.schemas import skill_state_skeleton
@@ -143,15 +142,14 @@ class TestConcurrentUpdates:
         assert not errors, f"Thread errors: {errors}"
         state = store.read()
         selected = state.get("selected_submissions", [])
-        assert selected.count(999) == 1, (
-            f"Expected exactly 1 entry for ID 999, got {selected.count(999)}"
-        )
+        assert (
+            selected.count(999) == 1
+        ), f"Expected exactly 1 entry for ID 999, got {selected.count(999)}"
 
-    def test_lock_is_instance_level_not_class_level(self, tmp_path):
+    def test_lock_is_class_level(self, tmp_path):
         """
-        Each SkillStateStore instance should have its own independent lock,
-        not a shared class-level lock that would serialize unrelated competitions.
-        Two instances pointing at different files should not block each other.
+        SkillStateStore instances must share a class-level lock so that separate
+        instantiations (e.g. main thread vs daemon thread) synchronize state writes.
         """
         path_a = tmp_path / "a" / "SKILL_STATE.json"
         path_b = tmp_path / "b" / "SKILL_STATE.json"
@@ -163,9 +161,8 @@ class TestConcurrentUpdates:
         store_a = SkillStateStore(path_a)
         store_b = SkillStateStore(path_b)
 
-        # Locks must not be the same object
-        assert store_a._lock is not store_b._lock, (
-            "Two different SkillStateStore instances share the same lock object. "
-            "This would serialize ALL competitions in the process, not just concurrent "
-            "writes to the same state file."
+        # Locks must be the same class-level lock object
+        assert store_a._lock is store_b._lock, (
+            "SkillStateStore instances do not share the class-level lock. "
+            "Separate instantiations in daemon threads would fail to synchronize."
         )

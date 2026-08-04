@@ -125,7 +125,10 @@ class ZindiClient:
     def remaining_submissions(self) -> int:
         """Check submission budget before submitting."""
         try:
-            remaining = getattr(cast(Any, self._user), "remaining_subimissions", -1)
+            user = cast(Any, self._user)
+            remaining = getattr(user, "remaining_submissions", None)
+            if remaining is None:
+                remaining = getattr(user, "remaining_subimissions", -1)
             return int(remaining) if remaining is not None else -1
         except Exception:
             return -1  # Unknown — do not block, but log warning

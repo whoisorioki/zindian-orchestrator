@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -101,9 +100,17 @@ class TestAppendHistoryLog:
         assert len(lines) == 1
 
         entry = json.loads(lines[0])
-        for key in ("slug", "completed_at", "metric", "task_type",
-                    "anchor_oof_score", "variants_passed", "cv_strategy",
-                    "promoted_branches", "reproducibility_audit_passed"):
+        for key in (
+            "slug",
+            "completed_at",
+            "metric",
+            "task_type",
+            "anchor_oof_score",
+            "variants_passed",
+            "cv_strategy",
+            "promoted_branches",
+            "reproducibility_audit_passed",
+        ):
             assert key in entry, f"Missing key: {key}"
 
     def test_entry_values_match_config_and_state(self, tmp_path):
@@ -147,7 +154,9 @@ class TestAppendHistoryLog:
 
         assert log_dir.is_dir()
 
-    def test_reproducibility_audit_passed_false_when_state_marks_failure(self, tmp_path):
+    def test_reproducibility_audit_passed_false_when_state_marks_failure(
+        self, tmp_path
+    ):
         paths = _make_paths(tmp_path)
         state = _minimal_state()
         state["reproducibility_audit"] = {"success": False}
@@ -165,6 +174,7 @@ class TestRunFunctionHistoryIntegration:
     def _make_valid_state(self, tmp_path: Path, slug: str = "test-slug") -> Path:
         """Write a schema-valid SKILL_STATE.json to the competition directory."""
         from zindian.schemas import skill_state_skeleton
+
         comp_dir = tmp_path / "competitions" / slug
         comp_dir.mkdir(parents=True, exist_ok=True)
         skeleton = skill_state_skeleton()
@@ -238,10 +248,14 @@ class TestThreeLensUnblocked:
         log_dir = tmp_path / "competition_history"
         log_dir.mkdir(parents=True)
         entry = {
-            "slug": "ey-test", "completed_at": "2026-01-01T00:00:00+00:00",
-            "metric": "auc", "task_type": "classification",
-            "anchor_oof_score": 0.85, "variants_passed": 1,
-            "cv_strategy": "stratifiedkfold", "promoted_branches": [],
+            "slug": "ey-test",
+            "completed_at": "2026-01-01T00:00:00+00:00",
+            "metric": "auc",
+            "task_type": "classification",
+            "anchor_oof_score": 0.85,
+            "variants_passed": 1,
+            "cv_strategy": "stratifiedkfold",
+            "promoted_branches": [],
             "reproducibility_audit_passed": True,
         }
         (log_dir / "history_log.jsonl").write_text(
@@ -263,7 +277,9 @@ class TestThreeLensUnblocked:
         result = three_lens._eval_phase4_generalisation(config, state)
         assert result.verdict == "PASS", f"Unexpected FAIL findings: {result.findings}"
 
-    def test_phase4_generalisation_fails_without_history_log(self, tmp_path, monkeypatch):
+    def test_phase4_generalisation_fails_without_history_log(
+        self, tmp_path, monkeypatch
+    ):
         from zindian import three_lens
         import zindian.paths as zp
 
@@ -290,7 +306,9 @@ class TestThreeLensUnblocked:
 
 class TestIdempotentWriteHistoryLog:
     def test_rerun_updates_entry_in_place(self, tmp_path):
-        from zindian.skills.skill_22_reproducibility_audit import write_history_log_entry
+        from zindian.skills.skill_22_reproducibility_audit import (
+            write_history_log_entry,
+        )
 
         config = _minimal_config("comp-x")
         state1 = _minimal_state("comp-x")
@@ -315,11 +333,19 @@ class TestIdempotentWriteHistoryLog:
         assert entry2["anchor_oof_score"] == 0.88
 
     def test_different_competitions_preserved(self, tmp_path):
-        from zindian.skills.skill_22_reproducibility_audit import write_history_log_entry
+        from zindian.skills.skill_22_reproducibility_audit import (
+            write_history_log_entry,
+        )
 
-        write_history_log_entry(tmp_path, _minimal_config("comp-1"), _minimal_state("comp-1"))
-        write_history_log_entry(tmp_path, _minimal_config("comp-2"), _minimal_state("comp-2"))
-        write_history_log_entry(tmp_path, _minimal_config("comp-1"), _minimal_state("comp-1"))
+        write_history_log_entry(
+            tmp_path, _minimal_config("comp-1"), _minimal_state("comp-1")
+        )
+        write_history_log_entry(
+            tmp_path, _minimal_config("comp-2"), _minimal_state("comp-2")
+        )
+        write_history_log_entry(
+            tmp_path, _minimal_config("comp-1"), _minimal_state("comp-1")
+        )
 
         log_path = tmp_path / "competition_history" / "history_log.jsonl"
         lines = log_path.read_text(encoding="utf-8").strip().splitlines()

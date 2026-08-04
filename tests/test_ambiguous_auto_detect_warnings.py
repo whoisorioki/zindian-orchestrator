@@ -9,7 +9,6 @@ and verifies that detected_bands is correctly persisted into SKILL_STATE["eda"].
 from __future__ import annotations
 
 import json
-import pytest
 from pathlib import Path
 import pandas as pd
 
@@ -32,7 +31,7 @@ def test_ambiguous_band_detection_warning(tmp_path: Path, monkeypatch):
         "target_col": "target",
         "input_files": {"train": "Train.csv"},
     }
-    initial_state = {
+    initial_state: dict[str, object] = {
         "competition": "test-slug",
         "md5_target_hash": "dummy",
         "anchor_oof_score": None,
@@ -86,6 +85,6 @@ def test_ambiguous_band_detection_warning(tmp_path: Path, monkeypatch):
 
     # Verify metadata_warnings
     warnings = state.get("metadata_warnings", [])
-    assert any("Ambiguous band detection" in w for w in warnings), (
-        f"Expected ambiguous band warning in metadata_warnings, got: {warnings}"
-    )
+    assert any(
+        "Ambiguous band detection" in w for w in warnings
+    ), f"Expected ambiguous band warning in metadata_warnings, got: {warnings}"

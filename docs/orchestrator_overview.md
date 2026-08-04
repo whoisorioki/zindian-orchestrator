@@ -211,7 +211,7 @@ Handles competitions predicting multiple targets simultaneously.
 **How it works:**
 - Trains separate models per target.
 - Computes a weighted composite distance score where lower is better.
-- Supports **Inverse-Variance Effective Weighting** ($w_k^{\text{eff}} = w_k / (\sigma_{k,\text{NB}}^2 + \epsilon)$) using Nadeau-Bengio corrected variances.
+- Supports **Inverse-Variance Effective Weighting** (`w_k_eff = w_k / (sigma_k_NB^2 + epsilon)`) using Nadeau-Bengio corrected variances.
 - Normalizes distance scores by target standard deviation (except RMSLE which is dimensionless).
 - Evaluates a single composite gate decision for all targets.
 
@@ -370,11 +370,10 @@ ELSE:
 - MCAR imputation (median/mode)
 - Drop constant columns
 
-**Phase 2B (Signal Search):**
-- Train anchor model
-- **HUMAN GATE 1** (approve/reject/challenge)
-- Generate feature variants
-- Tag all OOF with cv_strategy_id
+**Phase 2B (Signal Search & Variant Branching):**
+- **Anchor Baseline Run (`python -m zindian.cli phase 2B`)**: Trains anchor baseline model (`skill_08`), prompts **HUMAN GATE 1** (approve/reject/challenge).
+- **Feature Variant Run (`python -m zindian.cli phase 2B --variant <name>`)**: Checks Gate 1, skips `skill_08` anchor training, runs `skill_07` with `variant_name`, registers sidecar `variants/<name>.json`, generates `features_train_<name>.csv` & `oof_<name>.csv`, and prompts **HUMAN GATE 2** (`human_gate_2_<name>_approved`).
+- Tag all OOF records with `cv_strategy_id`.
 
 **Anchor Contract:**
 - Reads CV strategy from config (never defines own)

@@ -92,28 +92,14 @@ rediscover.
 | Atomic state write mechanism | `_atomic_write_json()` in `zindian/state.py` via tempfile + os.replace | [CONFIRMED] |
 | Shared competition-agnostic constants | `zindian/constants.py` | [CONFIRMED] |
 | Competition-specific spatial/temporal values | Read from `challenge_config.json` only — never from `constants.py` | [CONFIRMED — this is an architectural rule (A5), not a fact about current file contents; treat as a hard requirement regardless of what any file currently contains] |
-| Skill module count and dual-file slots (`skill_00`, `skill_13`) | See note below | [UNVERIFIED] |
+| Skill module count and dual-file slots (`skill_00`, `skill_13`) | 25 Python files across 23 contiguous numbered slots (`00` through `22`), with `skill_00` (`zindi_monitor`, `discussion_monitor`) and `skill_13` (`ensemble`, `oracle_fusion`) having dual files. | [CONFIRMED] |
 | Generic baseline state key: `anchor_oof_score` | See dedicated subsection below | [CONFIRMED] |
 | Legacy metric-specific keys (`anchor_oof_rmse`, `anchor_oof_f1`, `anchor_oof_auc`) | Currently the ACTUAL working gate key on at least one real competition (EY-frogs used `anchor_oof_f1` as its real, correct gating key after an earlier `anchor_oof_rmse` mix-up was resolved) | [CONFIRMED, on EY-frogs specifically] |
 
 ### On the skill module count claim
 
-A prior version of this document asserted "25 Python files across 23
-numbered slots," with `skill_00` and `skill_13` each having two
-files. This has not been re-verified in the current session. A
-separate, independently-confirmed finding from a different
-competition's validation pass found skill-number slots **6, 9, 12,
-and 14 missing** ("not built yet") — which does not fit cleanly
-against a "23 contiguous numbered slots" claim. Do not trust either
-number without running:
-
-```bash
-find zindian/skills -name "skill_*.py" | sort
-```
-
-and reading the actual result. This file will not be correct here
-until that command has been run and the result pasted back into this
-table by whoever next touches this section.
+Verified by direct filesystem check (`find zindian/skills -name "skill_*.py"`):
+The repository contains exactly **25 Python skill files** across 23 contiguous numbered slots (`skill_00` through `skill_22`). Dual-file slots are `skill_00` (`skill_00_discussion_monitor.py` and `skill_00_zindi_monitor.py`) and `skill_13` (`skill_13_ensemble.py` and `skill_13_oracle_fusion.py`). All slots 00 through 22 are fully built.
 
 ---
 
@@ -859,9 +845,9 @@ before it is resolved in code.
 ## v2.3 & v2.4 Refactor — Completed Items
 
 **v2.4 Statistical Migration (August 2026):**
-- ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance $\text{Var}_{\text{NB}}$ and 1-SE promotion margins in `skill_11`/`skill_12`.
-- ✅ **S2 (MASE Metric):** Shipped naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
-- ✅ **S3 (Inverse-Variance Weighting):** Shipped dynamic target weighting $w_k^{\text{eff}} = w_k / (\sigma_{k,NB}^2 + \epsilon)$ for multi-target composite scores.
+- ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
+- ✅ **S2 (MASE Metric):** Shipped MASE naive baseline reporting and error handling in `skill_12`.
+- ✅ **S3 (Inverse-Variance Weighting):** Shipped dynamic target weighting `w_k_eff = w_k / (sigma_k_NB^2 + epsilon)` for multi-target composite scores.
 - ✅ **S4 (Residual Diversity):** Shipped Kuncheva residual vector correlation in `skill_13` model fusion collinearity pruning.
 - ✅ **S6 (Two-Tier Leak Audit):** Shipped Pearson primary/blocking + advisory subsampled MI audit in `skill_10`.
 - ✅ **S7 (Spatial Buffering):** Wired `spatial_buffer_km` parameter for spatial splits in `skill_05`.
