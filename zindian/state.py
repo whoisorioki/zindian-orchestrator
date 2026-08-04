@@ -128,15 +128,27 @@ class SkillStateStore:
             elif "cv_splits_file" in value:
                 splits_path = self.path.parent / value["cv_splits_file"]
                 if splits_path.exists():
-                    with open(splits_path, "r") as sf:
-                        obj[key] = json.load(sf)
+                    try:
+                        with open(splits_path, "r") as sf:
+                            obj[key] = json.load(sf)
+                    except Exception as e:
+                        print(
+                            f"[WARN] Corrupted cv_splits_file ({splits_path}): {e}. Falling back to empty list []."
+                        )
+                        obj[key] = []
                 else:
                     obj[key] = []
             elif "list_file" in value:
                 list_path = self.path.parent / value["list_file"]
                 if list_path.exists():
-                    with open(list_path, "r") as sf:
-                        obj[key] = json.load(sf)
+                    try:
+                        with open(list_path, "r") as sf:
+                            obj[key] = json.load(sf)
+                    except Exception as e:
+                        print(
+                            f"[WARN] Corrupted list_file ({list_path}): {e}. Falling back to empty list []."
+                        )
+                        obj[key] = []
                 else:
                     obj[key] = []
 

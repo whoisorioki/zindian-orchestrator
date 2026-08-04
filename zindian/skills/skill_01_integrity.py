@@ -16,6 +16,10 @@ from zindian.paths import resolve_competition_paths
 from zindian.config import ChallengeConfig
 from zindian.state import SkillStateStore
 
+# Default target column names (can be overridden per-competition)
+TARGET_COL = "target"
+SUBMISSION_TARGET_COL = "target"
+
 
 def compute_md5(series: pd.Series) -> str:
     """Compute MD5 hash of a pandas Series values.
