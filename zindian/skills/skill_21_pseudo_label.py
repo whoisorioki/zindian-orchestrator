@@ -758,8 +758,33 @@ def run(
                     "reason": "no_test_probs",
                     "message": "Iteration >0 with no prior test probabilities.",
                 }
-            pos_mask = test_probs_prev >= conf_pos
-            neg_mask = test_probs_prev <= conf_neg
+            # S8 - implemented 2026-08-24
+            # Class-wise quantile selection with a 0.70 floor, deterministic method='first' tie-breaking,
+            # and min_pseudo_samples aggregate guard.
+            p1 = np.asarray(test_probs_prev, dtype=np.float64)
+            p0 = 1.0 - p1
+
+            p_val = config.get("pseudo_quantile") or config.get("pseudo_quantile_pct")
+            if p_val is None:
+                p_val = 0.20
+            elif p_val > 1.0:
+                p_val = p_val / 100.0
+
+            n_samples = len(p1)
+            k = int(np.ceil(p_val * n_samples))
+
+            rank1 = pd.Series(p1).rank(method="first", ascending=False).values
+            rank0 = pd.Series(p0).rank(method="first", ascending=False).values
+
+            pos_mask = (rank1 <= k) & (p1 >= 0.70)
+            neg_mask = (rank0 <= k) & (p0 >= 0.70)
+
+            min_samples = config.get("min_pseudo_samples", 1)
+            total_selected = int(pos_mask.sum() + neg_mask.sum())
+            if total_selected < min_samples:
+                pos_mask = np.zeros_like(pos_mask, dtype=bool)
+                neg_mask = np.zeros_like(neg_mask, dtype=bool)
+
             pseudo_mask = pos_mask | neg_mask
             X_pseudo = X_test[pseudo_mask]
             n_pseudo_added_total += int(pseudo_mask.sum())
@@ -961,6 +986,33 @@ def run(
             "n_pseudo_labels_added": int(n_pseudo_added_total),
         },
     )
+
+    # S10 artifact fingerprinting for oof_predictions_{branch_name}
+    try:
+        from zindian.state import write_artifact_fingerprint
+
+        predictions_dir = paths.reports_dir / "diagnostics" / "predictions"
+        predictions_dir.mkdir(parents=True, exist_ok=True)
+        suffix_fp = "_augmented" if retraining_required else ""
+        best_oof_path = (
+            predictions_dir / f"oof_probs_pseudo_iter{best_iteration}{suffix_fp}.csv"
+        )
+        best_oof_df = pd.DataFrame(
+            {
+                str(id_column): train[id_column].values,
+                "oof_prob": oof_probs[: len(X_labelled)],
+            }
+        )
+        write_artifact_fingerprint(
+            store,
+            f"oof_predictions_{oof_branch_name}",
+            best_oof_path,
+            best_oof_df,
+        )
+    except Exception as e:
+        print(
+            f"  [WARNING] Failed to write pseudo-label OOF predictions fingerprint: {e}"
+        )
 
     # -- Update SKILL_STATE with the canonical pseudo_label_result + summary -
     if not is_multi_target:

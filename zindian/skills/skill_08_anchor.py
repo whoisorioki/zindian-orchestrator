@@ -472,26 +472,44 @@ def run(
         )
         for i in range(oof_preds.shape[1]):
             oof_df[f"Predicted_class_{i}"] = oof_preds[:, i]
-        oof_df.to_csv(oof_path, index=False)
     else:
-        pd.DataFrame(
+        oof_df = pd.DataFrame(
             {
                 id_col: np.asarray(train[id_col].values),
                 "row_index": oof_index,
                 "Predicted": oof_preds,
                 training_target_col: np.asarray(train[training_target_col].values),
             }
-        ).to_csv(oof_path, index=False)
+        )
+
+    # -- Compute anchor_oof_score before logging ----------------
+    retraining_active = bool(
+        state.get("pseudo_label_result", {}).get("retraining_required", False)
+    )
+
+    # S10 artifact fingerprinting for oof_predictions_{branch_name}
+    from zindian.state import write_artifact_fingerprint
+
+    branch_name_fp = (
+        "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    )
+    try:
+        write_artifact_fingerprint(
+            state_store,
+            f"oof_predictions_{branch_name_fp}",
+            oof_path,
+            oof_df,
+        )
+    except Exception as e:
+        print(f"  [WARNING] Failed to write OOF predictions fingerprint: {e}")
+
+    oof_df.to_csv(oof_path, index=False)
     print(f"[OK] OOF predictions saved -> {oof_path}")
 
     # Submission formatting removed — Phase 2B writes probabilities only.
     # skill_14 (Phase 4) reads test_probs from data/processed/ and produces
     # the final submission CSV.
 
-    # -- Compute anchor_oof_score before logging ----------------
-    retraining_active = bool(
-        state.get("pseudo_label_result", {}).get("retraining_required", False)
-    )
     if retraining_active:
         score_key = "anchor_oof_score_augmented"
     else:
@@ -795,6 +813,28 @@ def _run_multi_target(
         if target_name in raw_train.columns:
             oof_df[f"{target_name}_true"] = raw_train[target_name].values
     oof_path = paths.data_raw_dir / "oof_anchor_multi.csv"
+
+    # S10 artifact fingerprinting for oof_predictions_{branch_name} in multi-target
+    from zindian.state import write_artifact_fingerprint
+
+    retraining_active = bool(
+        state.get("pseudo_label_result", {}).get("retraining_required", False)
+    )
+    branch_name_fp = (
+        "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    )
+    try:
+        write_artifact_fingerprint(
+            state_store,
+            f"oof_predictions_{branch_name_fp}",
+            oof_path,
+            oof_df,
+        )
+    except Exception as e:
+        print(
+            f"  [WARNING] Failed to write multi-target OOF predictions fingerprint: {e}"
+        )
+
     oof_df.to_csv(oof_path, index=False)
 
     # Independently compute and log honest macro F1 from saved predictions

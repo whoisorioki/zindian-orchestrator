@@ -41,7 +41,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | — *Phase 3B* | skill_11 gate (5 conditions, full threshold branching) + skill_21 pseudo-label (guard conditions + on-pass full contract + rollback path + on-fail schema) + skill_13 oracle fusion + three-lens check + gate checklist | Promotion + fusion |
 | — *Phase 4* | skill_14 inference validation schema + skill_16 budget protocol + skill_17 governance outputs + skill_22 sign-off checklist + three-lens check + gate checklist | Governance |
 | **Plugin Contract** | FeatureExtractor ABC + config rules | Multi-target plugin interface |
-| **§5 Research Sidecar** | Sidecar state interface + recommendation schema + consumption rules + trigger schedule table + skill_00 specific triggers | Sidecar architecture |
+| **§5 Research Sidecar** | Sidecar state interface + recommendation schema + consumption rules + trigger schedule table + skill_00 specific triggers + **Cross-Competition History Log Schema** (`history_log.jsonl`) | Sidecar architecture |
 | **§6 Reproducibility Contract** | R1–R5 + R6 | Reproducibility requirements |
 | — *R1* | Three-seed pattern | Seed discipline |
 | — *R2* | Bit-identical rerun | Determinism |
@@ -49,9 +49,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | — *R4* | Submission reproducible from config+state | Governance reproducibility |
 | — *R5* | Carbon tracking — telemetry schema, carbon formula, mandatory/exempt skills | Compute impact |
 | — *R6* | Computed artifact fingerprinting — 3-tier tolerance bands, status | Artifact integrity |
-| **§7 Is This RL?** | RL parallel table + where it differs + feedback loop mechanics (history log schema, Bayesian threshold evolution) | Conceptual framing |
-| **§8 Definition of Done** | Config completeness checklist + per-skill criteria (skill_00–skill_22) + OOF contract compliance + multi-target migration checklist + research sidecar trigger compliance + Zindi compliance + human gate compliance + architecture integrity + scalability/feedback loop integrity | Completion contracts |
-| **§9 Known Gaps Registry** | CRITICAL (resolved), S1–S10 status | Code/spec delta tracker |
+| **§7 Known Gaps Registry** | Resolved table (C1, GAP-4, S1–S5, C2/C4/M6/DRIFT-3 confirmed resolved) + Open gaps (S6, S7-skill09, S8, S10, skill_18/20 root writes, preflight MT-OOF, GAP-3, R5-telemetry-aggregate) | Code/spec delta tracker |
 
 ---
 
@@ -62,23 +60,23 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **Role and Scope** | Agent identity, resolution order (code > SoT > AGENTS.md) | Agent role definition |
 | **Verification Status** | CONFIRMED / TARGET / UNVERIFIED tag framework + grep check pattern | Claim reliability system |
 | **Repository Ground Truth** | 9-row fact table + "On the skill module count claim" paragraph | Confirmed file/function locations |
-| **The Source of Truth Is Authoritative** | State contracts, OOF contract, anchor baseline key, config temporal lock (C1 risk + grep commands), no hardcoded strings (DRIFT-1 resolved), no AutoML, no cross-skill imports | Hard rule reminders + live risk notes |
-| **Safe State Access Patterns** | 7 code blocks: CV override, pseudo-label retraining check, anchor challenge check, three-way baseline precedence, drift threshold, sidecar recommendations, EDA target_std + M6 risk note + grep check | Mandatory .get() patterns |
+| **The Source of Truth Is Authoritative** | State contracts, OOF contract, anchor baseline key, config temporal lock ([RESOLVED — v2.5] C1), no hardcoded strings (DRIFT-1 resolved), no AutoML, oracle_fusion_core shim confirmed | Hard rule reminders + resolved risk notes |
+| **Safe State Access Patterns** | 7 code blocks: CV override, pseudo-label retraining check, anchor challenge check, three-way baseline precedence, drift threshold, sidecar recommendations, EDA target_std + [RESOLVED — v2.5] M6 note | Mandatory .get() patterns |
 | **Threshold and Metric Conventions** | Fold score variance (ddof=1 code), effective gate margin + variance threshold (branching logic table), metric direction (code), correlation in skill_13 (code + multi-target gap note) | Threshold computation rules + code |
 | **OOF Output Schema** | 5-bullet summary + SOT reference link | Schema quick-reference |
 | **Augmented OOF Namespace Contract** | Hard-error code block + rollback rule + SOT link | Pseudo-label write discipline |
 | **SHAP Computation Rules** | Per-fold SHAP loop code + single-feature fallback code + SOT link | SHAP implementation pattern |
 | **Two-Mode Feature Contract** | cv/inference mode code + structural features note + SOT link | Feature computation modes |
 | **Seed Discipline** | 3-seed code block | Seed implementation |
-| **Human Gate Keys** | 5-key schema + Gate 2 per-branch check code + C4 live risk + legacy key warning | Gate key patterns + risks |
+| **Human Gate Keys** | 5-key schema + Gate 2 per-branch check code + [RESOLVED — v2.5] C4 + legacy key warning | Gate key patterns + resolved risks |
 | **SKILL_STATE.json vs reports/** | Design rule + "ask before adding" test + confirmed boundary table (skill_03/04/10/15) + categorized subdirectory list + reader/writer path rule | State/report routing |
 | **Budget Guard in skill_16** | 3-tier corrected code (HardAbortException paths, budget_warning writes) + datetime.utcnow deprecation warning | Corrected budget guard behavior |
 | **preflight_enforce.py — What It Should Check** | Required check list + multi-target OOF tag risk + regex check command | Preflight extension guide |
 | **Skill File Conventions** | Naming convention, run() signature, stateless rule, no internal CV, no config writes | Skill authoring standards |
 | **What to Do When Unsure** | 8 stop-and-ask triggers | Escalation rules |
 | **Environment and Package Rules** | 5 package discipline rules + pip-compile diff warning | Dependency management |
-| **v2.3 & v2.4 Refactor — Completed Items** | v2.4 S1–S10 ✅ list + v2.3 DRIFT/GAP ✅ list + new test coverage list + GAP-4 detail | Completed work log |
-| **Open Known Gaps** | 8 numbered gaps (regression pseudo-label, two-mode static verify, test coverage, drift threshold, multi-target fusion diversity, GAP-3, DRIFT-3, C1/C2/C4) | Outstanding work + freeze list |
+| **v2.3, v2.4 & v2.5 Refactor — Completed Items** | v2.5 gap closures (S5, C4, M6, DRIFT-3, C2, preflight path, S7/skill_12) + v2.4 S1–S10 ✅ + v2.3 DRIFT/GAP ✅ + test coverage | Completed work log |
+| **Open Known Gaps** | 11 numbered gaps (S6, S7-skill09, S8, S10, R5-telemetry-aggregate, skill_18/20 root writes, preflight MT-OOF, GAP-3, regression pseudo-label, two-mode static verify, drift threshold) | Outstanding work + freeze list |
 | **Footer** | SoT pairing note, maintainer | Metadata |
 
 ---
@@ -115,6 +113,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | — *Special Features* | Carbon tracking (metrics + goal) + Pseudo-labeling (6 guard conditions + goal) + Multi-target support (how it works) | Feature highlights |
 | — *What Makes This Valuable?* | 4-bullet value list | Value summary |
 | — *What It's NOT* | 4-bullet anti-pattern list | Scope boundaries |
+| — *Conceptual Analogy: Is This RL?* | RL structural parallels table + where it differs + two feedback mechanisms (cross-competition replay, Bayesian thresholds) + link to SOT §5 | Conceptual framing |
 | — *Success Metrics* | Competition performance + operational efficiency + risk management | KPIs |
 | **Technical Reference** | 8-row table linking all docs with content descriptions (includes document_map.md) | Technical navigation |
 | **Footer** | Document version 1.3, Orchestrator version 2.5, scope note | Metadata |
@@ -215,16 +214,16 @@ The following map defines the distinct focus of each file vs. shared content, pr
 | **OOF record JSON schema** | ✅ Canonical | 5-bullet summary | Minimal — summary only in AGENTS |
 | **Safe `.get()` access code patterns** | ❌ Not here | ✅ Canonical | None — complementary |
 | **Threshold branching logic** | ✅ In skill_11 spec | ✅ Standalone code | Small overlap — SOT embeds it in skill_11; AGENTS surfaces it as a standalone reference |
-| **Known live risks** (C1, C4, M6) | S1-S10 in §9 only | ✅ Inline per section | Minimal — different angle (code gaps vs. implementation risks) |
-| **Completed work log** | §9 as gap registry | v2.3/v2.4 ✅ lists | Small overlap — same facts, different framing |
+| **Known live risks** (S6, S7, S8, S10) | §7 canonical | ✅ Inline per section with impl constraints | Minimal — SOT is registry, AGENTS is impl guide |
+| **Completed work log** | §7 as gap registry | v2.3/v2.4 ✅ lists | Small overlap — same facts, different framing |
 | **Repository file/function locations** | ❌ | ✅ Ground Truth table | None |
-| **Per-skill completion checklists** | ✅ Canonical (§8) | ❌ | None |
+| **Per-skill completion checklists** | ❌ Removed in v2.5 | ❌ | None — removed from SOT; canonical source is code and AGENTS.md |
 | **Agent role + escalation rules** | ❌ | ✅ Canonical | None |
 | **Verification tag system** | ❌ | ✅ Canonical | None |
 
 ### Intentional Overlaps (Quick-Reference Copy)
 1. **Threshold branching logic:** Appears fully in SOT §4 Phase 3B (skill_11) and is duplicated in AGENTS.md for quick lookup by coding agents, marked with a SOT cross-reference.
-2. **v2.3/v2.4 completed items:** SOT §9 acts as a tracking registry, while AGENTS.md logs it as a done-list for quick context.
+2. **v2.3/v2.4/v2.5 completed items:** SOT §7 resolved table is the canonical record; AGENTS.md `v2.3, v2.4 & v2.5 Refactor` section is the implementation-perspective done-list.
 
 ---
 
@@ -241,7 +240,7 @@ The following map defines the distinct focus of each file vs. shared content, pr
 | Phase specs & skill contracts | — | — | ✅ | — | — | — | — | — | — |
 | OOF record schema (canonical) | — | — | ✅ | Link | — | — | — | — | — |
 | Safe `.get()` access patterns | — | — | — | ✅ | — | — | — | — | — |
-| Known live risks (C1, C4, M6) | — | — | — | ✅ | — | — | — | — | — |
+| Known live risks / open gaps (S6, S7, S8, S10) | — | — | — | ✅ | — | — | — | — | — |
 | Agent role + escalation rules | — | — | — | ✅ | — | — | — | — | — |
 | Repo file/function locations | — | — | — | ✅ | — | — | — | — | — |
 | Competition bootstrap walkthrough | — | — | — | — | ✅ | — | — | — | — |
@@ -256,6 +255,9 @@ The following map defines the distinct focus of each file vs. shared content, pr
 | SKILL_STATE sidecar externalization | — | — | — | — | — | — | — | ✅ | — |
 | Report folder flooding analysis | — | — | — | — | — | — | — | — | ✅ |
 | Phase SWOT & live defects | — | — | — | — | — | — | — | — | ✅ |
+| RL analogy + feedback loop framing | — | ✅ | — | — | — | — | — | — | — |
+| Open gap registry (canonical) | — | — | ✅ §7 | — | — | — | — | — | — |
+| Open gap impl constraints | — | — | — | ✅ | — | — | — | — | — |
 | Log restructure action plan | — | — | — | — | — | — | — | — | ✅ |
 | Cross-doc navigation (primary) | Table | ✅ | Map | — | — | — | — | — | — |
 | Version history / changelog | ✅ | — | Header | — | — | — | — | — | — |

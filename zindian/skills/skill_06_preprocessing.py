@@ -185,6 +185,20 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     state["X_train_clean"] = train
     state["X_test_clean"] = test
 
+    # S10 artifact fingerprinting for cleaned_feature_matrix
+    from zindian.paths import resolve_competition_paths
+    from zindian.state import SkillStateStore, write_artifact_fingerprint
+
+    try:
+        paths = resolve_competition_paths(require_competition=True)
+        store = SkillStateStore(paths.state_path)
+        cleaned_path = paths.data_processed_dir / "cleaned_train.csv"
+        write_artifact_fingerprint(store, "cleaned_feature_matrix", cleaned_path, train)
+        cleaned_path.parent.mkdir(parents=True, exist_ok=True)
+        train.to_csv(cleaned_path, index=False)
+    except Exception as e:
+        print(f"  [WARNING] Failed to write cleaned_feature_matrix fingerprint: {e}")
+
     # Print preprocessing summary
     print(f"  - MNAR columns indicators created ({len(indicators)}): {indicators}")
     print(f"  - MCAR columns imputed ({len(impute_values)}):")

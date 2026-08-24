@@ -208,6 +208,8 @@ def _audit_derived_artifact_fingerprints(
 ) -> tuple[bool, list[str]]:
     """3-tier tolerance verification for derived artifacts (v2.4 S10).
 
+    # S10 - implemented 2026-08-24
+
     Max absolute diff: <= 1e-6 PASS, 1e-6 to 1e-5 SOFT WARN (Gate 5 sign-off), > 1e-5 HARD HALT.
     Raw intake files remain under exact MD5 hashing.
     """

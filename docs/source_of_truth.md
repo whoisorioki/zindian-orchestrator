@@ -3,20 +3,7 @@
 **Version:** v2.5
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.5: Lean restructure — eliminated duplicate gate checklists and preflight console UI; no architecture changes from v2.4)
-
----
-
-### v2.4 Target Specification Summary
-These statistical features were finalized and shipped in v2.4 and remain fully in force in v2.5. No architecture changes were made in v2.5 — this is a documentation restructure only.
-- **S1 & S9 (Nadeau-Bengio + 1-SE):** Corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
-- **S2 (MASE Metric):** Naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
-- **S3 (Inverse-Variance Weighting):** Dynamic variance weighting `w_k_eff = w_k / (sigma_k^2 + epsilon)` for multi-target composite scores in Section 2 & `skill_11`.
-- **S4 (Residual Diversity):** Kuncheva residual vector correlation in `skill_13` collinearity pruning.
-- **S6 (Two-Tier Leak Audit):** Pearson primary/blocking + advisory subsampled MI audit surfaced at Gate 2 in `skill_10`.
-- **S7 (Spatial Buffering):** `spatial_buffer_km` config parameterization for spatial CV splits in `skill_05`.
-- **S8 (Hybrid Adaptive Pseudo-labeling):** Class-wise quantile thresholding with 0.70 floor & post-retraining recombination in `skill_21`.
-- **S10 (Path 2 Fingerprinting):** Tolerance-based 3-tier band verification for derived artifacts in `skill_22`.
+**Last updated:** August 2026 (v2.5: Restructured — removed §7 RL analogy and §8 Definition of Done; history log schema moved to §5; §9 renumbered §7)
 
 ---
 
@@ -28,8 +15,6 @@ These statistical features were finalized and shipped in v2.4 and remain fully i
 4. Phase Architecture
 5. Research Sidecar
 6. Reproducibility Contract
-7. Is This Reinforcement Learning?
-8. Definition of Done — Master Checklist
 
 ---
 
@@ -629,7 +614,7 @@ All config completeness checks, seed checks, OOF contract
 checks, file hash checks, policy filter checks, and human
 gate status checks. These cannot pass before Phase 1 runs.
 
-**Output:** `reports/preflight_INIT_{timestamp}.json`
+**Output:** `reports/audits/preflight/preflight_INIT_{timestamp}.json`
 
 **Proceeds to:** Phase 1 execution — `skill_01` through
 `skill_15`.
@@ -648,9 +633,16 @@ populated (all sessions after Session 1).
 ```
 Config completeness:
     All required fields present in challenge_config.json
+      (name, slug, task_type, metric, metric_direction,
+      use_probabilities, drift_threshold, allowed_external_data,
+      automl_permitted, team_allowed, submission_budget, data_shape,
+      phase_skill_map, reproducibility, shap_leak_threshold,
+      variance_gate_threshold, gate_margin, cv_strategy,
+      community_signals, policy_filters, file_hashes)
     cv_strategy block present with all required subfields
     shap_leak_threshold, variance_gate_threshold,
-      gate_margin set
+      gate_margin, drift_threshold set
+    automl_permitted == false enforced (Zindi compliance)
     submission_budget.total, .daily, .used present
     reproducibility.seed present and set
     target_domain_bounds present (null allowed for
@@ -710,7 +702,7 @@ Human gates:
     Status of all five gate keys reported
 ```
 
-**Output:** `reports/preflight_ENFORCE_{timestamp}.json`
+**Output:** `reports/audits/preflight/preflight_ENFORCE_{timestamp}.json`
 
 **Confirmation written to:**
 `SKILL_STATE.json["preflight_confirmed"]`
@@ -740,7 +732,8 @@ writes.
 
 ```json
 {
-  "competition_id": "",
+  "name": "",
+  "slug": "",
   "task_type": "classification | regression | ranking",
   "metric": "logloss | auc | rmse | mae | f1 | custom",
   "metric_direction": "maximize | minimize",
@@ -775,7 +768,10 @@ writes.
     "spatial_buffer_km": null
   },
   "missingness_level": "low | moderate | high",
-  "external_data_allowed": false,
+  "allowed_external_data": false,
+  "automl_permitted": false,
+  "team_allowed": false,
+  "drift_threshold": 0.05,
   "submission_budget": {
     "total": 0,
     "daily": 0,
@@ -799,9 +795,18 @@ writes.
     "group_col": null,
     "stratify_col": null,
     "selection_reason": ""
+  },
+  "infrastructure": {
+    "hardware_type": "cpu | gpu | tpu",
+    "region": "ke | us-east-1 | eu-central-1",
+    "tdp_watts": 15.0,
+    "pue": 1.0,
+    "carbon_intensity_gco2_per_kwh": 494.0
   }
 }
 ```
+
+> `name` and `slug` are written by `skill_02` at intake. `infrastructure` is added by `skill_02` during the Phase 1 mutable window if absent. `allowed_external_data`, `automl_permitted`, `team_allowed`, and `drift_threshold` are required by preflight and must be present before ENFORCE mode runs. `competition_id` (used in some legacy references) maps to `slug` in the real config.
 
 Additive fields for multi-target competitions (all optional/absent for single-target):
 
@@ -2182,6 +2187,55 @@ Every 6 hours (configurable):
      to challenge_config.json)
 ```
 
+### Cross-Competition History Log Schema
+
+After every competition close, `skill_22` writes one entry to
+`competition_history/history_log.jsonl`. `skill_18` and `skill_20`
+read this log as prior knowledge for the next competition.
+
+```
+Location: competition_history/history_log.jsonl
+Format:   One JSON object per line, one entry per competition close
+
+Fields per entry:
+{
+  "slug": "",
+  "competition_id": "",
+  "completed_at": "",
+  "task_type": "",
+  "metric": "",
+  "metric_direction": "maximize | minimize",
+  "cv_strategy_type": "",
+  "cv_strategy_override": false,
+  "cv_strategy_override_rationale": null,
+  "anchor_oof_score": 0.0,
+  "best_promoted_oof_score": 0.0,
+  "best_public_lb_score": 0.0,
+  "oof_to_lb_delta": 0.0,
+  "feature_types_used": [],
+  "pseudo_label_ran": false,
+  "final_rank": null,
+  "variants_passed": 0,
+  "promoted_branches": [],
+  "selected_submissions": [],
+  "reproducibility_audit_passed": false,
+  "gate_thresholds": {
+    "shap_leak_threshold": 3.0,
+    "variance_gate_threshold": 0.01,
+    "gate_margin": 0.001
+  },
+  "competition_close_date": "",
+  "total_training_duration_seconds": 0.0,
+  "total_carbon_kg_estimate": null,
+  "tracker_method": "mlco2_formula | codecarbon | not_instrumented"
+}
+```
+
+**Bayesian threshold evolution:** After several competitions,
+`shap_leak_threshold`, `variance_gate_threshold`, and `gate_margin`
+are reviewed against historical OOF-to-LB correlation data and
+updated in config.
+
 ---
 
 ## 6. Reproducibility Contract
@@ -2292,11 +2346,12 @@ during Phase 1 mutable window):
   "carbon_intensity_gco2_per_kwh": 494.0
 }
 
-KNOWN BUG: config["infrastructure"] writes by skill_02
-silently fail on fresh bootstrap (see C1 in Section 9).
-The fallback path (not_instrumented with warning) will
-trigger on every fresh run until the bootstrap phase string
-is added to allowed_write_phases across all Phase 1 skills.
+[RESOLVED — v2.5] config["infrastructure"] is written by skill_02
+at L838–849 within the allowed_write_phases window. The C1 bootstrap
+phase string issue is resolved — "phase_1_integrity_locked" is in
+skill_02's allowed_write_phases (L859–870). The fallback path
+(not_instrumented) now applies only when CodeCarbon is absent and
+the ML CO2 formula config keys are not present.
 
 Aggregation is performed by the orchestrator's post-phase
 hook (not by skill_15). After every phase completes, the
@@ -2306,6 +2361,11 @@ orchestrator aggregates per-skill telemetry into:
         "total_carbon_kg_estimate": null,
         "skills_not_instrumented": []
     }
+
+> **[OPEN GAP — telemetry.aggregate]** `run_phase()` in `zindian/orchestrator.py`
+> does NOT currently write `telemetry.aggregate` after a phase completes.
+> Only per-skill `telemetry.{skill_name}` keys are written (L1103–1104).
+> `skill_22` does not verify this key either. Tracked in §7 Known Gaps Registry.
 
 skill_22 verifies at sign-off:
     telemetry.aggregate present and non-null
@@ -2342,780 +2402,125 @@ requires explicit hardware_type = "gpu" in config.
 
 ---
 
-## 7. Is This Reinforcement Learning?
-
-The orchestrator is not a classical RL algorithm, but it
-shares the core state-action feedback structure. The
-distinction matters for how feedback loops are built.
-
-### Structural Parallels
-
-| RL Concept | Orchestrator Equivalent |
-|---|---|
-| Agent | Orchestrator control plane |
-| Environment | Competition dataset + Zindi platform |
-| State | `SKILL_STATE.json` + `challenge_config.json` |
-| Action | Running a skill, promoting a branch, engineering a variant |
-| Reward signal | OOF improvement, gate pass/fail, public LB delta |
-| Policy | Phase map + gate conditions + three-lens rules |
-| Episode | One competition lifecycle |
-
-### Where It Differs
-
-**Delayed and noisy rewards.** Public LB scores are
-time-lagged, budget-constrained, and cover only 20–30%
-of test data. OOF scores are faster proxy rewards but
-statistically imperfect.
-
-**Engineered policy.** Gate conditions, CV decision trees,
-and phase maps are hand-designed, not learned via gradient
-descent.
-
-**No value function.** The orchestrator makes greedy local
-decisions without modelling long-term multi-step
-consequences.
-
-### Feedback Loop Mechanics
-
-Two explicit mechanisms approximate RL behaviour without
-gradient updates:
-
-**Cross-competition experience replay.** After every
-competition close, CV strategy choices, feature types,
-model architectures, and OOF-to-LB deltas are recorded
-in a competition history log. `skill_18` and `skill_20`
-read this log as prior knowledge for the next competition.
-
-Cross-competition history log — minimum schema:
-
-```
-Location: competition_history/history_log.jsonl
-Format:   One JSON object per line, one entry per
-          competition close
-
-Fields per entry:
-{
-  "competition_id": "",
-  "task_type": "",
-  "metric": "",
-  "metric_direction": "maximize | minimize",
-  "cv_strategy_type": "",
-  "cv_strategy_override": false,
-  "cv_strategy_override_rationale": null,
-  "anchor_oof_score": 0.0,
-  "best_promoted_oof_score": 0.0,
-  "best_public_lb_score": 0.0,
-  "oof_to_lb_delta": 0.0,
-  "feature_types_used": [],
-  "pseudo_label_ran": false,
-  "final_rank": null,
-  "gate_thresholds": {
-    "shap_leak_threshold": 3.0,
-    "variance_gate_threshold": 0.01,
-    "gate_margin": 0.001
-  },
-  "competition_close_date": ""
-}
-```
-
-**Bayesian threshold evolution.** After several competitions,
-`shap_leak_threshold`, `variance_gate_threshold`, and
-`gate_margin` are reviewed against historical OOF-to-LB
-correlation data and updated in config. This is threshold
-updating based on observed outcomes, not gradient
-optimisation.
-
----
-
-## 8. Definition of Done — Master Checklist
-
-### Config Completeness
-
-```
-[ ] All Phase 1 fingerprint fields present and non-null
-[ ] metric_direction present and set
-[ ] use_probabilities present and set
-[ ] cv_strategy block with type, n_splits, shuffle,
-    random_state, group_col, stratify_col,
-    and selection_reason
-[ ] shap_leak_threshold set (default 3.0)
-[ ] variance_gate_threshold set
-[ ] gate_margin set (default 0.001)
-[ ] submission_budget.total, .daily, .used all present
-[ ] reproducibility.seed present and set
-[ ] target_domain_bounds present (null allowed for
-    classification)
-[ ] community_signals array present
-[ ] policy_filters array present
-[ ] file_hashes match current raw data files
-[ ] spatial_signal.group_col populated if spatial signal
-    present and group_signal absent
-```
-
----
-
-### Per-Skill Completion Criteria
-
-**`skill_00`**
-```
-[ ] Discussion board polling active
-[ ] Leaderboard polling active
-[ ] Data patch detection halts pipeline and surfaces
-    human decision gate — [R] restart or [A] abort
-[ ] skill_02 re-intake NOT triggered automatically —
-    only after human [R] confirmation
-[ ] data_patch_detected written to SKILL_STATE.json
-    on detection before any other action
-[ ] OOF-to-LB delta recorded after every skill_16
-    submission
-```
-
-**`skill_01`**
-```
-[ ] MD5 hashes locked for all raw data files
-[ ] Hashes written to challenge_config.json under
-    file_hashes
-```
-
-**`skill_02`**
-```
-[ ] All fingerprint fields written to
-    challenge_config.json
-[ ] task_type, metric, target_col confirmed and non-null
-[ ] metric_direction written to challenge_config.json
-    maximize: AUC, F1, Accuracy
-    minimize: RMSE, MAE, logloss
-[ ] use_probabilities written to challenge_config.json
-    True for probability submission competitions
-    False for hard-label classification competitions
-    (EY Frogs pattern — classification with 0/1 labels)
-[ ] temporal_signal, group_signal, spatial_signal all
-    evaluated
-[ ] spatial_signal.group_col populated if spatial signal
-    detected
-[ ] target_domain_bounds written if
-    task_type == regression
-[ ] reproducibility.seed written
-[ ] submission_budget fields written
-```
-
-**`skill_03`**
-```
-[ ] policy_writer() runs in Phase 1 —
-    writes reports/audits/feature_policy.json
-[ ] policy_gate() runs as first action of Phase 2A —
-    enforces blocked columns
-[ ] No dataset-specific strings in either function
-[ ] Two functions independently testable
-[ ] Violation halts pipeline with written state entry
-```
-
-**`skill_04`**
-```
-[ ] Missingness correlation pass completed
-[ ] mnar_columns and mcar_columns written to
-    SKILL_STATE.json
-[ ] Outlier columns flagged
-[ ] Target skew computed and written
-[ ] target_std computed and written to
-    SKILL_STATE.json["eda"]["target_std"]
-[ ] MAE_naive_baseline computed and written to
-    SKILL_STATE.json["eda"]["MAE_naive_baseline"]
-    — group-wise (excluding boundary crossings) when a
-    group column is present; 0.0 for non-temporal or
-    non-regression tasks (required for MASE gating in skill_11)
-[ ] group_structure_confirmed and
-    temporal_index_confirmed evaluated
-[ ] Writes to SKILL_STATE.json only —
-    never to challenge_config.json
-[ ] band_summary_stats: per-band mean/std/min/max
-    computed from column naming patterns — empty dict
-    when no BAND_MM columns present (no crash)
-[ ] seasonal_amplitude: max-min monthly mean per band
-[ ] temporal_trends: monthly means and MoM deltas per
-    band — structural computation, no two-mode needed
-[ ] target_correlation_per_feature: Pearson r per
-    numeric feature against primary target
-[ ] class_separability_index: per-feature F1 from
-    decision stump — diagnostic only, not model selection
-```
-
-**`skill_05`**
-```
-[ ] Full decision tree executed:
-    temporal → group/spatial → stratified → standard
-[ ] skill_04 EDA outputs confirmed in SKILL_STATE.json
-    before skill_05 reads them
-[ ] Spatial GroupKFold uses
-    spatial_signal.group_col when group_signal absent
-[ ] All column names read from config —
-    no string literals
-[ ] Selection reason written to challenge_config.json
-[ ] CV object is the only CV object in the pipeline
-[ ] random_state reads from
-    config["reproducibility"]["seed"]
-[ ] Config locks after this write completes
-[ ] Spatial GroupKFold enforces spatial_buffer_km exclusion zones when spatial_signal present
-    — buffered splits written to cv_split_indices and consumed by
-    skill_07/08/10/21 via load_explicit_cv_splits (see S7 status in Section 9)
-```
-
-**`skill_06`**
-```
-[ ] MNAR indicator columns created before any fill
-[ ] MCAR columns filled with median/mode
-[ ] Constant columns dropped
-[ ] Imputation order enforced — indicator first,
-    fill second
-```
-
-**`skill_07`**
-```
-[ ] All variants use CV strategy from config
-[ ] Target-dependent group aggregations (target col)
-    follow two-mode contract: fold-restricted during CV,
-    full-train during inference
-[ ] Structural group aggregations (non-target cols)
-    computed on full dataset — no two-mode restriction
-[ ] Spatial lag of target follows two-mode contract:
-    fold-restricted during CV, full-train during inference
-[ ] Structural spatial features (Haversine, nearest-
-    neighbour) computed on full dataset at any time
-[ ] No target-dependent feature is missing from the
-    inference feature matrix
-[ ] Sidecar recommendations consumed if present,
-    skipped if absent (non-blocking)
-[ ] All OOF outputs tagged with cv_strategy_id
-[ ] If regression, OOF record contains secondary_metrics nested dict with MAE, MAPE, R² (MAE/MAPE/R² averages across folds)
-[ ] Config seed used for all training
-```
-
-**`skill_08`**
-```
-[ ] CV strategy read from config —
-    not defined internally
-[ ] Config seed used
-[ ] Anchor OOF score written with cv_strategy_id tag
-[ ] If regression, anchor OOF record contains secondary_metrics nested dict with MAE, MAPE, R²
-[ ] Anchor branch name and model config written to
-    SKILL_STATE.json
-[ ] If operator selected [C] at Gate 1:
-    anchor_oof_score_challenged written to SKILL_STATE
-    anchor_challenge block written with modification
-      description, both OOF scores, rationale, timestamp
-    No write to challenge_config.json under any condition
-[ ] Secondary metrics contains zero_fraction and temporal-gated mase (when temporal_signal present)
-```
-
-**`skill_09`**
-```
-[ ] Uses identical CV folds as skill_08
-[ ] Classification tasks only
-[ ] Calibrated OOF predictions written with
-    cv_strategy_id tag
-```
-
-**`skill_10`**
-```
-[ ] SHAP computed per-fold on OOF predictions only
-[ ] SHAP calculation dynamically detects output dimensions: positive class (index 1) or sum of absolute classes for classification, single array for regression
-[ ] Aggregated across folds before threshold comparison
-[ ] Full-train SHAP absent from skill body
-[ ] If feature count < 2: relative SHAP ratio audit
-    skipped, shap_audit_skipped_reason written to state,
-    branch evaluated on fold variance gate alone —
-    NOT automatically promoted
-[ ] leaked_features written for every branch
-[ ] Branches with non-empty leaked_features blocked
-    from promotion
-[ ] Systematic pre-filtering MI audit executed using mutual_info_regression/classif with thresholds from config
-```
-
-**`skill_11`**
-```
-[ ] All five promotion conditions checked
-[ ] Gate condition 2 uses effective_variance_threshold:
-    regression (RMSE): config["variance_gate_threshold"] * (target_std ** 2)
-    regression (RMSLE): config["variance_gate_threshold"] raw (no scaling)
-    classification: config["variance_gate_threshold"] raw
-[ ] Gate condition 3 uses effective_gate_margin:
-    regression (RMSE): config["gate_margin"] * target_std
-    regression (RMSLE): config["gate_margin"] raw (no scaling)
-    classification: config["gate_margin"] raw
-[ ] If target_std == 0.0 and metric != "rmsle":
-    effective_gate_margin falls back to config["gate_margin"] raw
-    effective_variance_threshold falls back to config["variance_gate_threshold"] raw
-    Warning written to SKILL_STATE["metadata_warnings"]
-    Pipeline does not halt — warning is non-blocking and advisory only
-[ ] target_std read from SKILL_STATE["eda"]["target_std"]
-    — written by skill_04 in Phase 1
-
-[ ] Gate condition 3 reads metric_direction from config
-[ ] Gate condition 3 baseline uses safe state lookup:
-    SKILL_STATE.get("pseudo_label_result", {})
-    .get("retraining_required", False)
-    — prevents KeyError on first pass before skill_21
-    has ever run
-[ ] Gate condition 3 challenge flag uses safe lookup:
-    SKILL_STATE.get("anchor_challenge", {})
-    .get("active", False)
-    — prevents KeyError when no [C] challenge was used
-[ ] Gate condition 3 baseline: anchor_oof_score_augmented
-    when retraining_required == true — takes precedence
-    over anchor_challenge because training set changed
-[ ] If retraining_required == false and
-    anchor_challenge.active == true: baseline is
-    anchor_oof_score_challenged
-[ ] Maximize metrics: improvement means score went up
-[ ] Minimize metrics: improvement means score went down
-[ ] No symmetric gate_margin applied to minimize metrics
-[ ] Reads cv_strategy_override from SKILL_STATE
-    if present
-[ ] All gate comparisons use override OOF scores
-    when override is active
-[ ] Gate failure produces written diagnosis
-[ ] Gate failure triggers skill_20 on-demand run
-[ ] Human Gate 2 approval checked before candidate
-    pool entry
-[ ] Gate conditions 2 and 3 consume Nadeau-Bengio corrected variance Var_NB and 1-SE promotion margin
-[ ] Multi-target gate conditions 2 and 3 consume inverse-variance effective weights w_k^eff = w_k / (σ_k^2 + ε), mirrored one-for-one from Composite Score Computation
-```
-
-**`skill_12`**
-```
-[ ] Fold scores and variance written
-[ ] fold_score_variance computed with ddof=1
-    (unbiased sample variance, n-1 denominator)
-[ ] For regression (RMSE): variance interpreted against
-    effective_variance_threshold = variance_gate_threshold
-    * (SKILL_STATE["eda"]["target_std"] ** 2)
-[ ] For regression (RMSLE): variance interpreted against
-    effective_variance_threshold = variance_gate_threshold (no scaling)
-[ ] For classification: raw variance_gate_threshold used
-[ ] OOF-to-LB delta recorded when available
-[ ] Recommended threshold written
-[ ] Fold score variance computed using Nadeau-Bengio overlap-corrected estimator Var_NB
-```
-
-**`skill_13`**
-```
-[ ] Human Gate 3 approved before running
-[ ] Only fuses skill_11-passed candidates with Gate 2
-    approval
-[ ] OOF correlation check on all candidate pairs
-[ ] Pearson correlation used for classification tasks
-[ ] Spearman rank correlation used for regression tasks
-[ ] No two candidates with correlation > 0.95 blended
-[ ] All candidates have seeds set
-[ ] Fusion strategy written to SKILL_STATE.json
-[ ] Uses most recent OOF arrays only —
-    never stale pre-pseudo-label arrays
-[ ] Candidate pruning evaluates error residual vector correlation e_m = y_pred,m - y_true
-```
-
-**`skill_14`**
-```
-[ ] Human Gate 4 approved before running
-[ ] Validation logic branches on task_type AND
-    use_probabilities from config
-[ ] Classification + use_probabilities True:
-    probability range (0,1), decimal depth check,
-    raw probability check
-[ ] Classification + use_probabilities False:
-    value equality check (val == 0 or val == 1),
-    0.0/1.0 pass, any other value is hard failure
-[ ] Regression: domain bounds check,
-    no NaN/inf, distribution sanity check
-[ ] No probability checks applied to regression outputs
-    or hard-label classification outputs
-[ ] ID column matches test set exactly
-[ ] Row count matches test set exactly
-[ ] No duplicate IDs
-[ ] File format matches competition submission schema
-[ ] Seed confirmed
-```
-
-**`skill_15`**
-```
-[ ] CV strategy selection event logged
-[ ] Every phase transition logged
-[ ] Every gate pass and failure logged with timestamp
-[ ] Every human gate approval logged
-[ ] Config lock event logged
-```
-
-**`skill_16`**
-```
-[ ] Submission budget checked — hard abort at zero
-[ ] Single remaining submission triggers human
-    confirmation
-[ ] Submission validated by skill_14 before API call
-[ ] Post-submission LB score recorded and passed to
-    skill_00
-```
-
-**`skill_17`**
-```
-[ ] Final submission selection documented with reasoning
-[ ] CV strategy recorded in governance report
-[ ] All Human Gate approvals referenced by timestamp
-[ ] Gate 5 selection recorded
-```
-
-**`skill_18`**
-```
-[ ] Runs after Phase 1 completes
-[ ] Domain literature and metric optimisation evidence
-    written to SKILL_STATE.json
-[ ] On-demand run triggered when skill_20 raises
-    unresolved hypothesis
-[ ] No blocking behaviour if absent
-```
-
-**`skill_19`**
-```
-[ ] Runs after Phase 2A completes
-[ ] Code patterns written specific to CV strategy and
-    data structure found in Phase 1
-[ ] No blocking behaviour if absent
-```
-
-**`skill_20`**
-```
-[ ] Runs after skill_08 and skill_10 complete
-[ ] Hypotheses validated against anchor OOF and
-    SHAP values
-[ ] Every hypothesis resolved as accepted or rejected
-    in SKILL_STATE.json
-[ ] On-demand run triggered on every skill_11_gate
-    rejection
-[ ] No blocking behaviour if absent
-```
-
-**`skill_21`**
-```
-[ ] All six guard conditions checked before running
-[ ] Guard Condition 1: does not run when
-    task_type != "classification"
-[ ] Guard Condition 2: does not run when
-    cv_strategy == TimeSeriesSplit
-[ ] Guard Condition 3: does not run when
-    leaked_features non-empty
-[ ] Guard Condition 4: does not run when
-    fold_score_variance >= effective_variance_threshold
-    (equivalent to raw variance_gate_threshold in classification)
-[ ] Guard Condition 5: does not run without calibrated
-    probabilities from skill_09
-[ ] Guard Condition 6: does not run if confidence
-    threshold not met (fixed absolute thresholds:
-    conf_pos >= 0.85, conf_neg <= 0.15)
-[ ] Uses calibrated probabilities from skill_09
-[ ] Config seed used
-[ ] Full pseudo_label_result schema written to
-    SKILL_STATE.json on every run (ran,
-    n_pseudo_labels_added, retraining_required,
-    guard_conditions_met, guard_failure_reason,
-    execution_failure_reason,
-    guard_condition_flags with all six gc fields)
-[ ] Retraining loop triggered when
-    retraining_required == true
-[ ] Pseudo-label CV fold assignment contract enforced:
-    rows N_train onward assigned to training split
-    of every fold — never to validation folds
-[ ] OOF evaluation indices identical to pre-augmented
-    Phase 1 split layout
-[ ] Anchor model retrained on augmented dataset —
-    anchor_oof_score_augmented written to SKILL_STATE.json
-[ ] Original anchor_oof_score preserved unchanged
-[ ] Augmented variant OOF namespace contract enforced:
-    all retraining loop OOF arrays written to
-    branch_{name}_oof_augmented keys exclusively —
-    original branch_{name}_oof keys never overwritten
-[ ] Hard error triggered if retraining loop attempts
-    to write to any non-augmented OOF key
-[ ] Retrained branches compared against
-    anchor_oof_score_augmented — never original anchor
-[ ] Retrained branches pass through skill_10 and
-    skill_11 before fusion
-[ ] Human Gate 2 re-approval obtained for all
-    retrained branches
-[ ] OOF outputs from retrained branches tagged with
-    cv_strategy_id
-[ ] Rollback path executed if zero retrained branches
-    pass skill_11: only _augmented keys cleared,
-    original branch_{name}_oof arrays intact,
-    original candidate pool restored, proceeds to skill_13
-[ ] Fusion uses most recent OOF arrays only
-[ ] Pseudo-label thresholding strategy decision recorded (S8): Hybrid Adaptive class-wise quantile selection with 0.70 floor locked by project owner (2026-08-03); current implementation still uses fixed absolute thresholds (conf_pos >= 0.85, conf_neg <= 0.15) — class-wise quantile mechanism specified but not yet implemented
-```
-
-**`skill_22`**
-```
-[ ] All reproducibility checklist items pass (R1–R4)
-[ ] All five human gate approvals recorded with
-    timestamps
-[ ] CV contract verified — single strategy,
-    all outputs tagged
-[ ] Environment lock file verified
-[ ] No custom packages confirmed via import scan
-[ ] Computed-artifact fingerprinting scope decision recorded (S10): Path 2 skill_22-only verification confirmed (2026-08-03) — no fingerprinting logic in skill_01; raw-file MD5 hashing preserved; 3-tier tolerance bands implemented in skill_22 but no skill yet writes derived_artifact_fingerprints
-[ ] If skill_21 ran with retraining_required == true:
-        Guard Condition 1 (classification-only) confirmed
-        Pseudo-label fold contract verified: augmented
-          rows in train splits only, OOF indices unchanged
-        guard_condition_flags present in pseudo_label_result
-          with all six gc fields populated as Booleans
-        anchor_oof_score_augmented present in SKILL_STATE
-        Retrained branch OOF scores present and tagged
-        Retrained branches gated against augmented anchor
-        skill_10 and skill_11 pass confirmed on
-          retrained branches
-        If rollback occurred: all _augmented keys cleared,
-          original branch_{name}_oof keys verified intact,
-          execution_failure_reason written,
-          original pool used, confirmed in state
-[ ] If CV strategy override used at Gate 1:
-        cv_strategy_override block present in
-        SKILL_STATE.json with rationale and timestamp
-        Override rationale present and non-empty
-        Override recorded in governance report
-          and history log
-[ ] If anchor challenge used at Gate 1 ([C] selected):
-        anchor_challenge block present in SKILL_STATE.json
-        Both original and challenged OOF scores recorded
-        anchor_challenge.active reflects operator selection
-        Modification description and rationale non-empty
-        No challenge writes present in challenge_config.json
-[ ] If both anchor_challenge.active == true AND
-    pseudo_label_result.retraining_required == true
-    in the same competition run:
-        Verify skill_11 gate comparisons used
-        anchor_oof_score_augmented as the baseline,
-        NOT anchor_oof_score_challenged.
-        anchor_oof_score_augmented takes precedence because
-        the training set has changed — comparing against any
-        pre-augmentation baseline (including the challenged
-        anchor) is mathematically invalid when pseudo-label
-        rows have been added to the training matrix.
-
-[ ] Competition history log entry written in correct
-    schema to competition_history/history_log.jsonl
-[ ] All required history log fields populated before
-    sign-off
-[ ] cv_strategy_override and rationale recorded in
-    history log if Gate 1 override occurred
-[ ] Cross-competition history log updated
-[ ] Pipeline replayable from config and state alone
-```
-
----
-
-> Phase gate checklists are maintained within each phase section in Section 4 above. Refer to those sections as the single source.
-
----
-
-### OOF Contract Compliance
-
-```
-[ ] Single CV strategy object in challenge_config.json
-[ ] No skill defines a CV object internally
-[ ] All OOF scores tagged with cv_strategy_id
-[ ] Orchestrator validates tags before score passing
-[ ] skill_22 verifies full contract at sign-off
-```
-
----
-
-### Multi-Target Migration Checklist (only applies when target_config
-has more than one entry)
-
-```
-[ ] skill_02 writes target_config with all targets, weights, metrics
-[ ] skill_02 writes file_manifest (actual train/test file names)
-[ ] skill_02 writes group_signal.col confirming existing GroupKFold
-    logic handles the group structure — no new CV selector needed
-[ ] Plugin implements FeatureExtractor, reads all column names from
-    config — zero string literals
-[ ] skill_04 writes eda[f"{target_name}_std"] for every regression target
-[ ] skill_08 runs the per-target loop, writes anchor_oof_score as
-    composite, anchor_oof_score_per_target for diagnostics
-[ ] skill_10 runs SHAP per target, leaked_features_{target_name} per
-    target; gate condition 1 checks all target lists
-[ ] skill_11 gate conditions 2 and 3 use composite_fold_score_variance
-    and composite anchor_oof_score — NOT YET SAFE, see open issues above
-[ ] skill_12 writes per_target and composite_fold_score_variance
-[ ] Human Gate 1 review surfaces anchor_oof_score_per_target alongside
-    the composite
-[ ] skill_22 sign-off gains one line: verify anchor_oof_score_per_target
-    present whenever target_config has more than one entry
-```
-
----
-
-### Research Sidecar Trigger Compliance
-
-```
-[ ] skill_00 running from competition intake to close
-[ ] skill_18 first run after Phase 1
-[ ] skill_19 run after Phase 2A
-[ ] skill_20 first run after skill_08 and skill_10
-    complete
-[ ] All skill_20 hypotheses resolved in SKILL_STATE.json
-[ ] All on-demand sidecar runs logged
-[ ] No sidecar failure halts main pipeline
-```
-
----
-
-### Zindi Compliance
-
-```
-[ ] Seed set and in challenge_config.json at intake
-[ ] Seed logged in every OOF output
-[ ] All models trained with config seed —
-    no local overrides
-[ ] Raw probabilities in classification submissions
-    when use_probabilities == True —
-    no rounding, no thresholding
-[ ] Hard 0/1 labels in classification submissions
-    when use_probabilities == False
-[ ] target_domain_bounds enforced for regression
-    submissions
-[ ] No AutoML tools in any skill —
-    preflight static scan confirms this
-[ ] No custom packages in any skill body
-[ ] 2 final submissions selected before close (Gate 5)
-[ ] requirements.txt committed and verified
-[ ] Submission reproducible from config and state alone
-[ ] Code review package prepared
-[ ] If top 10: code ready for 48-hour submission window
-```
-
----
-
-### Human Gate Compliance
-
-```
-[ ] Gate 1 approved before variant generation starts
-[ ] If CV strategy override used at Gate 1:
-    cv_strategy_override block present in
-    SKILL_STATE.json with rationale and timestamp
-[ ] Override written to SKILL_STATE only —
-    challenge_config.json unchanged
-[ ] Gate 2 approved for every promoted branch
-[ ] Gate 2 re-approved for every retrained branch
-    from skill_21
-[ ] Gate 3 approved before skill_13 runs
-[ ] Gate 4 approved before skill_14 runs
-[ ] Gate 5 completed before competition close
-[ ] No gate key written by any skill or automated
-    process
-[ ] Every gate approval recorded in reports/ with
-    timestamp
-```
-
----
-
-### Architecture Integrity
-
-```
-[ ] No skill imports from another skill directly
-[ ] No hardcoded competition-specific values in any
-    skill
-[ ] Every skill reads context from
-    challenge_config.json
-[ ] Every skill writes outputs to SKILL_STATE.json
-[ ] Orchestrator is the only entity reading both files
-[ ] Phase dependency chain enforced
-[ ] challenge_config.json read-only after Phase 1 lock
-[ ] Post-lock write by non-skill_00 skill is hard error
-[ ] skill_00 community_signals writes are the only
-    permitted post-lock writes
-[ ] Sidecar failures do not halt the main pipeline
-[ ] Preflight detects INIT vs ENFORCE mode
-    automatically
-[ ] INIT mode allows full Phase 1 sequence only
-[ ] ENFORCE mode runs full check suite
-[ ] Preflight confirms before any skill executes
-```
-
----
-
-### Scalability and Feedback Loop Integrity
-
-```
-[ ] New skill requires only adding module to
-    zindian/skills/ — no orchestrator code changes
-[ ] Phase map configurable via challenge_config.json
-[ ] All gate thresholds configurable —
-    no magic numbers in skill code
-[ ] Every gate failure produces written diagnosis
-[ ] skill_20 on-demand runs triggered automatically
-[ ] Cross-competition history log updated after every
-    close
-[ ] Gate thresholds reviewable against historical
-    OOF-to-LB data
-```
-
----
-
----
-
-## 9. Known Gaps Registry
+## 7. Known Gaps Registry
 
 This section documents every confirmed discrepancy between the SoT
 contract and the current codebase. Items are tracked by severity.
+Last verified: August 2026.
 
 ---
 
-### CRITICAL — Pipeline-blocking or Contract-violating
+### RESOLVED — Removed from active tracking
 
-**[RESOLVED] C1 — Bootstrap dag_phase prevents config writes**
+The following items have been confirmed resolved by direct code inspection
+and are recorded here for audit trail only.
 
-```
-SoT Contract:   Phase 1 skills write to challenge_config.json
-                during the mutable window.
-Code Reality:   Resolved. "phase_1_integrity_locked" has been added
-                to allowed_write_phases in skill_02 and skill_05.
-```
-
-**[RESOLVED — v2.3] GAP-4 — Temporal and Group CV signal detection in skill_04_eda**
-
-```
-SoT Contract:   skill_04_eda writes temporal_index_confirmed and
-                group_structure_confirmed to SKILL_STATE.json["eda"].
-Code Reality:   Resolved in v2.3. skill_04_eda now writes both lean booleans
-                derived from BAND_MM pattern match, datetime/monotonicity
-                dtype inference, and cardinality ratio (<5% distinct non-ID
-                feature values). Heavy diagnostic dicts moved to
-                reports/diagnostics/eda_report.json.
-```
+| ID | Description | Resolution |
+|---|---|---|
+| C1 | Bootstrap `dag_phase` prevented config writes | `"phase_1_integrity_locked"` added to `allowed_write_phases` in skill_02 (L867) and skill_05 (L610); bootstrap sets this phase at L119 |
+| GAP-4 | `skill_04_eda` did not write `temporal_index_confirmed` / `group_structure_confirmed` | Resolved v2.3 — both lean booleans now derived from BAND_MM pattern, datetime/monotonicity dtype inference, and <5% cardinality ratio |
+| S1/S9 | Bessel's correction underestimation + absolute promotion margins | Implemented 2026-08-03 — `skill_12_metric` L167–182 computes NB-corrected `fold_score_variance_nb` + `se_oof`; `skill_11_gate` L134 applies `max(margin, 1.0 * se_oof)` |
+| S2 | MAPE zero-target bias + MASE baseline | Implemented 2026-08-03 — `compute_secondary_metrics` in `state.py` L173–214; group-wise naive baseline in `skill_04_eda` L671–692 |
+| S3 | Non-uniform metric scaling / composite weighting | Implemented 2026-08-03 — Inverse-variance weighting in `skill_12_metric` L88–149 and `skill_11_gate` L188–236 |
+| S4 | Correlation-based pruning used raw predictions not residuals | Implemented 2026-08-03 — `_prune_collinear()` in `oracle_fusion_core.py` accepts `y_true` and computes error residuals; call site at L687 passes `y_true` |
+| S5 | Multi-target pseudo-label recombination policy not enforced | Implemented 2026-08-03 — Both policies (`freeze_unaugmented_targets_at_original`, `block_composite_until_all_targets_augmented_or_none`) enforced at `skill_21_pseudo_label.py` L567 and L1034–1132 |
+| C4 | `skill_17` checked flat `human_gate_2_approved` instead of per-branch keys | `skill_17_governance.py` L96–104 now iterates `human_gate_2_*_approved` prefix pattern, explicitly excludes flat legacy key |
+| M6 | `skill_11` / `skill_12` might silently fall back to wrong `target_std` key on multi-target | `skill_11_gate` L107–115 reads `target_std` with a fallback scan across all `_std`-suffixed keys in the EDA block |
+| DRIFT-3 | Orchestrator had no validated split-skill dispatch mechanism | `zindian/orchestrator.py` L318–358 uses `hasattr` + `inspect.signature` to dispatch split-skill functions with filtered kwargs |
+| C2 | Preflight did not validate `feature_policy.json` required keys | Not a preflight responsibility — `policy_gate()` in `skill_03_legality.py` validates required keys at Phase 2A runtime; no preflight change needed |
+| S7 (partial) | Preflight wrote to `reports/` root instead of `reports/audits/preflight/` | `scripts/preflight_enforce.py` L877–880 now writes to `reports/audits/preflight/<timestamp>.json` |
+| S7 (partial) | `skill_12_metric` did not consume buffered CV splits | Not a gap — `skill_12` reads `fold_scores` from existing OOF state records; it never re-runs CV splits |
+| S7 | Spatial CV Buffer: skill_09 not consuming buffered splits | Implemented 2026-08-24 — `skill_09_calibration.py` L207 now calls `load_explicit_cv_splits(state)` |
+| S8 | Fixed Pseudo-label Thresholding (adaptive quantiles not implemented) | Implemented 2026-08-24 — Class-wise quantile selection with 0.70 floor, deterministic ranking, and `min_pseudo_samples` guard |
+| S10 | Artifact Fingerprints: no skill writes `derived_artifact_fingerprints` | Implemented 2026-08-24 — Upstream skills (06, 07, 08, 21) write artifact fingerprints via `write_artifact_fingerprint()` |
 
 ---
 
-### STATISTICAL HEURISTICS & LIMITATIONS — v2.4 Migration Status & Specifications
+### OPEN — Active gaps requiring code changes
 
-These items document statistical limitations from v2.3 and their updated v2.4 target specifications:
+**S6 — Multicollinear Leakage Splitting (split-leak blind spot)**
 
-- **S1 — Bessel's Correction Underestimation & S9 — Absolute Promotion Margins**:
-  *Status:* `skill_12_metric` L167–182 computes `fold_score_variance_nb` (Nadeau-Bengio corrected, ddof=1) and `se_oof = sqrt(Var_NB)`, writing both to `metric_analysis`. `skill_11_gate` L134–138 reads `se_oof` from state and applies `effective_margin = max(effective_margin, 1.0 * se_oof)`. Shipped together as required. No `challenge_config.json` schema change was needed — confirmed. (2026-08-03)
-- **S2 — MAPE Zero-Target Bias**:
-    *Status:* `compute_secondary_metrics` in `zindian/state.py` (L173–214) calculates `zero_fraction` (target sparsity) for all regression OOFs, and `mase` when `config["temporal_signal"]["present"] == True` (gated by temporal signal presence). MASE is omitted for non-temporal tasks. MAE naive baseline is partitioned group-wise in `skill_04_eda.py` (L671-692) when a group column is defined, preventing cross-group boundary crossings. Remaining gap: none; the group-wise baseline path is now explicit and covered by unit tests. (2026-08-03)
-- **S3 — Non-Uniform Metric Scaling / Composite Weighting**:
-    *Status:* `skill_12_metric` (L88–149) and `skill_11_gate` (L188–236) implement dynamic inverse-variance target weighting (`w_k_eff = w_k / (sigma_k_NB^2 + epsilon)`) when `use_inverse_variance_weighting` is configured in `target_config` or global config. The NB factor is fold-size aware when `fold_sizes` are present and falls back to the equal-fold geometry correction otherwise. Multi-target gate checks consume the same weights. (2026-08-03)
-- **S4 — Correlation-Based Pruning**:
-  *Status:* `oracle_fusion_core.py` `_prune_collinear()` accepts `y_true: np.ndarray | None = None` and computes error residuals when provided. The call site at L687 passes `y_true=y_true` (stale parking comment removed). Activated and covered by unit tests. (2026-08-03)
-- **S5 — Target Covariance Breakdown**:
-  *Status:* **[Deferred]** Recombination policy A12 (freeze_unaugmented_targets_at_original or block_composite_until_all_targets_augmented_or_none) isolates multi-target augmentation. Joint consistency regularization deferred.
-- **S6 — Multicollinear Leakage Splitting / Systematic MI Audit**:
-  *Status:* **Partially addressed.** M1 fixed: `skill_10_shap` now persists `leakage_mi_advisory` to `SKILL_STATE.json` via `state_store.update()` (single-target L839, multi-target L1121). M2 fixed: `skill_11_gate` surfaces `leakage_mi_advisory` at Human Gate 2 on both single-target (L412–422) and multi-target (L523–541) paths, and it never blocks promotion or triggers auto-regeneration. Systematic pre-filtering MI audit runs independently on all regression features, every time, regardless of whether the SHAP dominance ratio check fires, preserving the subsampling and latency guards. **Remaining gap (unchanged from v2.3):** univariate NMI/Pearson still misses multicollinearity-split leaks — a leak distributed across two correlated features can evade both the Pearson and the per-feature MI checks. The MI verification adds recall on non-linear univariate leaks but is advisory, so it does not fully close the split-leak gap. (2026-08-03)
-- **S7 — Spatial Autocorrelation Bias**:
-  *Status:* **Partially addressed (verified against code, 2026-08-03).** `skill_05_cv.py` `_apply_spatial_buffer()` (L86–117) and `build_spatial_splits()` (L120–200) are implemented, `spatial_buffer_km` is read from config (L438–440), and the buffered splits ARE written to `SKILL_STATE["cv_split_indices"]` (L547–560) when the spatial-clustering fallback branch fires. `skill_07`, `skill_08`, `skill_10`, and `skill_21` all consume these via `load_explicit_cv_splits(state)` from `zindian/cv.py` (L107–129) — so the earlier claim that buffered splits are "not wired to downstream model training" is **outdated and corrected here**. **Remaining gap:** (1) `skill_09_calibration` and `skill_12_metric` do not consume `cv_split_indices` — they call `get_cv_splits()`/`make_cv_splitter()` directly, so they do not see the buffered splits. (2) The non-fallback live CV path (when a `group_col` is present) has no buffer. S7 closes only when buffered splits from `skill_05` are the actual source passed to ALL model-training skills, including `skill_09` and `skill_12`.
-- **S8 — Fixed Pseudo-label Thresholding & Adaptive Quantiles**:
-    *Status:* **Decision recorded (project owner, 2026-08-03):** Hybrid Adaptive spec locked — class-wise quantile selection with 0.70 floor, calibration mandatory precondition, `min_pseudo_samples` aggregate-count guard, deterministic `method='first'` ranking, per-target scoping under multi-target. Recombination policy timing locked to **post-retraining** (verified in `skill_21_pseudo_label.py` `_run_multi_target_pseudo_label` L1088–1124). **Implementation status:** the current `skill_21` still uses fixed absolute thresholds (CONF_POS_DEFAULT = 0.85, CONF_NEG_DEFAULT = 0.15 at L52–53); the class-wise quantile mechanism is specified but not yet implemented. This is an explicit, owner-confirmed decision record — not a silent marker removal.
-- **S10 — Floating-Point Integrity limits**:
-  *Status:* **Decision recorded (2026-08-03):** Path 2 `skill_22`-only verification confirmed — no fingerprinting logic added to `skill_01` (raw-file MD5 hashing preserved). `skill_22_reproducibility_audit.py` implements the 3-tier tolerance verification: <= 1e-6 → PASS, 1e-6–1e-5 → SOFT WARN (Gate 5 sign-off required), > 1e-5 → HARD HALT (`_audit_derived_artifact_fingerprints()` L206). **Remaining gap (verified against code):** `skill_22` is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` but no skill currently *writes* this dict. When the key is absent or empty (current state on all competitions), `_audit_derived_artifact_fingerprints` silently passes (L216: `if not isinstance(fingerprints, dict) or not fingerprints: return True, []`). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
+```
+SoT Contract:   Leak detection catches features whose information leaks
+                from target, including distributed leaks across correlated
+                feature pairs.
+Code Reality:   Univariate NMI/Pearson checks miss multicollinearity-split
+                leaks. A leak distributed across two correlated features
+                evades both the Pearson dominance ratio and the per-feature
+                MI check. leakage_mi_advisory is advisory-only and does not
+                block promotion.
+Remaining gap:  Split-leak detection requires pairwise or group-wise MI
+                testing, which is not implemented.
+Severity:       Medium — real competitions may have correlated engineered
+                features that each pass univariate checks individually.
+```
+
+**skill_18 / skill_20 — Legacy root dual-writes not yet consolidated**
+
+```
+SoT Contract:   All report artifacts written exclusively to categorized
+                subdirectories (reports/diagnostics/ for sidecar outputs).
+Code Reality:   skill_18_librarian.py writes literature_cache.json and
+                domain_hypotheses.json to both reports/ root AND
+                reports/diagnostics/ (legacy + categorized dual-write,
+                L493–516).
+                skill_20_scientist.py run() hardcodes root paths at L671–676
+                for domain_hypotheses.json, validated_hypotheses.json, and
+                failed_hypotheses.json, then also writes to diagnostics/.
+Remaining gap:  Remove root writes from skill_18 and skill_20; update all
+                consumers to read from reports/diagnostics/ only.
+Severity:       Low — functional, but violates A6 state hygiene boundary
+                and floods reports/ root. Tracked in reporting_logging_audit.md.
+```
+
+**Preflight — Multi-target OOF completeness check not per-branch**
+
+```
+SoT Contract:   Preflight confirms every active branch has exactly N OOF
+                records (N = len(target_config["targets"])) in ENFORCE mode.
+Code Reality:   scripts/preflight_enforce.py A7 check (L549) validates only
+                that each OOF key carries a cv_strategy_id tag. It does not
+                count OOF records per branch against len(targets). A branch
+                missing one target's OOF entirely would pass preflight.
+Remaining gap:  Add a per-branch count check: for every branch_name found
+                in OOF keys, assert count == len(targets).
+Severity:       Low-Medium — only affects multi-target competitions; a
+                missing OOF would manifest as a KeyError at skill_11/12
+                rather than a preflight failure.
+```
+
+**GAP-3 — SHAP interaction effects**
+
+```
+SoT Contract:   SHAP-based leakage detection captures interaction effects
+                between features.
+Code Reality:   skill_10_shap.py computes mean |SHAP| per feature only.
+                TreeSHAP interaction values (shap_interaction_values) are
+                not computed. Interaction-based leakage detection deferred.
+Status:         Deferred to v3.0 per project roadmap.
+Severity:       Low — interaction-based leakage is rare in standard tabular
+                competitions.
+```
+
+**R5 — telemetry.aggregate not written by run_phase()**
+
+```
+SoT Contract:   After every phase completes, the orchestrator's post-phase
+                hook aggregates per-skill telemetry into
+                SKILL_STATE["telemetry.aggregate"] with total_duration_seconds,
+                total_carbon_kg_estimate, and skills_not_instrumented.
+                skill_22 verifies this at sign-off.
+Code Reality:   zindian/orchestrator.py run_phase() writes only per-skill
+                telemetry.{skill_name} keys (L1103-1104). No aggregate is
+                written. skill_22_reproducibility_audit.py does not check
+                telemetry.aggregate at all.
+Remaining gap:  run_phase() needs a post-loop aggregation step that sums
+                duration_sec and carbon_kg_estimate across all telemetry.*
+                keys and writes the aggregate. skill_22 needs to verify it.
+Severity:       Low-Medium — R5 carbon reporting is incomplete at the
+                competition level (per-skill data exists, total does not).
+```
 
 ---
 *Version: v2.5*
-*Status: CURRENT — lean restructure from v2.4; no architecture changes. See Section 9 for v2.4 statistical feature implementation status.*
+*Status: CURRENT*

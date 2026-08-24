@@ -239,6 +239,34 @@ Handles competitions predicting multiple targets simultaneously.
 
 ---
 
+## Conceptual Analogy: Is This Reinforcement Learning?
+
+The orchestrator is not a classical RL algorithm, but it shares the core
+state-action-reward feedback structure. Understanding the analogy helps clarify
+how feedback loops are designed.
+
+| RL Concept | Orchestrator Equivalent |
+|---|---|
+| Agent | Orchestrator control plane |
+| Environment | Competition dataset + Zindi platform |
+| State | `SKILL_STATE.json` + `challenge_config.json` |
+| Action | Running a skill, promoting a branch, engineering a variant |
+| Reward signal | OOF improvement, gate pass/fail, public LB delta |
+| Policy | Phase map + gate conditions + three-lens rules |
+| Episode | One competition lifecycle |
+
+**Where it differs from true RL:**
+
+- **Delayed and noisy rewards.** Public LB scores are time-lagged, budget-constrained, and cover only 20–30% of test data. OOF scores are faster proxy rewards but statistically imperfect.
+- **Engineered policy.** Gate conditions, CV decision trees, and phase maps are hand-designed, not learned via gradient descent.
+- **No value function.** The orchestrator makes greedy local decisions without modelling long-term multi-step consequences.
+
+**Two feedback mechanisms approximate RL behaviour without gradient updates:**
+
+1. **Cross-competition experience replay** — After every competition close, CV strategy choices, feature types, model architectures, and OOF-to-LB deltas are recorded in a history log. `skill_18` and `skill_20` read this log as prior knowledge for the next competition. See [Source of Truth §5](source_of_truth.md) for the history log schema.
+2. **Bayesian threshold evolution** — After several competitions, `shap_leak_threshold`, `variance_gate_threshold`, and `gate_margin` are reviewed against historical OOF-to-LB data and updated in config.
+
+---
 
 ## Success Metrics
 

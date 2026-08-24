@@ -342,3 +342,68 @@ def get_anchor_challenge_config(state_obj: dict) -> dict:
         return dict((state_obj or {}).get("anchor_challenge") or {})
     except Exception:
         return {}
+
+
+def write_artifact_fingerprint(
+    store: SkillStateStore,
+    name: str,
+    file_path: Path | str,
+    df: Any,
+) -> None:
+    """Computes and registers a derived artifact fingerprint in SKILL_STATE.
+
+    If the file at `file_path` already exists on disk (before being overwritten),
+    loads it to compute the maximum absolute difference against `df` for numeric columns.
+    """
+    import hashlib
+    import pandas as pd
+    import numpy as np
+
+    file_path = Path(file_path)
+
+    # Try to load existing file for comparison
+    max_abs_diff = 0.0
+    if file_path.exists():
+        try:
+            # We assume it is a CSV format for our fingerprinted matrices
+            old_df = pd.read_csv(file_path)
+            # Compare numeric columns
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            old_num_cols = old_df.select_dtypes(include=[np.number]).columns
+            common_cols = [c for c in num_cols if c in old_num_cols]
+
+            if len(common_cols) > 0 and len(df) == len(old_df):
+                diffs = []
+                for col in common_cols:
+                    v_new = df[col].fillna(0.0).values
+                    v_old = old_df[col].fillna(0.0).values
+                    abs_diff = np.abs(v_new - v_old)
+                    diffs.append(np.max(abs_diff))
+                if diffs:
+                    max_abs_diff = float(np.max(diffs))
+        except Exception:
+            # Silence comparison failures (e.g. format mismatch, empty file, etc.)
+            pass
+
+    # Compute MD5 hash of CSV content in memory
+    try:
+        csv_str = df.to_csv(index=False)
+        md5_hash = hashlib.md5(csv_str.encode("utf-8")).hexdigest()
+    except Exception:
+        md5_hash = ""
+
+    # Update state
+    state = store.read()
+    fingerprints = state.get("derived_artifact_fingerprints", {})
+    if not isinstance(fingerprints, dict):
+        fingerprints = {}
+
+    fingerprints[name] = {
+        "file_path": str(file_path),
+        "md5_hash": md5_hash,
+        "row_count": len(df),
+        "col_count": len(df.columns),
+        "max_abs_diff": max_abs_diff,
+    }
+    state["derived_artifact_fingerprints"] = fingerprints
+    store.write(state)

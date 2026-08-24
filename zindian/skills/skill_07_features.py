@@ -41,7 +41,11 @@ from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.cv import load_explicit_cv_splits
-from zindian.state import resolve_active_cv_strategy_id, write_oof_record
+from zindian.state import (
+    resolve_active_cv_strategy_id,
+    write_oof_record,
+    write_artifact_fingerprint,
+)
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
@@ -1276,6 +1280,20 @@ def _run_multi_target_variant(
         try:
             proc_dir = paths.data_processed_dir
             proc_dir.mkdir(parents=True, exist_ok=True)
+            # S10 artifact fingerprinting
+
+            try:
+                store = SkillStateStore(paths.state_path)
+                feat_path = proc_dir / f"features_train_{variant_name}.csv"
+                write_artifact_fingerprint(
+                    store,
+                    f"engineered_feature_matrix_{variant_name}",
+                    feat_path,
+                    train_feat,
+                )
+            except Exception as e:
+                print(f"  [WARNING] Failed to write feature matrix fingerprint: {e}")
+
             # Save fully engineered feature matrices for downstream skills (e.g. SHAP audit)
             train_feat.to_csv(
                 proc_dir / f"features_train_{variant_name}.csv", index=False
@@ -1858,6 +1876,20 @@ def run(
     try:
         proc_dir = paths.data_processed_dir
         proc_dir.mkdir(parents=True, exist_ok=True)
+        # S10 artifact fingerprinting
+
+        try:
+            store = SkillStateStore(paths.state_path)
+            feat_path = proc_dir / f"features_train_{variant_name}.csv"
+            write_artifact_fingerprint(
+                store,
+                f"engineered_feature_matrix_{variant_name}",
+                feat_path,
+                train_feat,
+            )
+        except Exception as e:
+            print(f"  [WARNING] Failed to write feature matrix fingerprint: {e}")
+
         # Save fully engineered feature matrices for downstream skills (e.g. SHAP audit)
         train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
         test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)

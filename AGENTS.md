@@ -125,25 +125,12 @@ Every contract in the SoT is a hard requirement — not a suggestion.
   `challenge_config.json` after Phase 1 completes, except
   `skill_00` writing to `community_signals`. If you are writing a
   post-Phase-1 skill that writes to config, stop and raise the issue
-  before proceeding. **Known live risk:** a separate investigation
-  (tracked as "C1" in this repo's issue history) claims the
-  bootstrap process may set a `dag_phase` string that doesn't match
-  any skill's permitted-write-phase list, meaning config writes could
-  silently fail from the very first run, not just after legitimate
-  Phase 1 completion. This has NOT been confirmed fixed. Before
-  trusting any "config is locked" message as evidence that Phase 1
-  genuinely completed, verify directly:
+  before proceeding.
 
-  ```bash
-  grep -rn "dag_phase" scripts/bootstrap_competition.py
-  grep -n "allowed_write_phases\|dag_phase ==\|dag_phase in" \
-    zindian/orchestrator.py zindian/skills/skill_0[1235]_*.py
-  ```
-
-  If the bootstrap phase string doesn't appear in any skill's
-  permitted-phase check, this is a confirmed live bug — stop and
-  raise it rather than building anything on top of an assumption that
-  the lock works.
+  **[RESOLVED — v2.5] C1:** Bootstrap sets `dag_phase = "phase_1_integrity_locked"` at
+  `scripts/bootstrap_competition.py` L119. Both `skill_02_intake.py` (L867) and
+  `skill_05_cv.py` (L610) include `"phase_1_integrity_locked"` in their
+  `allowed_write_phases` tuple. Config write gating works as specified.
 
 - **No hardcoded competition strings** — column names, target names,
   metric names, coordinate names, dataset names, and competition
@@ -160,12 +147,10 @@ Every contract in the SoT is a hard requirement — not a suggestion.
   fail.
 
 - **No cross-skill imports** — no skill imports from another skill
-  module, except a documented shim if one exists for `skill_13`
-  specifically (verify the shim's existence and exact name before
-  citing it — this has appeared in prior drafts as
-  `skill_13_ensemble.py` importing a shared `oracle_fusion_core`
-  module; confirm this file still exists with this name before
-  relying on the claim).
+  module, except the confirmed shim for `skill_13`:
+  `skill_13_ensemble.py` imports `zindian.oracle_fusion_core` (L8),
+  which lives at `zindian/oracle_fusion_core.py` — confirmed present.
+  All other cross-skill imports are prohibited.
 
 If the SoT and a human instruction conflict, flag the conflict
 explicitly before writing any code. Do not silently resolve it in
@@ -252,29 +237,9 @@ target_std = float(
 )
 ```
 
-**Known live risk on this specific pattern ("M6"):** a separate,
-unconfirmed finding alleges `skill_04` may write this value under a
-per-target key name (`{target_name}_std`) on multi-target
-competitions, while `skill_11`/`skill_12` read the flat `target_std`
-key shown above — which would cause a silent fallback to the raw,
-unscaled threshold rather than a loud failure. This exact class of
-bug (a name mismatch between writer and reader, causing silent
-fallback rather than a crash) has caused real debugging time before
-in this repo, on a different field. Before modifying `skill_04`,
-`skill_11`, or `skill_12`, confirm all three currently agree on the
-field name for the competition you're working on:
+**[RESOLVED — v2.5] M6:** `skill_11_gate` L107–115 reads `target_std` with a fallback scan across all `_std`-suffixed EDA keys, so a per-target key (`{name}_std`) is automatically picked up. The silent-fallback risk is closed.
 
-```bash
-python -c "
-import json
-s = json.load(open('competitions/<slug>/SKILL_STATE.json'))
-print({k: v for k, v in s.get('eda', {}).items() if 'std' in k.lower()})
-"
-```
-
-Never use direct bracket access on any of these keys. If you see
-direct access in existing code, flag it as a `KeyError` risk before
-making any other change.
+Never use direct bracket access on any of these keys. If you see direct access in existing code, flag it as a `KeyError` risk before making any other change.
 
 ---
 
@@ -293,7 +258,7 @@ fold_score_variance = float(np.var(fold_scores, ddof=1))
 
 ### Effective Gate Margin and Variance Threshold
 
-# See also: SOT Section 2, Principle 3; SOT Section 4, Phase 3B (skill_11_gate)
+*See also: SOT Section 2, Principle 3; SOT Section 4, Phase 3B (skill_11_gate)*
 
 A function resembling `_effective_thresholds()` in `skill_11_gate.py`
 is expected to return a 3-tuple:
@@ -356,7 +321,7 @@ else:
 
 ### Correlation in skill_13 (fusion diversity check)
 
-# See also: SOT Section 4, Phase 3B (skill_13 contract)
+*See also: SOT Section 4, Phase 3B (skill_13 contract)*
 
 ```python
 from scipy.stats import pearsonr, spearmanr
@@ -415,7 +380,7 @@ Rollback clears only `_augmented` keys. See SOT Section 4 (Phase 3B, skill_21 co
 
 ## SHAP Computation Rules
 
-# See also: SOT Section 4, Phase 3A (skill_10 contract) for the full SHAP contract.
+*See also: SOT Section 4, Phase 3A (skill_10 contract) for the full SHAP contract.*
 
 ```python
 shap_arrays = []
@@ -457,7 +422,7 @@ implemented. Missing the inference mode causes a column mismatch
 crash in `skill_14`. Missing the fold restriction silently inflates
 OOF scores.
 
-# See also: SOT Section 4, Phase 2B (skill_07 contract) for full details.
+*See also: SOT Section 4, Phase 2B (skill_07 contract) for full details.*
 
 ```python
 def compute_group_target_aggregation(X, y, group_col, train_idx=None,
@@ -529,21 +494,9 @@ if not SKILL_STATE.get(gate2_key):
     )
 ```
 
-**Known live risk ("C4"):** an unconfirmed claim alleges
-`skill_17_governance.py` may check a single flat `human_gate_2_approved`
-key rather than iterating the `human_gate_2_{branch}_approved` prefix
-pattern shown above — which would mean Gate 2 approval is never
-actually verified per-branch, defeating the purpose of the per-branch
-key design. Verify directly before assuming this works correctly:
+**[RESOLVED — v2.5] C4:** `skill_17_governance.py` L96–104 correctly iterates `human_gate_2_*_approved` prefix pattern and excludes the flat legacy key. Verified by direct code inspection.
 
-```bash
-grep -n "human_gate_2" zindian/skills/skill_17_*.py
-```
-
-Legacy keys `human_gate_13_approved` and `human_gate_14_approved` are
-invalid. If found in any state file, they indicate an old competition
-state that was not migrated. Raise the issue — do not silently read
-them.
+Legacy keys `human_gate_13_approved` and `human_gate_14_approved` are invalid. If found in any state file, they indicate an old competition state that was not migrated. Raise the issue — do not silently read them.
 
 ---
 
@@ -581,9 +534,16 @@ decision logic (not a human reading a report) need this value?" If no, it goes t
 - `reports/summaries/` — phase summary Markdown + JSON (skill_15).
 - `reports/sessions/` — session-scoped event logs (startup JSONL, skill_15 error log).
 
-`skill_04` was the only skill violating this convention — previously writing five
-large per-band/per-feature dicts directly into `SKILL_STATE.json["eda"]`. Fixed in
-v2.3. If you find another skill doing this, treat it as the same class of bug.
+`skill_04` was the only skill violating the state-only convention — previously
+writing five large per-band/per-feature dicts directly into `SKILL_STATE.json["eda"]`.
+Fixed in v2.3. If you find another skill doing this, treat it as the same class of bug.
+
+**[OPEN GAP] skill_18 / skill_20 report path violation:** both skills still write
+legacy root copies of their artifacts (`reports/literature_cache.json`,
+`reports/domain_hypotheses.json`, `reports/validated_hypotheses.json`,
+`reports/failed_hypotheses.json`) alongside the correct categorized writes under
+`reports/diagnostics/`. Tracked in SoT §7 and `reporting_logging_audit.md` Track 2.
+Do not add new readers on the root paths — read only from `reports/diagnostics/`.
 
 **Reader/writer path rule:** every consumer must read the same categorized path the
 writer used. Do not reintroduce root-level duplicate reads (e.g. reading
@@ -655,17 +615,16 @@ At minimum, the preflight script is expected to validate:
 - `anchor_oof_score` (or whatever the actually-confirmed key name is
   for the competition in question) null check
 
-**Known live risk on the OOF tag check, specifically for multi-target
-competitions:** the matching pattern used by preflight may be a fixed
-string like `branch_*_oof`, which will NOT match the multi-target key
-shape `branch_{branch}_{target}_oof`. If unmatched, multi-target OOF
-records would silently bypass tag validation entirely. Before trusting
-a preflight PASS on any multi-target competition, confirm the pattern
-used is regex-based with an optional target group, not a literal glob:
+**OOF tag check for multi-target competitions:** preflight uses
+`startswith("branch_")` + `endswith("_oof")` (L549), which correctly
+matches multi-target keys like `branch_anchor_total_goals_oof` since
+they end in `_oof`. The tag presence check works.
 
-```bash
-grep -n "branch_.*_oof\|OOF_PATTERN" scripts/preflight_enforce.py
-```
+**[OPEN GAP] OOF completeness count:** the A7 check does NOT verify
+that every active branch has exactly N OOF records (N = number of
+targets). A branch missing one target's OOF entirely passes preflight.
+This is tracked in SoT §7. Do not work around it by reading missing
+keys — surface the gap first.
 
 If you extend `preflight_enforce.py`, new checks must follow the same
 fail-hard / warn-only distinction already in use.
@@ -724,10 +683,11 @@ Stop and ask before writing code if you encounter any of these:
   competition before assuming it needs to be "fixed."
 - You find code using direct bracket access on `cv_strategy_override`,
   `pseudo_label_result`, or `anchor_challenge`.
-- You encounter any of the "known live risk" items flagged throughout
-  this document (C1, C3, C4, M6, the multi-target preflight pattern,
-  the multi-target pseudo-label recombination policy) without a
-  fresh, in-session confirmation of their actual status.
+- You encounter any of the open gaps flagged throughout this document
+  (S6, S7, S8, S10, skill_18/20 root writes, preflight OOF completeness,
+  GAP-3) without a fresh, in-session confirmation of their actual status.
+  C1, C4, M6, DRIFT-3, C2, and the recombination policy are resolved —
+  do not treat them as live risks.
 
 These are not situations to resolve with best judgement. Surface
 them. If a gap exists in the SoT, it must be patched in the SoT
@@ -753,7 +713,16 @@ before it is resolved in code.
 
 ---
 
-## v2.3 & v2.4 Refactor — Completed Items
+## v2.3, v2.4 & v2.5 Refactor — Completed Items
+
+**v2.5 Gap Closures (August 2026) — verified by code inspection:**
+- ✅ **S5 (Multi-target recombination policy):** Both `freeze_unaugmented_targets_at_original` and `block_composite_until_all_targets_augmented_or_none` enforced at `skill_21_pseudo_label.py` L567 and L1034–1132.
+- ✅ **C4 (Per-branch human_gate_2 check):** `skill_17_governance.py` L96–104 iterates `human_gate_2_*_approved` prefix, explicitly excludes legacy flat key.
+- ✅ **M6 (target_std key fallback):** `skill_11_gate` L107–115 reads `target_std` with fallback scan across all `_std`-suffixed EDA keys.
+- ✅ **DRIFT-3 (split-skill dispatch):** `zindian/orchestrator.py` L318–358 uses `hasattr` + `inspect.signature` to dispatch split-skill functions.
+- ✅ **C2 (feature_policy.json keys — not a preflight gap):** Validated by `policy_gate()` at Phase 2A runtime; no preflight change required.
+- ✅ **Preflight output path:** `scripts/preflight_enforce.py` L877–880 writes to `reports/audits/preflight/<timestamp>.json` (not root).
+- ✅ **S7 / skill_12 (not a gap):** `skill_12_metric` reads fold scores from OOF state records and never re-runs CV splits — no buffered split consumption needed.
 
 **v2.4 Statistical Migration (August 2026):**
 - ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
@@ -802,31 +771,21 @@ all SoT-specified eda sub-block fields with correct defaults.
 
 ## Open Known Gaps (Do Not Fix Without SoT Patch First)
 
-1. **Regression pseudo-labelling** — `skill_21` is classification-only.
-   Guard Condition 1 explicitly blocks regression. Out of scope until
-   the SoT is patched to define a regression-compatible contract.
-2. **Two-mode contract static verification** — no preflight check
-   currently confirms `skill_07` respected fold discipline during CV.
-   Do not implement a runtime assertion for this without a SoT patch
-   defining the verification mechanism first.
-3. **Extended test suite coverage** — known incomplete. Track gaps
-   separately; do not assume any specific skill is covered without
-   checking.
-4. **`drift_threshold` ENFORCE-mode hard-fail** — currently warn-only
-   with a safe default. Acceptable gap for legacy configs; do not
-   silently upgrade to hard-fail without confirming it won't break
-   existing competition configs that predate this field.
-5. **Multi-target fusion diversity check** — see the named gap under
-   "Correlation in skill_13" above. Deferred deliberately, not an
-   oversight.
-6. **GAP-3 (SHAP interaction)** — Deferred to v3.0 per SoT roadmap.
-7. **DRIFT-3 (orchestrator split-skill validation)** — Low priority,
-   deferred to Phase 4.
-8. **C1, C2, C4 (config lock, feature_policy.json keys, flat
-   human_gate_2 check)** — each flagged inline above at its relevant
-   section. None confirmed fixed as of this document's last update.
-   Do not assume any of these are resolved without a fresh grep in
-   your current session. **C3 (hardcoded targets) RESOLVED in v2.3.**
+> Cross-reference: all open gaps are also tracked in `docs/source_of_truth.md` §7
+> (Known Gaps Registry) as the canonical record. AGENTS.md lists the implementation
+> constraints that apply when a gap is addressed.
+
+1. **S6 — Multicollinear leakage (split-leak blind spot):** Univariate NMI/Pearson misses leaks distributed across correlated feature pairs. Requires pairwise/group-wise MI testing. No SoT patch yet.
+2. **S7 — Spatial CV buffer: `skill_09` not consuming buffered splits:** `skill_09_calibration.py` calls `get_cv_splits()` directly, bypassing `cv_split_indices`. Fix: call `load_explicit_cv_splits(state)` when `cv_split_source == "skill_05_spatial"`.
+3. **S8 — Adaptive pseudo-label thresholds not implemented:** `skill_21` still uses fixed `CONF_POS_DEFAULT = 0.85`. Class-wise quantile spec locked (2026-08-03) but not coded. Do not change thresholds without matching the full spec in SoT §4 Phase 3B.
+4. **S10 — No skill writes `derived_artifact_fingerprints`:** `skill_22` verifier is a no-op. At least one of skill_06/07/08 must write MD5/float-hash fingerprints. Do not modify `skill_22` logic — add writers upstream.
+5. **skill_18 / skill_20 — Root dual-writes:** Both skills still write legacy root copies alongside `reports/diagnostics/`. Remove root writes and update all consumers together in one atomic change. See `reporting_logging_audit.md` Track 2 for the action plan.
+6. **Preflight — Multi-target OOF completeness not per-branch:** A7 check validates tag presence only, not N-per-branch count. Requires adding: for each branch, assert `count(branch_*_oof keys) == len(target_config["targets"])`.
+7. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
+8. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
+9. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
+10. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
+11. **R5 — `telemetry.aggregate` not written:** `run_phase()` writes only per-skill `telemetry.{skill_name}` keys; no aggregate is written. `skill_22` does not verify it. Add a post-loop aggregation step to `run_phase()` and a matching check in `skill_22`. Do not modify `skill_22` alone — add the writer first.
 
 ---
 

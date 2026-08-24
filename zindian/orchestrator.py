@@ -41,6 +41,13 @@ PHASE_4_SKILLS = ["skill_14", "skill_16", "skill_17", "skill_22"]  # Governance
 _current_run_dir: "Optional[Any]" = None
 
 
+def _get_utc_now() -> Any:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+
 def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
     """Dynamically discover and import modules under `zindian.skills`.
 
@@ -253,6 +260,7 @@ def run_skill(
                 sanitized_name = skill_name.replace(".", "_")
                 run_dir = _current_run_dir  # may be None for standalone calls
                 if run_dir is not None:
+                    run_dir.mkdir(parents=True, exist_ok=True)
                     # Session-scoped: write to run_dir/<skill>.log
                     skill_log_path = run_dir / f"{sanitized_name}.log"
                     log_file_handler = skill_log_path.open("w", encoding="utf-8")
@@ -910,11 +918,11 @@ def run_phase(
             paths if paths else resolve_competition_paths(require_competition=False)
         )
         if _phase_paths and _phase_paths.competition_dir:
-            _ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            _ts = _get_utc_now().strftime("%Y%m%dT%H%M%S")
             _run_dir = _phase_paths.competition_dir / "logs" / f"run_{_ts}_phase{phase}"
-            _run_dir.mkdir(parents=True, exist_ok=True)
+            # Defer directory creation to actual write to prevent empty logs folders
             _current_run_dir = _run_dir
-            print(f"  [Orchestrator] Session logs → {_run_dir}")
+            print(f"  [Orchestrator] Session logs (deferred) → {_run_dir}")
     except Exception:
         _current_run_dir = None
 
@@ -1144,5 +1152,109 @@ def run_phase(
         )
     except Exception as e:
         print(f"[orchestrator] Warning: Failed to write phase summary report: {e}")
+
+    # Deduplicate and persist latest log directory
+    try:
+        import json
+        _phase = phase.lower().strip()
+        json_filename = "phase_1_summary.json" if _phase == "1" else f"{_phase}_summary.json"
+        summary_path = paths.reports_dir / "summaries" / json_filename
+
+        if _current_run_dir is not None and _current_run_dir.exists() and summary_path.exists():
+            import shutil
+
+            # Save a copy of the phase summary inside our active run log dir as summary.json
+            active_summary_path = _current_run_dir / "summary.json"
+            shutil.copy2(summary_path, active_summary_path)
+
+            # Helper to clean/strip volatile keys for comparison
+            def _clean_dict_for_comparison(d: Any) -> Any:
+                if isinstance(d, dict):
+                    volatile_keys = {
+                        "timestamp",
+                        "last_reported",
+                        "last_updated",
+                        "duration_sec",
+                        "carbon_kg_estimate",
+                        "duration",
+                        "session_log",
+                        "session_start",
+                        "report_path",
+                        "written_at",
+                        "experiments_table_rows",
+                        "submissions_table_rows",
+                        "ledger",
+                        "last_updated_timestamp",
+                    }
+                    return {
+                        k: _clean_dict_for_comparison(v)
+                        for k, v in d.items()
+                        if k not in volatile_keys
+                    }
+                elif isinstance(d, list):
+                    return [_clean_dict_for_comparison(x) for x in d]
+                return d
+
+            def are_summaries_similar(new_sum: dict, old_sum: dict) -> bool:
+                return _clean_dict_for_comparison(new_sum) == _clean_dict_for_comparison(old_sum)
+
+            latest_dir = paths.competition_dir / "logs" / f"run_latest_phase{phase}"
+            latest_summary_path = latest_dir / "summary.json"
+
+            is_similar = False
+            if latest_dir.exists() and latest_summary_path.exists():
+                try:
+                    with open(summary_path, "r", encoding="utf-8") as f:
+                        new_data = json.load(f)
+                    with open(latest_summary_path, "r", encoding="utf-8") as f:
+                        old_data = json.load(f)
+                    is_similar = are_summaries_similar(new_data, old_data)
+                except Exception:
+                    pass
+
+            if is_similar:
+                # Overwrite contents of latest_dir with files from _current_run_dir
+                for item in _current_run_dir.iterdir():
+                    if item.is_file():
+                        shutil.copy2(item, latest_dir / item.name)
+                # Remove active_dir to prevent clutter
+                shutil.rmtree(_current_run_dir)
+                print(f"  [Orchestrator] Summary is similar. Logs merged into: {latest_dir}")
+            else:
+                # If they are different and latest_dir exists, archive latest_dir
+                if latest_dir.exists():
+                    archive_ts = "unknown"
+                    if latest_summary_path.exists():
+                        try:
+                            with open(latest_summary_path, "r", encoding="utf-8") as f:
+                                old_data = json.load(f)
+                            raw_ts = old_data.get("timestamp", "")
+                            if raw_ts:
+                                archive_ts = "".join(c for c in raw_ts.split(".")[0] if c.isalnum())
+                        except Exception:
+                            pass
+                    if archive_ts == "unknown":
+                        from datetime import datetime as dt, timezone as tz
+
+                        mtime = latest_dir.stat().st_mtime
+                        archive_ts = dt.fromtimestamp(mtime, tz.utc).strftime("%Y%m%dT%H%M%S")
+
+                    archive_dir = paths.competition_dir / "logs" / f"run_{archive_ts}_phase{phase}"
+                    # Ensure archive_dir does not clash
+                    idx = 1
+                    base_archive_dir = archive_dir
+                    while archive_dir.exists():
+                        archive_dir = Path(f"{base_archive_dir}_{idx}")
+                        idx += 1
+
+                    shutil.move(str(latest_dir), str(archive_dir))
+                    print(f"  [Orchestrator] Archived previous run to: {archive_dir}")
+
+                # Move _current_run_dir to latest_dir
+                shutil.move(str(_current_run_dir), str(latest_dir))
+                print(f"  [Orchestrator] Promoted new run to: {latest_dir}")
+
+    except Exception as e:
+        print(f"[orchestrator] Warning: Failed to run log directory deduplication: {e}")
 
     return results

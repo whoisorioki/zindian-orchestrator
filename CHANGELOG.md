@@ -6,15 +6,26 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 
 ### Changed
 - **Documentation deduplication restructure** — each doc now owns unique content; duplicates replaced with cross-links. No architecture or code changes from v2.4 (SOT header states this explicitly).
-  - `docs/source_of_truth.md` (v2.4 → **v2.5**, status CURRENT): added Documentation Map ownership table; removed preflight console-UI wall of text (→ pointer to `scripts/preflight_enforce.py`); removed internal duplicate "Per-Phase Gate Criteria" block (§4 Phase Architecture remains the single source). §9 Known Gaps Registry heading and S1–S10 entry format preserved byte-compatibly for `scripts/sot_alignment_check.py`.
+  - `docs/source_of_truth.md` (v2.4 → **v2.5**, status CURRENT): added Documentation Map ownership table; removed preflight console-UI wall of text (→ pointer to `scripts/preflight_enforce.py`); removed internal duplicate "Per-Phase Gate Criteria" block (§4 Phase Architecture remains the single source); §7 RL-analogy section and §8 Definition-of-Done master checklist removed; Known Gaps Registry renumbered §9 → **§7**.
   - `docs/orchestrator_overview.md` (~947 → 280 lines): removed Technical Deep Dive (verbatim SOT duplication); retained non-technical overview, Three Lenses, safety features, What-It's-NOT, success metrics; ends with a Technical Reference link table.
   - `README.md`: removed duplicated Key Features (S1–S10/gates/R1–R6) and Development Status sections; compressed phase diagram to one line + links; added docs navigation table; version history gained the v2.5 row.
   - `AGENTS.md` (937 → 837 lines): OOF schema / augmented namespace / SHAP rules converted to summary + SoT cross-links ("See also" pointers); corrected multi-target variance formula and all safe-access patterns, live risks, and verification tags retained in full.
+  - `scripts/sot_alignment_check.py`: registry locator regex made section-number-agnostic (`## \d+. Known Gaps Registry`) to survive future renumbering; stale in-file "Section 9" references updated.
 
 ### Verification
-- `scripts/sot_alignment_check.py`: 9 aligned / 0 misaligned / 0 code-ahead (Section 9 parser intact).
+- `scripts/sot_alignment_check.py`: 9 aligned / 0 misaligned / 0 code-ahead.
 - `pre-commit run --all-files`: all hooks pass.
 - Full test suite: 329 passed, 6 skipped.
+
+### Known Gaps (open after v2.5 — canonical registry: SoT §7)
+Documentation now cross-references these openly instead of hiding them:
+- **S6** — Multicollinear leakage splitting (split-leak blind spot): univariate NMI/Pearson misses leaks distributed across correlated feature pairs.
+- **S7** — Spatial CV buffer: `skill_09_calibration.py` calls `get_cv_splits()` directly, bypassing buffered `cv_split_indices`.
+- **S8** — Adaptive pseudo-label thresholding: class-wise quantile spec locked but not coded (`CONF_POS_DEFAULT = 0.85` still fixed).
+- **S10** — Artifact fingerprinting: no skill writes `derived_artifact_fingerprints`; skill_22 verifier is a no-op.
+- **skill_18 / skill_20** — Legacy root dual-writes: both still emit root copies alongside `reports/diagnostics/`; readers not yet consolidated.
+- **Preflight** — Multi-target OOF completeness check validates tag presence only, not N-per-branch count.
+- **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
 ## [v2.4-reporting-logs-2026-08-24]
 

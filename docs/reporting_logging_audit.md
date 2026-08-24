@@ -35,8 +35,7 @@ layout work proceeds under B (see Part 4). **Recommendation A (report-root clean
 largely applied to the writers before the docs were aligned:** skill_03/04/10/15/17/21/22
 already write *exclusively* to categorized subdirectories (`audits/`, `diagnostics/`,
 `summaries/`, `diagnostics/predictions/`, `sessions/`). The remaining A work is limited to:
-relocating `preflight_*.json` into `reports/audits/preflight/`, dealing with the residual
-`skill_18`/`skill_20` legacy root copies, and pruning stale root files (see Part 4 + Part 5).
+~~relocating `preflight_*.json` into `reports/audits/preflight/`~~ ✅ **DONE** — `scripts/preflight_enforce.py` L877–880 now writes to `reports/audits/preflight/<timestamp>.json`. Remaining: `skill_18`/`skill_20` legacy root copies and stale root file pruning (see Part 4 + Part 5).
 
 ---
 
@@ -59,28 +58,17 @@ occurrence is confirmed in code (not inferred):
 
 - **59 artifact files** sit directly under `reports/` root (JSON/MD/CSV).
 - **33 timestamped preflight records** (`preflight_ENFORCE_*.json`, `preflight_INIT_*.json`)
-  written by `scripts/preflight_enforce.py` L861–875.
+  written by `scripts/preflight_enforce.py` — now redirected to `reports/audits/preflight/` at L877–880 (see Rec A, Part 4).
 - **Phase summaries duplicated** at root *and* under `summaries/`.
 - **Heavy diagnostics duplicated:** `eda_report.json/.md` (root + `diagnostics/`) and
   `shap_analysis.json/.md` (root + `audits/`).
-- **Model probability arrays** (`oof_probs_pseudo_iter{0..3}*.csv`,
-  `test_probs_pseudo_iter{0..3}*.csv`) dumped at `reports/` root by
-  `skill_21_pseudo_label.py` L820–821 — with **no** categorized copy.
+- ~~**Model probability arrays**~~ ✅ **RESOLVED** — `skill_21_pseudo_label.py` L816–824 now writes `oof_probs_pseudo_iter*.csv` and `test_probs_pseudo_iter*.csv` to `reports/diagnostics/predictions/` only. No root copy.
 
 ---
 
 ## Part 2 — Investigation: `logs/` Organization
 
-Confirmed in `zindian/orchestrator.py` L246–253: the orchestrator creates
-`<slug>/logs/` and opens **one file per skill** — `skill_01.log`, `skill_03_policy_writer.log`,
-`skill_04.log`, etc. — capturing stdout via a `Tee` shim. Observed files:
-
-```
-skill_01.log  skill_02.log  skill_03_policy_writer.log  skill_04.log  skill_05.log  skill_15.log
-```
-
-**Assessment:** a flat, per-skill layout. It cannot be re-assembled into a chronological
-session view, and the top-level `logs/` namespace grows with every new skill split.
+~~Confirmed in `zindian/orchestrator.py` L246–253: flat per-skill layout.~~ ✅ **RESOLVED — Track 1 DONE.** `zindian/orchestrator.py` L38–914 implements session-scoped logs. `run_phase()` sets `_current_run_dir` to `logs/run_<timestamp>_phase<N>/`. Each skill writes to `run_dir/<skill>.log` AND appends to the shared `run_dir/session.log`. Standalone `run_skill()` calls (tests, ad-hoc) fall back to `logs/<skill>.log`. The old flat layout no longer applies to pipeline runs.
 
 ---
 
@@ -128,12 +116,12 @@ session view, and the top-level `logs/` namespace grows with every new skill spl
 
 ## Part 4 — Recommendations
 
-### Recommendation B — Optimise `logs/` *(SELECTED — implemented)*
+### Recommendation B — Optimise `logs/` ✅ **FULLY IMPLEMENTED**
 
-1. **Session-based subdirectories:** write per-skill logs under
-   `<slug>/logs/run_<timestamp>/skill_XX.log` so one run is traceable in sequence.
-2. **Unified session log:** single `logs/run_<timestamp>/session.log` with
-   `=== SKILL XX ===` separators written in addition to per-skill files.
+1. ✅ Session-scoped subdirectories: `logs/run_<timestamp>_phase<N>/` set by `run_phase()` at `zindian/orchestrator.py` L914.
+2. ✅ Per-skill files: `<skill>.log` written via `_MultiTee` at L256–299.
+3. ✅ Shared session log: `session.log` with `=== SKILL XX ===` separators at L260–264.
+4. ✅ Flat fallback for standalone calls: `logs/<skill>.log` when `_current_run_dir` is None.
 
 **Impact on `reports/` — none.** `reports/` keeps its current state byte-for-byte.
 
@@ -150,8 +138,7 @@ The writer-side consolidation has already landed in code before doc alignment:
 
 Remaining work (writer + cleanup residue):
 
-1. **Move preflight records:** relocate `preflight_{INIT,ENFORCE}_{timestamp}.json`
-   writes into `reports/audits/preflight/`.
+1. ~~**Move preflight records**~~ ✅ **DONE** — `scripts/preflight_enforce.py` L877–880 writes to `reports/audits/preflight/<timestamp>.json`.
 2. **Residual root dual-writes:** `skill_18_librarian` and `skill_20_scientist` still emit
    legacy root copies (`reports/literature_cache.json`, `reports/domain_hypotheses.json`,
    `reports/{validated,failed}_hypotheses.json`); their readers still read the root path.
@@ -169,19 +156,17 @@ Remaining work (writer + cleanup residue):
 
 **Test suite: 335 tests** (corrected from "329").
 
-### Track 1 — Recommendation B *(immediate, zero report impact)*
+### Track 1 — Recommendation B ✅ **DONE**
 
-1. Extend `zindian/orchestrator.py` (L246–253): write per-skill logs under
-   `competitions/<slug>/logs/run_<timestamp>/` instead of the flat `logs/` root.
-2. Also write a unified `logs/run_<timestamp>/session.log` alongside the per-skill files.
-3. Update any test asserting a flat `logs/skill_XX.log` path to the session-scoped path.
+1. ✅ `zindian/orchestrator.py` L914: `run_phase()` sets `_current_run_dir = logs/run_<timestamp>_phase<N>/`.
+2. ✅ Per-skill `.log` + shared `session.log` written via `_MultiTee` (L256–302).
+3. ✅ Flat fallback for standalone `run_skill()` calls preserved (L254: fallback when `run_dir is None`).
 
 ### Track 2 — Recommendation A *(writer migration DONE — cleanup residue remains)*
 
 Writer consolidation is complete for skill_03/04/10/15/17/21/22 (Part 4). Remaining:
 
-1. Relocate preflight writes to `reports/audits/preflight/` + update the SoT preflight
-   output lines (`reports/preflight_INIT_*.json`, `reports/preflight_ENFORCE_*.json`).
+1. ~~Relocate preflight writes to `reports/audits/preflight/`~~ ✅ **DONE** — verified at L877–880. SoT §3 preflight output path updated.
 2. Consolidate skill_18/skill_20 residual root dual-writes to `reports/diagnostics/`
    (writer + reader together).
 3. Add `scripts/optimize_report_footprint.py` and prune stale root artifacts.
@@ -206,4 +191,4 @@ Writer consolidation is complete for skill_03/04/10/15/17/21/22 (Part 4). Remain
 ---
 
 *Consolidated from the original investigative report + direct code verification.
-Verified against SoT v2.5. Maintained by [whoisorioki](https://github.com/whoisorioki).*
+Verified against SoT v2.5. Gap registry last updated August 2026. Maintained by [whoisorioki](https://github.com/whoisorioki).*

@@ -200,11 +200,20 @@ def _fit_calibrator_foldwise(
     y: np.ndarray,
     cv_strategy: dict[str, Any],
     groups: np.ndarray | None,
+    state: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, Any]:
     calibrated_oof = np.asarray(oof_probs, dtype=np.float64).copy()
-    splitter = get_cv_splits(
-        np.zeros((len(y), 1)), np.asarray(y), groups=groups, cv_strategy=cv_strategy
-    )
+    # S7 - implemented 2026-08-24
+    from zindian.cv import load_explicit_cv_splits
+    from typing import Iterable
+
+    explicit_splits = load_explicit_cv_splits(state)
+    if explicit_splits is not None:
+        splitter: Iterable[tuple[Any, Any]] = explicit_splits
+    else:
+        splitter = get_cv_splits(
+            np.zeros((len(y), 1)), np.asarray(y), groups=groups, cv_strategy=cv_strategy
+        )
 
     for train_idx, val_idx in splitter:
         x_train = np.asarray(oof_probs)[train_idx]
@@ -335,6 +344,7 @@ def run(
             y,
             cv_strategy=cv_strategy,
             groups=groups,
+            state=state,
         )
 
         test_path = _resolve_test_prob_path(
@@ -633,6 +643,7 @@ def _run_multi_target(
                         np.asarray(y_binary, dtype=np.float64),
                         cv_strategy=cv_strategy,
                         groups=groups,
+                        state=state,
                     )
                     calibrated_oof_matrix[:, class_idx] = calibrated_oof_class
                 row_sums = calibrated_oof_matrix.sum(axis=1, keepdims=True)
@@ -682,6 +693,7 @@ def _run_multi_target(
                 y_binary,
                 cv_strategy=cv_strategy,
                 groups=groups,
+                state=state,
             )
             calibrated_oof_matrix[:, class_idx] = calibrated_oof_class
 

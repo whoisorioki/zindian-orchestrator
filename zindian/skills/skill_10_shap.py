@@ -895,7 +895,9 @@ def run(
         pruning_pass=pruning_pass,
         last_updated=datetime.now(timezone.utc).isoformat(),
         shap_oof_cv_strategy_id=cv_id,
-        # S6 - implemented 2026-08-03
+        # S6 two-tier leak audit shipped 2026-08-03 (Pearson blocking +
+        # advisory MI). Residual split-leak blind spot remains open and is
+        # tracked in the SoT Known Gaps Registry (S6).
         # S6: persist advisory MI features so Gate 2 can surface them to the operator.
         # These features passed the primary Pearson block but were flagged by the
         # subsample mutual_info_regression advisory check. Non-blocking — they do NOT

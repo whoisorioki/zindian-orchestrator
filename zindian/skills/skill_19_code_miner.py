@@ -526,8 +526,8 @@ def run(domain: str = "geospatial", dry_run: bool = False) -> dict:
     if paths.competition_dir is None:
         return {"status": "ERROR", "message": "Competition directory not configured"}
 
-    reports_dir = paths.competition_dir / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics_dir = paths.competition_dir / "reports" / "diagnostics"
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
 
     output = {
         "skill": "skill_19_code_miner",
@@ -538,20 +538,20 @@ def run(domain: str = "geospatial", dry_run: bool = False) -> dict:
         "entries": entries,
         "synthesis": synthesis,
     }
-    json_path = reports_dir / "ml_priorart.json"
+    json_path = diagnostics_dir / "ml_priorart.json"
     json_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(f"[OK] JSON saved → {json_path}")
 
     legacy_cache = _build_code_miner_cache(entries, queries, domain, synthesis)
     legacy_patterns = _build_code_miner_patterns(entries, synthesis, domain)
-    (reports_dir / "code_miner_cache.json").write_text(
+    (diagnostics_dir / "code_miner_cache.json").write_text(
         json.dumps(legacy_cache, indent=2), encoding="utf-8"
     )
-    (reports_dir / "code_miner_patterns.json").write_text(
+    (diagnostics_dir / "code_miner_patterns.json").write_text(
         json.dumps(legacy_patterns, indent=2), encoding="utf-8"
     )
 
-    report_path = reports_dir / "code_miner_report.md"
+    report_path = diagnostics_dir / "code_miner_report.md"
     write_markdown_report(entries, synthesis, report_path, domain)
     print(f"[OK] Report written → {report_path}")
 

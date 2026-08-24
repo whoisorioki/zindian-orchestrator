@@ -107,41 +107,45 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
 
 
 def parse_sot_statuses(sot_content: str) -> dict:
-    """Parses Section 9 of the SoT to determine the declared status of S1-S10."""
+    """Parses the Known Gaps Registry section of the SoT to determine the declared status of S1-S10."""
     statuses = {}
 
-    # Locate Section 9
-    sec9_match = re.search(r"## 9\. Known Gaps Registry.*", sot_content, re.DOTALL)
+    # Locate the Known Gaps Registry (section number is version-dependent)
+    sec9_match = re.search(r"## \d+\. Known Gaps Registry.*", sot_content, re.DOTALL)
     if not sec9_match:
         print(
-            "[ERROR] Could not locate '## 9. Known Gaps Registry' in source_of_truth.md"
+            "[ERROR] Could not locate the 'Known Gaps Registry' heading in source_of_truth.md"
         )
         sys.exit(1)
 
     sec9_text = sec9_match.group(0)
 
-    # Find S-item bullet points and their status lines
-    # Pattern matches: - **S<num> ...**: followed by *Status:* <status_text>
-    # Handles combined entries like "S1 — ... & S9 — ..." by extracting ALL
-    # S-numbers from the bold text and assigning the same status to each.
-    entry_pattern = r"-\s*\*\*((?:S\d+[^*]*?)+)\*\*:\s*\n\s*\*Status:\*\s*([^\n]+)"
-    entries = re.findall(entry_pattern, sec9_text)
+    # Split the registry into its RESOLVED (audit-trail table) and OPEN
+    # (active gaps) subsections.
+    resolved_part, _sep, open_part = sec9_text.partition("### OPEN")
 
-    for bold_text, status_line in entries:
-        # Extract all S-numbers from the bold text (e.g., "S1" and "S9" from
-        # "S1 — Bessel's Correction Underestimation & S9 — Absolute Promotion Margins")
-        s_nums = re.findall(r"S(\d+)", bold_text)
-        status_line_clean = status_line.strip()
+    # RESOLVED subsection: Markdown table rows of the form
+    #   | S1/S9 | description | resolution |
+    # Each row marks every referenced S-number as Implemented. Rows whose
+    # ID cell carries "(partial)" are annotations on still-open items and
+    # are skipped so they never mask an OPEN status.
+    row_pattern = r"^\|\s*(S\d+(?:\s*/\s*S\d+)*)\s*\|([^|]*)\|([^|]*)\|"
+    for row_match in re.finditer(row_pattern, resolved_part, re.MULTILINE):
+        id_cell = row_match.group(1)
+        if "partial" in row_match.group(0).lower():
+            continue
+        line_text = f"{row_match.group(2).strip()} - {row_match.group(3).strip()}"
+        for num in re.findall(r"S(\d+)", id_cell):
+            statuses[num] = {"status": "Implemented", "line": line_text}
 
-        if "[Pending]" in status_line_clean:
-            status = "Pending"
-        elif "[Deferred]" in status_line_clean:
-            status = "Deferred"
-        else:
-            status = "Implemented"
-
-        for num in s_nums:
-            statuses[num] = {"status": status, "line": status_line_clean}
+    # OPEN subsection: bold headings of the form **S<num> - title**.
+    # Anything listed here is an active gap (Pending) unless already
+    # recorded as Implemented above.
+    open_pattern = r"\*\*((?:S\d+[^*]*?)+)\*\*"
+    for bold_match in re.finditer(open_pattern, open_part):
+        for num in re.findall(r"S(\d+)", bold_match.group(1)):
+            if num not in statuses:
+                statuses[num] = {"status": "Pending", "line": bold_match.group(1)}
 
     return statuses
 
@@ -181,19 +185,19 @@ def check_claim_code_coupling(sot_statuses: dict) -> list[str]:
                 if s_num not in sot_statuses:
                     errors.append(
                         f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
-                        f"implemented on {date_str}, but no status for S{s_num} found in SoT Section 9."
+                        f"implemented on {date_str}, but no status for S{s_num} found in the SoT Known Gaps Registry."
                     )
                 else:
                     sot_status_info = sot_statuses[s_num]
                     if sot_status_info["status"] != "Implemented":
                         errors.append(
                             f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
-                            f"implemented on {date_str}, but SoT Section 9 claims it is {sot_status_info['status']}."
+                            f"implemented on {date_str}, but the SoT Known Gaps Registry claims it is {sot_status_info['status']}."
                         )
                     elif date_str not in sot_status_info["line"]:
                         errors.append(
                             f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
-                            f"implemented on {date_str}, but the SoT Section 9 status line for S{s_num} "
+                            f"implemented on {date_str}, but the SoT Known Gaps Registry status line for S{s_num} "
                             f"does not reference this date/commit."
                         )
         except Exception as e:

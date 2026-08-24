@@ -71,6 +71,7 @@ competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challeng
 │   ├── summaries/          # Consolidated phase summaries (Markdown and JSON metadata)
 │   ├── diagnostics/        # Literature caches, hypotheses, and EDA reports
 │   ├── audits/             # Legality policies, SHAP analysis, and reproducibility audits
+│   │   └── preflight/      # Preflight compliance reports (INIT/ENFORCE timestamped JSON)
 │   └── sessions/           # Session-scoped logs
 ├── notebooks/
 └── submissions/            # Submission CSVs
@@ -225,9 +226,9 @@ The orchestrator manages **25 skill modules** across 23 contiguous slots (`skill
 | **`skill_15_reporter.py`** | **Phase 1** (and all boundaries) | **Static** | Logs phase events, computes resource telemetry (time/memory/carbon), generates markdown phase summary reports in `reports/summaries/`, and writes session-scoped event logs to `reports/sessions/`. |
 | **`skill_16_submit.py`** | **Phase 4** | **Dynamic** | Enforces 2-tier submission budget guard (daily/total limits), submits formatted CSV via Zindi API client, and syncs leaderboard scores. |
 | **`skill_17_governance.py`** | **Phase 4** | **Static** | Applies structural state lock (`_apply_structural_lock`). Verifies approvals for Human Gates 1, 2, 3, 4, and 5 before submission. Writes selection report to `reports/audits/final_selections.json`. |
-| **`skill_18_librarian.py`** | Deep Research Sidecar | **Dynamic** | Asynchronously queries literature APIs (ArXiv, Semantic Scholar) for domain ML strategies (`reports/literature_cache.json` and `reports/domain_hypotheses.json`, dual-written to `reports/diagnostics/`). |
+| **`skill_18_librarian.py`** | Deep Research Sidecar | **Dynamic** | Asynchronously queries literature APIs (ArXiv, Semantic Scholar) for domain ML strategies. Writes to `reports/diagnostics/literature_cache.json` and `reports/diagnostics/domain_hypotheses.json`. ⚠️ Still also writes legacy root copies — see SoT §7 (open gap). |
 | **`skill_19_code_miner.py`** | Deep Research Sidecar | **Dynamic** | Mines Kaggle/GitHub competitive code patterns using Gemini LLM queries (`reports/ml_priorart.json`). |
-| **`skill_20_scientist.py`** | Deep Research Sidecar | **Dynamic** | Formulates and empirically validates feature hypotheses against raw dataset schema (`reports/validated_hypotheses.json` and `reports/failed_hypotheses.json`, dual-written to `reports/diagnostics/`). |
+| **`skill_20_scientist.py`** | Deep Research Sidecar | **Dynamic** | Formulates and empirically validates feature hypotheses against raw dataset schema. Writes to `reports/diagnostics/validated_hypotheses.json` and `reports/diagnostics/failed_hypotheses.json`. ⚠️ Still also writes legacy root copies — see SoT §7 (open gap). |
 | **`skill_21_pseudo_label.py`** | **Phase 3B** | **Dynamic** | Generates pseudo-labels on test data for high-confidence predictions; initiates retraining loop under `_augmented` namespace contract. |
 | **`skill_22_reproducibility_audit.py`** | **Phase 4** | **Static** | Performs 3-tier fingerprint audit (file MD5 hashes, OOF strategy tags, lockfile integrity); writes `reports/audits/reproducibility_audit.json`. |
 

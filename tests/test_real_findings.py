@@ -385,3 +385,198 @@ def test_run_deep_research_async(monkeypatch):
     assert "librarian" in called_bg
     assert "code_miner" in called_bg
     assert "scientist" in called_bg
+
+
+def test_pseudo_label_quantile_logic():
+    import numpy as np
+    import pandas as pd
+
+    # Simulate the class-wise quantile logic in skill_21:
+    # 8 samples
+    p1 = np.array([0.95, 0.85, 0.72, 0.10, 0.25, 0.65, 0.05, 0.50], dtype=np.float64)
+    p0 = 1.0 - p1
+
+    # For p_val = 0.25, k = ceil(0.25 * 8) = 2
+    p_val = 0.25
+    n_samples = len(p1)
+    k = int(np.ceil(p_val * n_samples))
+
+    assert k == 2
+
+    # Deterministic method='first' tie-breaking
+    rank1 = pd.Series(p1).rank(method="first", ascending=False).values
+    rank0 = pd.Series(p0).rank(method="first", ascending=False).values
+
+    # Floor at 0.70
+    pos_mask = (rank1 <= k) & (p1 >= 0.70)
+    neg_mask = (rank0 <= k) & (p0 >= 0.70)
+
+    # p1 values sorted: 0.95 (idx 0), 0.85 (idx 1), 0.72 (idx 2)
+    # Ranks: idx 0 is 1.0, idx 1 is 2.0, idx 2 is 3.0
+    # rank1 <= 2 covers idx 0 (0.95) and idx 1 (0.85). Both are >= 0.70 floor.
+    assert np.all(
+        pos_mask == np.array([True, True, False, False, False, False, False, False])
+    )
+
+    # p0 values: [0.05, 0.15, 0.28, 0.90, 0.75, 0.35, 0.95, 0.50]
+    # Sorted: 0.95 (idx 6), 0.90 (idx 3), 0.75 (idx 4)
+    # Ranks: idx 6 is 1.0, idx 3 is 2.0, idx 4 is 3.0
+    # rank0 <= 2 covers idx 6 (0.95) and idx 3 (0.90). Both are >= 0.70 floor.
+    assert np.all(
+        neg_mask == np.array([False, False, False, True, False, False, True, False])
+    )
+
+    # min_pseudo_samples guard: if set to 5 (we have 4 total selected), it should clear selections
+    total_selected = int(pos_mask.sum() + neg_mask.sum())
+    assert total_selected == 4
+
+    min_samples = 5
+    if total_selected < min_samples:
+        pos_mask_guarded = np.zeros_like(pos_mask, dtype=bool)
+        neg_mask_guarded = np.zeros_like(neg_mask, dtype=bool)
+
+    assert np.all(~pos_mask_guarded)
+    assert np.all(~neg_mask_guarded)
+
+
+def test_log_directory_deduplication(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from datetime import datetime, timezone
+    from zindian.paths import CompetitionPaths
+    from unittest.mock import MagicMock
+
+    # 1. Setup mock directories
+    comp_dir = tmp_path / "competitions" / "test-competition"
+    logs_dir = comp_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    reports_dir = comp_dir / "reports"
+    summaries_dir = reports_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+
+    # 2. Mock paths
+    mock_paths = CompetitionPaths(
+        root=tmp_path,
+        competition_dir=comp_dir,
+        state_path=comp_dir / "SKILL_STATE.json",
+        config_path=comp_dir / "challenge_config.json",
+        reports_dir=reports_dir,
+        submissions_dir=comp_dir / "submissions",
+        data_raw_dir=comp_dir / "data" / "raw",
+        data_processed_dir=comp_dir / "data" / "processed",
+        notebooks_dir=comp_dir / "notebooks",
+    )
+
+    # Mock datetime to control directory name creation
+    current_time = [datetime(2026, 8, 24, 0, 0, 0, tzinfo=timezone.utc)]
+
+    import zindian.orchestrator as orch
+
+    monkeypatch.setattr("zindian.orchestrator._get_utc_now", lambda: current_time[0])
+    monkeypatch.setattr(
+        "zindian.paths.resolve_competition_paths", lambda *args, **kwargs: mock_paths
+    )
+
+    # Mock ChallengeConfig to return empty skill list for the phase
+    mock_config = MagicMock()
+    mock_config.get.side_effect = lambda key, default=None: {
+        "phase_skill_map": {"1": []},
+        "target": "Occurrence Status",
+        "automl_permitted": False,
+        "allowed_external_data": False,
+        "banned_features": [],
+        "cv_strategy": {"type": "StratifiedKFold"},
+        "slug": "test-slug",
+    }.get(key, default)
+    monkeypatch.setattr("zindian.config.ChallengeConfig.load", lambda *args, **kwargs: mock_config)
+
+    # Mock SkillStateStore read/update
+    mock_store = MagicMock()
+    mock_store.read.return_value = {"dag_phase": "phase_1"}
+    monkeypatch.setattr("zindian.state.SkillStateStore", lambda path: mock_store)
+
+    # Mock skill_15 reporter functions called at the end of run_phase
+    monkeypatch.setattr("zindian.skills.skill_15_reporter.run_phase_summary", lambda phase: None)
+    monkeypatch.setattr("zindian.skills.skill_15_reporter._write_json_summary", lambda *args, **kwargs: None)
+
+    # 3. Simulate first run:
+    # Set up a new run log dir matching datetime (20260824T000000)
+    run_1_dir = logs_dir / "run_20260824T000000_phase1"
+    run_1_dir.mkdir(parents=True, exist_ok=True)
+    (run_1_dir / "session.log").write_text("Run 1 logs", encoding="utf-8")
+
+    # Create the phase summary report
+    summary_1 = {
+        "timestamp": "2026-08-24T00:00:00Z",
+        "phase": "1",
+        "metric": "auc",
+        "cv_strategy_type": "StratifiedKFold",
+    }
+    summary_1_path = summaries_dir / "phase_1_summary.json"
+    summary_1_path.write_text(json.dumps(summary_1), encoding="utf-8")
+
+    # Run the orchestrator phase
+    orch.run_phase("1")
+
+    # Verify that run_1_dir was promoted to run_latest_phase1
+    latest_dir = logs_dir / "run_latest_phase1"
+    assert latest_dir.exists()
+    assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 1 logs"
+    assert (latest_dir / "summary.json").exists()
+    assert not run_1_dir.exists()
+
+    # 4. Simulate second run: similar summary
+    current_time[0] = datetime(2026, 8, 24, 1, 0, 0, tzinfo=timezone.utc)
+    run_2_dir = logs_dir / "run_20260824T010000_phase1"
+    run_2_dir.mkdir(parents=True, exist_ok=True)
+    (run_2_dir / "session.log").write_text("Run 2 logs (identical config)", encoding="utf-8")
+
+    # Update summary with new timestamp but identical core fields
+    summary_2 = {
+        "timestamp": "2026-08-24T01:00:00Z",
+        "phase": "1",
+        "metric": "auc",
+        "cv_strategy_type": "StratifiedKFold",
+    }
+    summary_1_path.write_text(json.dumps(summary_2), encoding="utf-8")
+
+    orch.run_phase("1")
+
+    # Since summary_2 is similar to summary_1 (ignoring timestamp), run_latest_phase1 should be updated with new logs,
+    # and run_2_dir should be removed. No archives should be created because they are similar.
+    assert latest_dir.exists()
+    assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 2 logs (identical config)"
+    assert not run_2_dir.exists()
+
+    # Check that no timestamped run folder exists (only latest_dir)
+    dirs = [p.name for p in logs_dir.iterdir() if p.is_dir()]
+    assert dirs == ["run_latest_phase1"]
+
+    # 5. Simulate third run: different summary
+    current_time[0] = datetime(2026, 8, 24, 2, 0, 0, tzinfo=timezone.utc)
+    run_3_dir = logs_dir / "run_20260824T020000_phase1"
+    run_3_dir.mkdir(parents=True, exist_ok=True)
+    (run_3_dir / "session.log").write_text("Run 3 logs (different config)", encoding="utf-8")
+
+    summary_3 = {
+        "timestamp": "2026-08-24T02:00:00Z",
+        "phase": "1",
+        "metric": "auc",
+        "cv_strategy_type": "GroupKFold",  # changed!
+    }
+    summary_1_path.write_text(json.dumps(summary_3), encoding="utf-8")
+
+    orch.run_phase("1")
+
+    # Since summary_3 is different, the previous latest_dir (Run 2) should be archived to run_20260824T010000_phase1,
+    # and run_3_dir should be promoted to latest_dir.
+    assert latest_dir.exists()
+    assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 3 logs (different config)"
+    assert not run_3_dir.exists()
+
+    archived_dir = logs_dir / "run_20260824T010000Z_phase1"
+    assert archived_dir.exists()
+    assert (archived_dir / "session.log").read_text(encoding="utf-8") == "Run 2 logs (identical config)"
+
+

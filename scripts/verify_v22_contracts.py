@@ -1,4 +1,4 @@
-"""Verify all SoT v2.2 contract logic pathways exist in the modified files.
+"""Verify SoT v2.5 contract logic pathways exist in the modified files.
 Uses whitespace-tolerant regex patterns to handle black auto-formatting."""
 
 import re
@@ -62,8 +62,8 @@ with open("zindian/skills/skill_11_gate.py", encoding="utf-8") as f:
 
 checks += [
     (
-        "SCALE_INVARIANT_METRICS (rmsle)",
-        _check_text(src11, 'SCALE_INVARIANT_METRICS = frozenset({"rmsle"})'),
+        "SCALE_INVARIANT_METRICS (rmsle, mase)",
+        _check_text(src11, 'SCALE_INVARIANT_METRICS = frozenset({"rmsle", "mase"})'),
     ),
     (
         "SCALE_SENSITIVE_METRICS defined",
@@ -95,7 +95,7 @@ with open("docs/source_of_truth.md", encoding="utf-8") as f:
     so_src = f.read()
 
 checks += [
-    ("SoT v2.2 version header", "2.2-Generalized-Regression" in so_src),
+    ("SoT v2.5 version header", "v2.5" in so_src),
     (
         "SoT Regression Target Transformation Lifecycle section",
         "Regression Target Transformation Lifecycle" in so_src,
