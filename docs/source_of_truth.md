@@ -1,14 +1,14 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.4 Target Spec (Patched from v2.3)
-**Status:** SIGNED OFF (v2.3) / SPEC FINALIZED (v2.4)
+**Version:** v2.5
+**Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.4: finalized statistical target specs for S1–S10 & pseudo-labeling contracts)
+**Last updated:** August 2026 (v2.5: Lean restructure — eliminated duplicate gate checklists and preflight console UI; no architecture changes from v2.4)
 
 ---
 
 ### v2.4 Target Specification Summary
-This document defines the authoritative architecture for v2.3 and the target specifications for the v2.4 statistical migration:
+These statistical features were finalized and shipped in v2.4 and remain fully in force in v2.5. No architecture changes were made in v2.5 — this is a documentation restructure only.
 - **S1 & S9 (Nadeau-Bengio + 1-SE):** Corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
 - **S2 (MASE Metric):** Naive-forecast scaled error diagnostic for temporal regression tasks in `skill_04`/`skill_11`.
 - **S3 (Inverse-Variance Weighting):** Dynamic variance weighting `w_k_eff = w_k / (sigma_k^2 + epsilon)` for multi-target composite scores in Section 2 & `skill_11`.
@@ -30,6 +30,21 @@ This document defines the authoritative architecture for v2.3 and the target spe
 6. Reproducibility Contract
 7. Is This Reinforcement Learning?
 8. Definition of Done — Master Checklist
+
+---
+
+## Documentation Map
+
+| Document | Owns |
+|---|---|
+| **This file (source_of_truth.md)** | Architecture contracts, schemas, phase specs, gate logic, reproducibility |
+| [orchestrator_overview.md](orchestrator_overview.md) | Non-technical overview, phase summaries for new readers |
+| [AGENTS.md](../AGENTS.md) | Agent implementation guide, safe access patterns, known live risks |
+| [quick_start.md](quick_start.md) | CLI bootstrap walkthrough, competition setup |
+| [cli_integration_guide.md](cli_integration_guide.md) | All 21 CLI commands reference |
+| [ledger_architecture.md](ledger_architecture.md) | DuckDB experiment tracking schema |
+| [troubleshooting_guide.md](troubleshooting_guide.md) | Runtime errors, CI fixes |
+| [document_map.md](document_map.md) | Consolidated structure maps, cross-document overlaps, and ownership matrix |
 
 ---
 
@@ -702,85 +717,7 @@ Human gates:
 
 ---
 
-### Preflight Prompt Surfaced to Operator
-
-```
-╔═══════════════════════════════════════════════════════════╗
-║        ZINDIAN ORCHESTRATOR — SESSION PREFLIGHT           ║
-║        Competition : {competition_id}                     ║
-║        Mode        : {INIT | ENFORCE}                     ║
-║        Date        : {timestamp}                          ║
-╚═══════════════════════════════════════════════════════════╝
-
-[CONFIG]
-  competition_id       : {competition_id}
-  task_type            : {task_type}
-  metric               : {metric}
-  metric_direction     : {maximize | minimize}
-  use_probabilities    : {true | false}
-  target_col           : {target_col}
-  seed                 : {seed | NOT SET — must fix}
-  submission_budget    : {remaining} remaining ({daily} today)
-  cv_strategy          : {type} — {selection_reason}
-  cv_override active   : {YES — override_strategy | no}
-  active strategy      : {override_strategy | config cv_strategy}
-  target_domain_bounds : {min, max | NOT INITIALIZED}
-  external_data        : {external_data_allowed}
-  automl_permitted     : FALSE (Zindi rule — hard prohibition)
-
-[INTEGRITY]
-  file hashes          : {PASS | FAIL — list mismatches}
-  SKILL_STATE.json     : {valid | invalid}
-  environment lock     : {present | MISSING}
-  config lock          : {active | NOT LOCKED — Phase 1
-                          incomplete}
-
-[OOF CONTRACT]
-  active strategy      : {override_strategy if override
-                          active | config cv_strategy}
-  cv_strategy_id tagged: {all tagged | N violations}
-  single CV object     : {confirmed | VIOLATION — list skills}
-
-[POLICY]
-  policy_filters       : {N columns blocked}
-  leaked_features      : {empty | N flagged}
-  banned column check  : {PASS | FAIL}
-
-[SIDECAR]
-  skill_00             : {running | not started}
-  skill_18 last run    : {timestamp | not yet run}
-  skill_19 last run    : {timestamp | not yet run}
-  skill_20 last run    : {timestamp | not yet run}
-  unresolved hypotheses: {N pending}
-
-[HUMAN GATES]
-  Gate 1 — anchor review       : {approved | pending}
-  Gate 2 — branches reviewed   : {N approved | pending}
-  Gate 3 — fusion              : {approved | pending}
-  Gate 4 — inference           : {approved | pending}
-  Gate 5 — final selection     : {selected | not selected}
-
-[ZINDI COMPLIANCE]
-  automl usage detected: {none | WARNING — list}
-  raw probabilities    : {confirmed | NOT CONFIRMED}
-  seed reproducibility : {confirmed | NOT SET}
-  submission selection : {2 selected | NOT YET SELECTED}
-  code review ready    : {yes | NO}
-
-─────────────────────────────────────────────────────────────
-PREFLIGHT RESULT: {PASS | FAIL}
-
-Failures must be resolved before proceeding.
-Warnings require explicit acknowledgement.
-
-  [1] PROCEED  — all checks pass
-  [2] ABORT    — do not start this session
-  [3] OVERRIDE — proceed despite warnings
-                 (requires written reason)
-
-Reason if OVERRIDE: ____________________________________
-╚═══════════════════════════════════════════════════════════╝
-```
+> The full interactive session prompt layout is rendered at runtime by the orchestrator. See `scripts/preflight_enforce.py` for the exact template.
 
 ---
 
@@ -2973,105 +2910,7 @@ optimisation.
 
 ---
 
-### Per-Phase Gate Criteria
-
-**Phase 1 → Phase 2A:**
-```
-[ ] challenge_config.json complete and schema-valid
-[ ] task_type, metric, target_col non-null
-[ ] metric_direction written and set
-[ ] use_probabilities written and set
-[ ] target_domain_bounds written if regression
-[ ] File hashes locked
-[ ] policy_filters written
-[ ] reports/audits/feature_policy.json present, non-empty,
-    and valid JSON
-[ ] feature_policy.json contains required keys:
-    allowed_data_sources, banned_transformations, lat_lon_permitted_as_feature
-[ ] banned_transformations contains at minimum all columns
-    listed in challenge_config["policy_filters"]
-[ ] skill_04 EDA outputs in SKILL_STATE.json
-    — verified BEFORE skill_05 runs
-[ ] If task_type == regression:
-    target_std present in SKILL_STATE["eda"]["target_std"]
-    — required for effective_gate_margin and
-    effective_variance_threshold normalisation in skill_11
-[ ] skill_05 cv_strategy written with selection_reason
-    — only valid after skill_04 outputs confirmed
-[ ] spatial_signal.group_col populated if needed
-[ ] challenge_config.json temporal lock active
-[ ] seed written to config
-```
-
-**Phase 2A → Phase 2B:**
-```
-[ ] policy_gate() passed — all blocked columns absent
-[ ] skill_06 cleaning complete
-[ ] MNAR indicators generated before fills
-[ ] MCAR columns filled
-[ ] Constant columns dropped
-[ ] Cleaning outputs in SKILL_STATE.json
-```
-
-**Phase 2B → Phase 3A:**
-```
-[ ] Human Gate 1 approved
-[ ] Anchor OOF score present and cv_strategy_id tagged
-[ ] At least one variant OOF score present and tagged
-[ ] No internal CV objects in any skill
-[ ] If target_config present with >1 entry:
-    anchor_oof_score_per_target present and contains one
-    entry per target in target_config.targets
-```
-
-**Phase 3A → Phase 3B:**
-```
-[ ] SHAP audit complete for all branches
-[ ] leaked_features written for all branches
-[ ] Fold score variance written for all branches
-[ ] Calibration complete for classification tasks
-[ ] All OOF outputs carry cv_strategy_id tags
-[ ] If target_config present with >1 entry:
-    leaked_features_{target_name} written for every target,
-    for every branch
-    composite_fold_score_variance present in metric_analysis
-```
-
-**Phase 3B → Phase 4:**
-```
-[ ] At least one branch promoted through skill_11
-[ ] Human Gate 2 approved for all promoted branches
-[ ] If skill_21 ran with retraining_required == true:
-        guard_condition_flags: all six gc fields present
-          and Boolean — gc1 through gc6 confirmed
-        Pseudo-label fold contract verified: augmented
-          rows in train splits only, OOF indices unchanged
-        anchor_oof_score_augmented present in
-          SKILL_STATE.json
-        New OOF scores tagged with cv_strategy_id
-        Retrained branch scores gated against
-          anchor_oof_score_augmented
-        skill_10 SHAP audit passed on retrained branches
-        skill_11 gate passed on retrained branches
-        Human Gate 2 re-approved for retrained branches
-        If rollback: all _augmented keys cleared,
-          original branch_{name}_oof keys intact,
-          execution_failure_reason written, original
-          pool used for fusion
-[ ] skill_13 uses most recent OOF arrays only
-[ ] Human Gate 3 approved
-[ ] Fusion diversity check complete
-[ ] Final submission candidate identified
-```
-
-**Phase 4 → Done:**
-```
-[ ] skill_22 reproducibility checklist fully passes
-[ ] Human Gates 4 and 5 approved and recorded
-[ ] Submission budget not exceeded
-[ ] Governance report written
-[ ] Cross-competition history log updated
-```
+> Phase gate checklists are maintained within each phase section in Section 4 above. Refer to those sections as the single source.
 
 ---
 
@@ -3278,5 +3117,5 @@ These items document statistical limitations from v2.3 and their updated v2.4 ta
   *Status:* **Decision recorded (2026-08-03):** Path 2 `skill_22`-only verification confirmed — no fingerprinting logic added to `skill_01` (raw-file MD5 hashing preserved). `skill_22_reproducibility_audit.py` implements the 3-tier tolerance verification: <= 1e-6 → PASS, 1e-6–1e-5 → SOFT WARN (Gate 5 sign-off required), > 1e-5 → HARD HALT (`_audit_derived_artifact_fingerprints()` L206). **Remaining gap (verified against code):** `skill_22` is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` but no skill currently *writes* this dict. When the key is absent or empty (current state on all competitions), `_audit_derived_artifact_fingerprints` silently passes (L216: `if not isinstance(fingerprints, dict) or not fingerprints: return True, []`). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
 
 ---
-*Version: v2.4 Target Spec (Patched from v2.3)*
-*Status: v2.3 Code Baseline Signed Off / v2.4 Statistical Target Spec Finalized — tracked in Section 9.*
+*Version: v2.5*
+*Status: CURRENT — lean restructure from v2.4; no architecture changes. See Section 9 for v2.4 statistical feature implementation status.*

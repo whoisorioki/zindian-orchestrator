@@ -2,9 +2,7 @@
 
 An **autonomous multi-phase ML competition framework** for tabular supervised learning competitions on the Zindi Africa platform. Reads competition schemas, target definitions, and evaluation rules dynamically from a locked configuration contract — zero hardcoded competition literals.
 
-## What Is This
-
-Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. It enforces reproducible execution through atomic state writes, fixed random seeds, per-fold CV oversight, and five mandatory human approval gates. The system is designed around the **Source of Truth** (`docs/source_of_truth.md` v2.4 Target Spec), which is the single architectural authority. When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
+Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. The system is governed by the **Source of Truth** (`docs/source_of_truth.md` v2.5). When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
 
 **System properties:**
 - **Phase-gated execution** — 4 phases with 5 human gates; state transitions recorded atomically in `SKILL_STATE.json`
@@ -13,42 +11,32 @@ Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw 
 - **Two-mode feature contract** — target-dependent features enforce fold restriction in CV mode; structural features computed on full data
 - **Zero competition literals in skill bodies** — column names, targets, metrics, coordinates resolved from config at runtime (A5)
 - **No AutoML** — static preflight scan rejects `auto-sklearn`, `flaml`, `tpot`, `h2o`, `pycaret`, `optuna.integration`
-- **No cross-skill imports** — documented shim exception for `skill_13` only
+
+---
 
 ## Architecture Overview
 
 ### Core Principles
 
-1. **Three-Lens Decision Philosophy** — Every decision evaluated through General, Specific, and Generalization lenses
-2. **Competition Agnosticism** — Zero hardcoded competition-specific values (Assumption A5)
-3. **Atomic State Management** — Tempfile + os.replace prevents corruption
-4. **Immutable Config** — Locked after Phase 1, read-only thereafter
-5. **Human-in-the-Loop** — 5 mandatory approval gates
-6. **Reproducibility Contract** — R1-R5 requirements enforced
+1. Three-Lens Decision Philosophy
+2. Competition Agnosticism
+3. Atomic State Management
+4. Immutable Config
+5. Human-in-the-Loop
+6. Reproducibility Contract
 
 ### The 4 Main Phases
 
 ```
-Phase 1: Competition Fingerprint (~5 min)        [COMPLETE]
-  └─ Understand rules, lock config, select CV strategy
-
-Phase 2: Anchor + Feature Search (~30-60 min)    [COMPLETE]
-  └─ Build baseline, generate variants
-  └─ [HUMAN GATE 1]: Review anchor
-
-Phase 3: Generalization Audit (~60-120 min)      [COMPLETE]
-  └─ SHAP leak detection, calibration, gating
-  └─ [HUMAN GATE 2]: Approve variants (per branch)
-  └─ [HUMAN GATE 3]: Approve fusion
-
-Phase 4: Governance (~10 min)                    [COMPLETE]
-  └─ Format, submit, audit reproducibility
-  └─ [HUMAN GATE 4]: Approve inference
-  └─ [HUMAN GATE 5]: Select final 2 submissions
+Phase 1 (Fingerprint) → Phase 2 (Anchor + Variants) → Phase 3 (Audit + Promotion) → Phase 4 (Governance)
+Five human gates: Gate 1 (anchor), Gate 2 (per variant), Gate 3 (fusion), Gate 4 (inference), Gate 5 (final select)
 ```
 
-## Project Structure
+See [docs/source_of_truth.md](docs/source_of_truth.md) v2.5 for the full v2.4 feature specifications (S1–S10, R1–R6).
 
+---
+
+## Project Structure
 
 ```
 zindian-orchestrator/
@@ -64,12 +52,13 @@ zindian-orchestrator/
 │           ├── summaries/       ← phase summary Markdown/JSON
 │           └── sessions/        ← session-scoped startup event logs
 ├── docs/                             ← Standardized documentation
-│   ├── source_of_truth.md            ← Authoritative specification v2.3
+│   ├── source_of_truth.md            ← Authoritative specification v2.5
 │   ├── orchestrator_overview.md      ← System architecture & design overview
 │   ├── quick_start.md                ← Local run onboarding & execution flow
 │   ├── cli_integration_guide.md      ← CLI command usage reference
-│   ├── ledger_architecture.md         ← DuckDB audit ledger schema definition
-│   └── troubleshooting_guide.md      ← Common errors, recoveries & guardrails
+│   ├── ledger_architecture.md        ← DuckDB audit ledger schema definition
+│   ├── troubleshooting_guide.md      ← Common errors, recoveries & guardrails
+│   └── document_map.md               ← Document structure, overlaps & ownership matrix
 ├── zindian/                          ← Core Python package
 │   ├── state.py                      ← Atomic state I/O operations
 │   ├── config.py                     ← Safe challenge_config reader
@@ -87,10 +76,7 @@ zindian-orchestrator/
 ## Quick Start
 
 ### 1. Read the Architecture Docs
-Open the canonical documentation files under the `docs/` directory. We recommend reading them in this order:
-1. [docs/orchestrator_overview.md](docs/orchestrator_overview.md) — Architectural philosophy and phase flow.
-2. [docs/source_of_truth.md](docs/source_of_truth.md) — authoritative specifications and rules.
-3. [docs/cli_integration_guide.md](docs/cli_integration_guide.md) — command references.
+Start with [docs/orchestrator_overview.md](docs/orchestrator_overview.md) for a complete system walkthrough.
 
 ### 2. Install & Verify
 First, activate your virtual environment:
@@ -123,20 +109,16 @@ python -m pip install -r requirements.txt
 ```
 
 ### 3. Initialize DuckDB Ledger
-Set up the SQLite-compatible DuckDB experiments ledger:
 ```bash
 python -m zindian.cli init-ledger
-
 ```
 
 ### 4. Run Automated Test Suite
-Verify your environment by running the test suite:
 ```bash
 python -m pytest
 ```
 
 ### 5. Use the CLI
-Interact with the orchestrator using Python's module syntax:
 ```bash
 # Run command bootstrapper CLI
 python -m zindian.cli --help
@@ -146,26 +128,23 @@ zindian-cli --help
 ```
 
 ### 6. Run Phase 1 Simulation Demo
-Run the mock simulation check to verify your setup:
 ```bash
 python scripts/test_phase_1.py
 ```
-
-
 
 ---
 
 ## Documentation
 
-### Core Guides
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| **[docs/orchestrator_overview.md](docs/orchestrator_overview.md)** | **Complete system guide (non-technical + technical)** | **Everyone** |
-| [docs/source_of_truth.md](docs/source_of_truth.md) | Authoritative architectural spec (v2.4 Target Spec) | Developers, reviewers |
-| [docs/quick_start.md](docs/quick_start.md) | Guide for setting up local runs | Developers, users |
-| [docs/cli_integration_guide.md](docs/cli_integration_guide.md) | CLI command syntax reference | Operators, users |
-| [docs/ledger_architecture.md](docs/ledger_architecture.md) | Experiment ledger schema specifications | DAAD Reviewers, DBAs |
-| [docs/troubleshooting_guide.md](docs/troubleshooting_guide.md) | Common errors and resolutions | Developers, operators |
+| Document | Purpose |
+|----------|---------|
+| **[docs/orchestrator_overview.md](docs/orchestrator_overview.md)** | Complete system guide (non-technical + technical) |
+| [docs/source_of_truth.md](docs/source_of_truth.md) | Authoritative architectural spec (v2.5) |
+| [docs/quick_start.md](docs/quick_start.md) | Local run setup walkthrough |
+| [docs/cli_integration_guide.md](docs/cli_integration_guide.md) | All CLI commands reference |
+| [docs/ledger_architecture.md](docs/ledger_architecture.md) | Experiment ledger schema |
+| [docs/troubleshooting_guide.md](docs/troubleshooting_guide.md) | Common errors and resolutions |
+| [docs/document_map.md](docs/document_map.md) | Consolidated structure maps, cross-document overlaps, and ownership matrix |
 
 ---
 
@@ -194,48 +173,6 @@ python scripts/test_phase_1.py
   python -m pytest
   ```
 - Specific tests verify: anchor baseline training, threshold calibration, SHAP ratio leakage checks, and pseudo-labeling retraining.
-
----
-
-## Key Features (v2.4)
-
-### Statistical Migration Specs (S1-S10)
-- **S1 & S9:** Nadeau-Bengio corrected fold variance (`Var_NB`) and 1-SE promotion margins in variant gating.
-- **S2:** MASE metric diagnostics for temporal regression tasks.
-- **S3:** Dynamic inverse-variance target weighting for multi-target composite scores.
-- **S4:** Kuncheva residual vector correlation for collinearity pruning in model fusion.
-- **S6:** Two-tier leakage audits (Pearson primary/blocking + advisory subsampled MI audit).
-- **S7:** Spatial buffering CV splits.
-- **S8:** Hybrid adaptive pseudo-labeling.
-- **S10:** 3-tier band verification for derived artifact fingerprints.
-
-### Human Gates (5 Checkpoints)
-The orchestrator pauses execution and requests human Operator validation at:
-1. **Gate 1:** After anchor model training completes.
-2. **Gate 2:** Before promoting feature variants to state (evaluated per-branch).
-3. **Gate 3:** Before triggering model fusion (blending).
-4. **Gate 4:** Before starting test prediction inference.
-5. **Gate 5:** Before close, to select the final 2 submissions.
-
-### Reproducibility Contract (R1-R6)
-- **R1:** Config-pinned reproducibility seed.
-- **R2:** End-to-end runs yield bit-identical predictions.
-- **R3:** Pinning of runtime dependencies in `requirements.txt`.
-- **R4:** Submissions are fully regenerable from the competition folder config + state.
-- **R5:** Carbon telemetry (real-time CPU/GPU memory & CO2 estimates computed per-skill).
-- **R6:** 3-tier tolerance verification for derived artifacts.
-
----
-
-## Development Status
-
-### v2.4 Complete
-- All statistical migration target specifications (S1-S10) implemented.
-- 5 human gates operational.
-- Carbon tracking (R5) telemetry instrumented.
-- Multi-target composite scoring pipeline functional.
-- Pseudo-labeling with rollback.
-- Scale-invariant gate normalization.
 
 ---
 
@@ -301,6 +238,7 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| **2.5** | August 2026 | Lean documentation restructure; no architecture changes from v2.4 |
 | **2.4** | August 2026 | Nadeau-Bengio corrected variance, 1-SE promotion margins, Kuncheva residual diversity, MI audits, spatial buffer CV, adaptive pseudo-labeling, 3-tier FP tolerance |
 | 2.3 | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
 | 2.2.1 | May 2026 | Multi-target pipeline, regression support |
@@ -310,4 +248,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 ---
 
 **Last Updated:** August 2026
-**Status:** v2.4 Production Ready
+**Status:** v2.5 Production Ready

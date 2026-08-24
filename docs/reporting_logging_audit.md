@@ -206,4 +206,4 @@ Writer consolidation is complete for skill_03/04/10/15/17/21/22 (Part 4). Remain
 ---
 
 *Consolidated from the original investigative report + direct code verification.
-Verified against SoT v2.4. Maintained by [whoisorioki](https://github.com/whoisorioki).*
+Verified against SoT v2.5. Maintained by [whoisorioki](https://github.com/whoisorioki).*

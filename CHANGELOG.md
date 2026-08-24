@@ -2,6 +2,20 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.5-docs-restructure-2026-08-24]
+
+### Changed
+- **Documentation deduplication restructure** — each doc now owns unique content; duplicates replaced with cross-links. No architecture or code changes from v2.4 (SOT header states this explicitly).
+  - `docs/source_of_truth.md` (v2.4 → **v2.5**, status CURRENT): added Documentation Map ownership table; removed preflight console-UI wall of text (→ pointer to `scripts/preflight_enforce.py`); removed internal duplicate "Per-Phase Gate Criteria" block (§4 Phase Architecture remains the single source). §9 Known Gaps Registry heading and S1–S10 entry format preserved byte-compatibly for `scripts/sot_alignment_check.py`.
+  - `docs/orchestrator_overview.md` (~947 → 280 lines): removed Technical Deep Dive (verbatim SOT duplication); retained non-technical overview, Three Lenses, safety features, What-It's-NOT, success metrics; ends with a Technical Reference link table.
+  - `README.md`: removed duplicated Key Features (S1–S10/gates/R1–R6) and Development Status sections; compressed phase diagram to one line + links; added docs navigation table; version history gained the v2.5 row.
+  - `AGENTS.md` (937 → 837 lines): OOF schema / augmented namespace / SHAP rules converted to summary + SoT cross-links ("See also" pointers); corrected multi-target variance formula and all safe-access patterns, live risks, and verification tags retained in full.
+
+### Verification
+- `scripts/sot_alignment_check.py`: 9 aligned / 0 misaligned / 0 code-ahead (Section 9 parser intact).
+- `pre-commit run --all-files`: all hooks pass.
+- Full test suite: 329 passed, 6 skipped.
+
 ## [v2.4-reporting-logs-2026-08-24]
 
 ### Added

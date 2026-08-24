@@ -5,8 +5,7 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document is aligned with
-SoT version v2.4.
+version-specific claim below. This document is aligned with SoT version **v2.5**.
 **Last updated:** August 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
@@ -294,6 +293,8 @@ fold_score_variance = float(np.var(fold_scores, ddof=1))
 
 ### Effective Gate Margin and Variance Threshold
 
+# See also: SOT Section 2, Principle 3; SOT Section 4, Phase 3B (skill_11_gate)
+
 A function resembling `_effective_thresholds()` in `skill_11_gate.py`
 is expected to return a 3-tuple:
 `(effective_variance_threshold, effective_gate_margin, warning_message | None)`.
@@ -303,9 +304,7 @@ underlying logic they implement.
 
 The caller is responsible for writing any non-None `warning_message`
 to `SKILL_STATE["metadata_warnings"]`. The function should not write
-to state itself — that would violate single-responsibility. If you
-find it writing to state directly, that's worth flagging as drift
-from this intended contract, not silently accepting.
+to state itself.
 
 The correct branching logic (do not inline this — call the threshold
 function):
@@ -315,8 +314,6 @@ regression + metric == "rmsle":
     effective_variance_threshold = variance_gate_threshold (raw)
     effective_gate_margin        = gate_margin (raw)
     # RMSLE is scale-invariant — computed in log-space.
-    # Applying target_std would mix original-scale units
-    # with a dimensionless log-ratio.
 
 regression + metric != "rmsle" + target_std > 0.0:
     effective_variance_threshold = variance_gate_threshold * (target_std ** 2)
@@ -335,21 +332,14 @@ classification (any metric):
     # Bounded metrics — no scale correction needed.
 
 multi-target competitions (>1 entry in target_config.targets):
-    The weight-normalization for this formula has, in at least one
-    documented case, been implemented incorrectly — summing
-    regression-target weights as if they summed to 1.0 across ALL
-    targets (including classification targets), which silently
-    distorts the effective threshold. The corrected formula divides
-    by the sum of REGRESSION-ONLY weights, not all weights:
-
-        effective_target_std = sqrt(
-            sum(w_i * sigma_i**2 for i in regression_targets)
-            / sum(w_i for i in regression_targets)
-        )
-
-    Verify any multi-target variance threshold implementation against
-    this corrected formula, not against a naive port of the
-    single-target version.
+    # The weight-normalization must divide by REGRESSION-ONLY weights,
+    # not all weights (including classification targets):
+    effective_target_std = sqrt(
+        sum(w_i * sigma_i**2 for i in regression_targets)
+        / sum(w_i for i in regression_targets)
+    )
+    # A naive port of the single-target version silently distorts the
+    # threshold when classification targets are present.
 ```
 
 ### Metric Direction
@@ -366,6 +356,8 @@ else:
 
 ### Correlation in skill_13 (fusion diversity check)
 
+# See also: SOT Section 4, Phase 3B (skill_13 contract)
+
 ```python
 from scipy.stats import pearsonr, spearmanr
 
@@ -381,66 +373,27 @@ if corr > 0.95:
 **Known gap on multi-target competitions:** this check operates on a
 single composite OOF score per candidate. Two branches could have
 highly correlated predictions on one target and divergent predictions
-on another, and this check would not detect that — it only sees the
-combined score. This is a named, deliberately deferred gap, not an
-oversight — do not silently fix it without confirming the right
-per-target diversity design first.
+on another, and this check would not detect that. This is a named,
+deliberately deferred gap — do not silently fix it without confirming
+the right per-target diversity design first.
 
 ---
 
 ## OOF Output Schema
 
-Every OOF-generating skill calls `write_oof_record()` (confirm exact
-import path: `zindian/state.py`). The schema it must produce:
+The authoritative schema is in [docs/source_of_truth.md](docs/source_of_truth.md) Section 2 (Principle 3, OOF Record Schema). Key implementation rules repeated here for agent quick-reference:
 
-```python
-{
-    "scores": oof_array.tolist(),
-    "cv_strategy_id": resolved_cv_strategy_id,
-    "seed": config["reproducibility"]["seed"],
-    "branch_name": branch_name,
-    "model_config": model_config_dict,
-    "secondary_metrics": {      # regression tasks only
-        "mae":  float | None,   # None if computation failed
-        "mape": float | None,   # None when all y_true == 0
-        "r2":   float,
-    },
-}
-```
-
-**Multi-target competitions** add one field, present only when
-`target_config` has more than one entry:
-
-```python
-{
-    ...same fields as above...
-    "target_name": "<target name from target_config.targets[i].name>",
-}
-```
-
-When `target_name` is present, the storage key changes from
-`branch_{branch_name}_oof` to `branch_{branch_name}_{target_name}_oof`.
-Single-target competitions are unaffected — this is additive, not a
-breaking change to the schema.
-
-`secondary_metrics` for regression must be computed on the
-concatenated OOF array across all folds — not as a simple average of
-per-fold values.
-
-MAPE zero-target rule: rows where `y_true == 0` are excluded entirely
-from the MAPE computation. When all rows have `y_true == 0`, set
-`mape = None` (not `0.0`, not `inf`).
-
-For classification tasks, `secondary_metrics` may be omitted or set
-to `null`.
+- Call `write_oof_record()` from `zindian/state.py`
+- Include `cv_strategy_id`, `seed`, `branch_name`, `model_config`, `secondary_metrics` (regression only)
+- Multi-target: add `target_name`; key becomes `branch_{branch}_{target}_oof`
+- `secondary_metrics` for regression: concat across all folds, not per-fold average
+- MAPE zero-target rule: exclude `y_true == 0` rows; set `mape = None` when all zero
 
 ---
 
 ## Augmented OOF Namespace Contract
 
-During the pseudo-label retraining loop, all OOF outputs use the
-`_augmented` suffix. The loop must never overwrite an existing
-non-augmented key:
+During pseudo-label retraining, write to `_augmented` keys only. Never overwrite the original:
 
 ```python
 key = f"branch_{branch_name}_oof"
@@ -456,44 +409,13 @@ if key in SKILL_STATE and retraining_active:
 SKILL_STATE[augmented_key] = { ... }
 ```
 
-Rollback clears only `_augmented` keys. Original keys are
-structurally isolated and must remain untouched throughout the
-pseudo-label cycle.
-
-**Multi-target pseudo-label recombination — read before touching
-`skill_21` on a multi-target competition.** `skill_21` is
-classification-only by design (see Guard Condition 1 below). On a
-competition with both regression and classification targets, this
-means augmentation will only ever touch the classification target,
-never the regression one. Combining one augmented target's OOF with
-another target's pre-augmentation OOF for composite scoring requires
-an explicit, declared policy — do not silently recombine them.
-
-```
-A multi-target competition's config should declare one of:
-
-  "freeze_unaugmented_targets_at_original" — every target skill_21
-  cannot touch contributes its ORIGINAL (pre-augmentation) OOF score
-  to the composite, unchanged, every time. Valid because those
-  targets' OOF was never invalidated — they simply weren't touched.
-
-  "block_composite_until_all_targets_augmented_or_none" — refuses to
-  compute an augmented composite score at all when augmentation state
-  differs across targets; falls back to the existing rollback path
-  (treat as if zero retrained branches passed the gate).
-
-If you encounter a multi-target competition attempting pseudo-label
-retraining with NEITHER policy declared, stop and raise it. Do not
-guess which behavior is intended.
-```
+Rollback clears only `_augmented` keys. See SOT Section 4 (Phase 3B, skill_21 contract) for the full multi-target recombination policy.
 
 ---
 
 ## SHAP Computation Rules
 
-SHAP is computed per-fold on validation fold predictions only.
-Full-train SHAP is prohibited — it introduces the target into the
-computation and makes leak detection unreliable.
+# See also: SOT Section 4, Phase 3A (skill_10 contract) for the full SHAP contract.
 
 ```python
 shap_arrays = []
@@ -502,9 +424,6 @@ for train_idx, val_idx in cv_splits:
     explainer = shap.TreeExplainer(model)
     shap_values = explainer.shap_values(X[val_idx])
 
-    # For classification: select positive class (index 1)
-    # or sum absolute values across classes.
-    # For regression: single array, use directly.
     if config["task_type"] == "classification":
         if isinstance(shap_values, list):
             sv = shap_values[1]       # positive class
@@ -529,24 +448,6 @@ if X.shape[1] < 2:
     return state
 ```
 
-**On raising or lowering `shap_leak_threshold` for a specific
-competition:** a high SHAP concentration ratio is not automatically a
-leak. Before raising the threshold to accommodate a flagged feature,
-verify independently — by reading the actual feature-extraction code,
-not just by domain plausibility reasoning — that the feature's
-derivation never touches the target column. Domain plausibility alone
-("this kind of feature is known to be predictive in this domain") is
-not sufficient evidence on its own; it has been used, in this repo's
-history, as a justification that turned out to need direct code
-verification to actually confirm. If the extraction code is
-confirmed clean, also check whether the label itself might have been
-derived from that same feature upstream — by testing whether the
-single feature, thresholded with no model at all, reproduces the
-target at unusually high F1 (a rough guide: above ~0.90 alone, with
-no other feature combination, is the more concerning range; the
-0.6–0.85 range is more consistent with a genuinely strong but
-non-derived signal, though this is a heuristic, not a hard rule).
-
 ---
 
 ## Two-Mode Feature Contract
@@ -555,6 +456,8 @@ Target-dependent features have two computation modes. Both must be
 implemented. Missing the inference mode causes a column mismatch
 crash in `skill_14`. Missing the fold restriction silently inflates
 OOF scores.
+
+# See also: SOT Section 4, Phase 2B (skill_07 contract) for full details.
 
 ```python
 def compute_group_target_aggregation(X, y, group_col, train_idx=None,
@@ -589,8 +492,6 @@ validation and test sets, preventing validation/test statistics contamination (l
 
 ## Seed Discipline
 
-Every model training call sets three seeds — all three, every time:
-
 ```python
 seed = config["reproducibility"]["seed"]
 import random
@@ -599,8 +500,7 @@ np.random.seed(seed)
 model = LGBMClassifier(random_state=seed, ...)
 ```
 
-The seed is never overridden locally. It is always read from config.
-Never use a local `seed = 42` literal.
+Never override the seed locally. Never use a local `seed = 42` literal.
 
 ---
 
@@ -758,11 +658,10 @@ At minimum, the preflight script is expected to validate:
 **Known live risk on the OOF tag check, specifically for multi-target
 competitions:** the matching pattern used by preflight may be a fixed
 string like `branch_*_oof`, which will NOT match the multi-target key
-shape `branch_{branch}_{target}_oof` shown earlier in this document.
-If unmatched, multi-target OOF records would silently bypass tag
-validation entirely. Before trusting a preflight PASS on any
-multi-target competition, confirm the pattern used is regex-based
-with an optional target group, not a literal glob:
+shape `branch_{branch}_{target}_oof`. If unmatched, multi-target OOF
+records would silently bypass tag validation entirely. Before trusting
+a preflight PASS on any multi-target competition, confirm the pattern
+used is regex-based with an optional target group, not a literal glob:
 
 ```bash
 grep -n "branch_.*_oof\|OOF_PATTERN" scripts/preflight_enforce.py
@@ -883,10 +782,10 @@ before it is resolved in code.
 **GAP-4 (temporal/group CV signal detection — FIXED in v2.3):**
 `skill_04_eda.py` was missing `temporal_index_confirmed` and
 `group_structure_confirmed` from its `eda_updates` dict. Both were
-specified in the SoT (L921–940) but never written — meaning
-`skill_05_cv`'s TimeSeriesSplit branch could never fire (Step 1 always
-read `False`), and `three_lens.py`'s governance sanity check was always
-a no-op. **Now fixed**: both fields are derived from competition-agnostic
+specified in the SoT but never written — meaning `skill_05_cv`'s
+TimeSeriesSplit branch could never fire (Step 1 always read `False`),
+and `three_lens.py`'s governance sanity check was always a no-op.
+**Now fixed**: both fields are derived from competition-agnostic
 structural signals:
 - `temporal_index_confirmed`: True if BAND_MM pattern detected OR any
   column round-trips cleanly through `pd.to_datetime` (no hardcoded names)
@@ -894,6 +793,7 @@ structural signals:
   unique_count/len(df) < 0.05 (low-cardinality repeating structure)
   — declared as a judgment call; no existing convention was found in
   skill_02, skill_05, or skill_07 to reuse
+
 Also added `outlier_columns` and `target_skew` to match the full SoT
 field list, and updated `templates/SKILL_STATE_template.json` to include
 all SoT-specified eda sub-block fields with correct defaults.

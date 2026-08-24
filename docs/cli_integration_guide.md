@@ -220,11 +220,31 @@ python -m zindian.cli ledger <experiments|submissions|best|passed|failed>
 
 ## Externalized Skill Logging
 
-The Zindian Orchestrator implements an automatic logging redirection mechanism via a `Tee` wrapper. When any skill runs via the orchestrator (`run_skill` in `zindian/orchestrator.py`), its standard output (`sys.stdout`) and standard error (`sys.stderr`) streams are intercepted.
+The Zindian Orchestrator implements an automatic logging redirection mechanism via a `_MultiTee` wrapper. When any skill runs via the orchestrator (`run_skill` in `zindian/orchestrator.py`), its standard output (`sys.stdout`) and standard error (`sys.stderr`) streams are intercepted.
 
-- **Storage Location**: Logs are written to `competitions/<slug>/logs/<skill_name>.log` (split notation functions like `skill_03.policy_writer` are written to `skill_03_policy_writer.log`).
-- **Tee Behavior**: Messages are simultaneously printed to the active console terminal and saved to the skill-level log file, allowing for easy diagnostics while retaining interactive CLI feedback.
-- **Safety**: Subprocess executions inside the CLI are not affected, ensuring that only in-process skill executions are captured under their respective files.
+### Session-Scoped Logging (pipeline runs)
+
+When a pipeline phase executes via `run_phase`, all skill output for that run is grouped into a session-scoped directory:
+
+```
+competitions/<slug>/logs/run_<YYYYMMDDTHHMMSS>_phase<phase>/
+├── <skill_name>.log      # one file per skill (overwrite per run)
+└── session.log           # shared, append-mode chronological log
+```
+
+- **Directory naming**: `run_<timestamp>_phase<phase>` — e.g. `run_20260824T091500_phase1`. The timestamp is UTC (`%Y%m%dT%H%M%S`) and is set once by `run_phase` for the entire session.
+- **Per-skill files**: `<skill_name>.log` (split notation like `skill_03.policy_writer` becomes `skill_03_policy_writer.log`). Each file captures only that skill's output.
+- **Shared session log**: `session.log` captures every skill's execution in chronological order. Each entry begins with a `=== <skill_name> ===` boundary wrapped in 60-character `=` rules, making a single pipeline run traceable end-to-end in one file.
+- **Tee behavior**: messages are simultaneously printed to the active console terminal and written to both sinks, retaining interactive CLI feedback.
+- **Safety**: subprocess executions inside the CLI are not affected — only in-process skill executions are captured.
+
+### Flat Fallback (standalone calls & tests)
+
+When a skill is invoked standalone (direct `run_skill` call outside `run_phase` — typical for tests and ad-hoc debugging), no session directory exists and logging falls back to the flat layout:
+
+```
+competitions/<slug>/logs/<skill_name>.log
+```
 
 ---
 

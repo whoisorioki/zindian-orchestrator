@@ -2,8 +2,8 @@ import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-import pytest
 from zindian.orchestrator import run_skill, SKILL_REGISTRY
+
 
 def test_externalized_logging_captures_stdout_and_stderr():
     """Test that run_skill redirects stdout/stderr to a local file in the logs/ directory."""
@@ -17,15 +17,22 @@ def test_externalized_logging_captures_stdout_and_stderr():
             mock_paths.return_value = mock_paths_obj
 
             # Create a mock skill module
-            class DummySkill:
-                @staticmethod
-                def run():
-                    print("Stdout log message")
-                    sys.stderr.write("Stderr error message\n")
-                    return {"status": "SUCCESS"}
+            import types
+
+            dummy_mod = types.ModuleType("dummy_skill_test")
+
+            def dummy_run(**kwargs):
+                print("Stdout log message")
+                sys.stderr.write("Stderr error message\n")
+                return {"status": "SUCCESS"}
+
+            dummy_mod.run = dummy_run  # type: ignore[attr-defined]
 
             # Inject the dummy skill into SKILL_REGISTRY
-            SKILL_REGISTRY["dummy_skill_test"] = ("Dummy skill for logging test", DummySkill)
+            SKILL_REGISTRY["dummy_skill_test"] = (
+                "Dummy skill for logging test",
+                dummy_mod,
+            )
 
             try:
                 # Execute the skill

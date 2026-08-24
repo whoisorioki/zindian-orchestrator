@@ -1,6 +1,6 @@
 # Ledger Architecture
 
-**Version:** 2.4
+**Version:** 2.5
 **Last Updated:** August 2026
 **Authority:** Binding for all experiment tracking
 
@@ -208,6 +208,5 @@ When schema changes are required:
 
 ## 9. References
 
-- Session Log: `docs/session_logs/LEDGER_DURABILITY_FIX.md`
 - DuckDB Docs: https://duckdb.org/docs/connect/concurrency
 - Implementation: `zindian/ledger.py`
