@@ -2,6 +2,35 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.5-close-2026-08-24]
+
+### Changed — Documentation
+- **`docs/source_of_truth.md`** — v2.5 closed, open items carried into v2.6:
+  - §4 Phase 3B: `> Pending (S8)` updated to `> [IMPLEMENTED — v2.5] S8` with code line citations (skill_21 L762–788, `pseudo_quantile` config key, 0.70 floor, `min_pseudo_samples` guard).
+  - §6 R6: status note updated from "verifier-only, no skill writes the dict" to `[IMPLEMENTED — v2.5] S10` citing skill_06 L196, skill_07 L1288/L1884, skill_08 L497/L827.
+  - §7 Known Gaps resolved table: added S7 (skill_09), S8, S10 rows with code-verified line references; removed 3 stale duplicate rows.
+  - §7 Known Gaps open section: removed S7/S8/S10 blocks (resolved); remaining open: S6, S11, Preflight MT-OOF, R5 telemetry.aggregate, GAP-3.
+  - `Last updated` line updated to note v2.5 closure.
+  - Footer: `*Version: v2.5 — CLOSED*` with v2.6 open item summary.
+- **`AGENTS.md`** — aligned to v2.5 closure:
+  - v2.5 completed list: added S7 (skill_09 L207–210), S8 (skill_21 L762–788), S10 (write_artifact_fingerprint L347 + callers).
+  - Open gaps: removed items 2/3/4 (S7/S8/S10 — now resolved); renumbered 11 → 8 items; S11 root dual-writes promoted to item 2 with exact line citations (skill_18 L498/L507, skill_20 L671–676).
+- **`docs/document_map.md`** — synced to v2.5 closure:
+  - SOT §7 row: resolved table updated to "S1–S10 all confirmed resolved".
+  - AGENTS completed and open gaps rows updated to reflect 8 remaining items for v2.6.
+  - Intentional overlaps note updated to state v2.5 CLOSED.
+
+### Verification
+- `scripts/verify_v22_contracts.py`: 24 passed, 0 failed.
+- Full test suite: 331 passed, 6 skipped.
+
+### Open Items for v2.6 (canonical: SoT §7)
+- **S6** — Multicollinear leakage splitting (split-leak blind spot): pairwise/group-wise MI not implemented.
+- **S11** — skill_18/skill_20 root dual-writes: confirmed still present (skill_18 L498+L507, skill_20 L671–676).
+- **Preflight** — Multi-target OOF completeness: A7 check is tag-presence only, not N-per-branch count.
+- **R5** — `telemetry.aggregate` not written by `run_phase()`; `skill_22` does not verify it.
+- **GAP-3** — SHAP interaction effects (deferred to v3.0).
+
 ## [v2.5-docs-restructure-2026-08-24]
 
 ### Changed

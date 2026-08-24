@@ -49,7 +49,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | — *R4* | Submission reproducible from config+state | Governance reproducibility |
 | — *R5* | Carbon tracking — telemetry schema, carbon formula, mandatory/exempt skills | Compute impact |
 | — *R6* | Computed artifact fingerprinting — 3-tier tolerance bands, status | Artifact integrity |
-| **§7 Known Gaps Registry** | Resolved table (C1, GAP-4, S1–S5, C2/C4/M6/DRIFT-3 confirmed resolved) + Open gaps (S6, S7-skill09, S8, S10, skill_18/20 root writes, preflight MT-OOF, GAP-3, R5-telemetry-aggregate) | Code/spec delta tracker |
+| **§7 Known Gaps Registry** | Resolved table (C1, GAP-4, S1–S10 all confirmed resolved) + Open gaps (S6, S11-root-writes, preflight MT-OOF, R5-telemetry-aggregate, GAP-3 deferred) | Code/spec delta tracker — v2.5 CLOSED |
 
 ---
 
@@ -75,8 +75,8 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **Skill File Conventions** | Naming convention, run() signature, stateless rule, no internal CV, no config writes | Skill authoring standards |
 | **What to Do When Unsure** | 8 stop-and-ask triggers | Escalation rules |
 | **Environment and Package Rules** | 5 package discipline rules + pip-compile diff warning | Dependency management |
-| **v2.3, v2.4 & v2.5 Refactor — Completed Items** | v2.5 gap closures (S5, C4, M6, DRIFT-3, C2, preflight path, S7/skill_12) + v2.4 S1–S10 ✅ + v2.3 DRIFT/GAP ✅ + test coverage | Completed work log |
-| **Open Known Gaps** | 11 numbered gaps (S6, S7-skill09, S8, S10, R5-telemetry-aggregate, skill_18/20 root writes, preflight MT-OOF, GAP-3, regression pseudo-label, two-mode static verify, drift threshold) | Outstanding work + freeze list |
+| **v2.3, v2.4 & v2.5 Refactor — Completed Items** | v2.5 gap closures (S5, C4, M6, DRIFT-3, C2, preflight path, S7/skill_12, S7-skill09, S8, S10) + v2.4 S1–S10 ✅ + v2.3 DRIFT/GAP ✅ + test coverage | Completed work log — v2.5 CLOSED |
+| **Open Known Gaps** | 8 numbered gaps (S6, S11-root-writes, preflight MT-OOF, R5-telemetry-aggregate, GAP-3, regression pseudo-label, two-mode static verify, drift threshold) | Outstanding work for v2.6 |
 | **Footer** | SoT pairing note, maintainer | Metadata |
 
 ---
@@ -223,7 +223,7 @@ The following map defines the distinct focus of each file vs. shared content, pr
 
 ### Intentional Overlaps (Quick-Reference Copy)
 1. **Threshold branching logic:** Appears fully in SOT §4 Phase 3B (skill_11) and is duplicated in AGENTS.md for quick lookup by coding agents, marked with a SOT cross-reference.
-2. **v2.3/v2.4/v2.5 completed items:** SOT §7 resolved table is the canonical record; AGENTS.md `v2.3, v2.4 & v2.5 Refactor` section is the implementation-perspective done-list.
+2. **v2.3/v2.4/v2.5 completed items:** SOT §7 resolved table is the canonical record (v2.5 CLOSED — S1–S10 all resolved); AGENTS.md `v2.3, v2.4 & v2.5 Refactor` section is the implementation-perspective done-list.
 
 ---
 

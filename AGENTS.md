@@ -723,6 +723,9 @@ before it is resolved in code.
 - ✅ **C2 (feature_policy.json keys — not a preflight gap):** Validated by `policy_gate()` at Phase 2A runtime; no preflight change required.
 - ✅ **Preflight output path:** `scripts/preflight_enforce.py` L877–880 writes to `reports/audits/preflight/<timestamp>.json` (not root).
 - ✅ **S7 / skill_12 (not a gap):** `skill_12_metric` reads fold scores from OOF state records and never re-runs CV splits — no buffered split consumption needed.
+- ✅ **S7 (skill_09 spatial buffer):** `skill_09_calibration.py` L207–210 now calls `load_explicit_cv_splits(state)` — calibration folds match spatial-buffered training folds.
+- ✅ **S8 (adaptive pseudo-label quantiles):** Class-wise quantile selection with 0.70 floor implemented at `skill_21_pseudo_label.py` L762–788. `min_pseudo_samples` guard at L782. `pseudo_quantile` config key drives selection percentage.
+- ✅ **S10 (artifact fingerprints):** `write_artifact_fingerprint()` in `zindian/state.py` L347 called by skill_06 (L196), skill_07 (L1288, L1884), skill_08 (L497, L827). `skill_22` verifier now has data to check.
 
 **v2.4 Statistical Migration (August 2026):**
 - ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
@@ -776,16 +779,13 @@ all SoT-specified eda sub-block fields with correct defaults.
 > constraints that apply when a gap is addressed.
 
 1. **S6 — Multicollinear leakage (split-leak blind spot):** Univariate NMI/Pearson misses leaks distributed across correlated feature pairs. Requires pairwise/group-wise MI testing. No SoT patch yet.
-2. **S7 — Spatial CV buffer: `skill_09` not consuming buffered splits:** `skill_09_calibration.py` calls `get_cv_splits()` directly, bypassing `cv_split_indices`. Fix: call `load_explicit_cv_splits(state)` when `cv_split_source == "skill_05_spatial"`.
-3. **S8 — Adaptive pseudo-label thresholds not implemented:** `skill_21` still uses fixed `CONF_POS_DEFAULT = 0.85`. Class-wise quantile spec locked (2026-08-03) but not coded. Do not change thresholds without matching the full spec in SoT §4 Phase 3B.
-4. **S10 — No skill writes `derived_artifact_fingerprints`:** `skill_22` verifier is a no-op. At least one of skill_06/07/08 must write MD5/float-hash fingerprints. Do not modify `skill_22` logic — add writers upstream.
-5. **skill_18 / skill_20 — Root dual-writes:** Both skills still write legacy root copies alongside `reports/diagnostics/`. Remove root writes and update all consumers together in one atomic change. See `reporting_logging_audit.md` Track 2 for the action plan.
-6. **Preflight — Multi-target OOF completeness not per-branch:** A7 check validates tag presence only, not N-per-branch count. Requires adding: for each branch, assert `count(branch_*_oof keys) == len(target_config["targets"])`.
-7. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
-8. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
-9. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
-10. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
-11. **R5 — `telemetry.aggregate` not written:** `run_phase()` writes only per-skill `telemetry.{skill_name}` keys; no aggregate is written. `skill_22` does not verify it. Add a post-loop aggregation step to `run_phase()` and a matching check in `skill_22`. Do not modify `skill_22` alone — add the writer first.
+2. **S11 — skill_18 / skill_20 root dual-writes:** Both skills still write legacy root copies alongside `reports/diagnostics/`. `skill_18` L498 writes to `reports_dir/literature_cache.json` before L507 writes to `diagnostics/`. `skill_20` `run()` L671–676 passes root paths to `run_scientist()`. Remove root writes and update all consumers together in one atomic change. See `reporting_logging_audit.md` Track 2.
+3. **Preflight — Multi-target OOF completeness not per-branch:** A7 check validates tag presence only, not N-per-branch count. Requires adding: for each branch, assert `count(branch_*_oof keys) == len(target_config["targets"])`.
+4. **R5 — `telemetry.aggregate` not written:** `run_phase()` writes only per-skill `telemetry.{skill_name}` keys (L1103–1104); no aggregate is written. `skill_22` does not verify it. Add a post-loop aggregation step to `run_phase()` and a matching check in `skill_22`. Do not modify `skill_22` alone — add the writer first.
+5. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
+6. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
+7. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
+8. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
 
 ---
 

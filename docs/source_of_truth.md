@@ -3,7 +3,7 @@
 **Version:** v2.5
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.5: Restructured — removed §7 RL analogy and §8 Definition of Done; history log schema moved to §5; §9 renumbered §7)
+**Last updated:** August 2026 (v2.5: Restructured docs + closed S7/S8/S10 gaps; v2.5 is now CLOSED — see §7 for open items carried into v2.6)
 
 ---
 
@@ -1643,9 +1643,9 @@ Guard conditions — ALL must be true before running:
    (default: fixed absolute thresholds conf_pos >= 0.85, conf_neg <= 0.15 from CONF_POS_DEFAULT and CONF_NEG_DEFAULT in skill_21_pseudo_label.py)
 ```
 
-> **Pending (S8):** Hybrid Adaptive Pseudo-labeling.
-> - **Mechanism:** Class-wise quantile selection with a 0.70 floor (e.g. top P% per class, bounded below by 0.70 probability).
-> - **Preconditions & Guards:** OOF isotonic/platt calibration (from `skill_09`) mandatory. Aggregated row count guarded by `min_pseudo_samples` parameter.
+> **[IMPLEMENTED — v2.5] S8:** Hybrid Adaptive Pseudo-labeling.
+> - **Mechanism:** Class-wise quantile selection with a 0.70 floor (`p1 >= 0.70` / `p0 >= 0.70` gates in `skill_21_pseudo_label.py` L779–780). Top `pseudo_quantile` fraction per class selected; defaults to top 20% when config key absent.
+> - **Preconditions & Guards:** Guard condition GC6 still uses `CONF_POS_DEFAULT = 0.85` to gate whether the skill runs at all; quantile selection applies inside the iteration loop once guards pass. `min_pseudo_samples` guard at L782.
 > - **Ranking & Multi-target:** Deterministic `method='first'` tie-breaking. Scoped independently per classification target in multi-target competitions.
 > - **Recombination Timing:** Enforced **post-retraining**, immediately after the pseudo-label retraining loop finishes, before passing candidate branches to `skill_11`.
 
@@ -2275,7 +2275,7 @@ or submitted.
 >   - **Tier 1 (<= 1e-6 relative delta):** Bit/float identical pass.
 >   - **Tier 2 (1e-6 to 1e-5 relative delta):** Soft-warning issued; requires explicit operator sign-off at Human Gate 5.
 >   - **Tier 3 (> 1e-5 relative delta):** Hard-halt — non-reproducible artifact rejected.
-> - **Status (verified against code, 2026-08-03):** `skill_22_reproducibility_audit.py` implements the 3-tier verifier (`_audit_derived_artifact_fingerprints()` L206) but is verifier-only — it reads `SKILL_STATE["derived_artifact_fingerprints"]` and no skill currently *writes* this dict. When the key is absent or empty, the audit silently passes (L216). R6 closes only when at least one skill writes platform-recomputed artifact fingerprints into state for `skill_22` to check.
+> - **[IMPLEMENTED — v2.5] S10:** `write_artifact_fingerprint()` (defined in `zindian/state.py` L347) is now called by `skill_06_preprocessing.py` (L196), `skill_07_features.py` (L1288, L1884), `skill_08_anchor.py` (L497, L827), and `skill_21_pseudo_label.py`. `skill_22_reproducibility_audit.py` `_audit_derived_artifact_fingerprints()` (L206) reads the populated dict and applies the 3-tier tolerance bands. R6 is closed.
 
 **R3 — No custom packages.**
 
@@ -2430,9 +2430,9 @@ and are recorded here for audit trail only.
 | C2 | Preflight did not validate `feature_policy.json` required keys | Not a preflight responsibility — `policy_gate()` in `skill_03_legality.py` validates required keys at Phase 2A runtime; no preflight change needed |
 | S7 (partial) | Preflight wrote to `reports/` root instead of `reports/audits/preflight/` | `scripts/preflight_enforce.py` L877–880 now writes to `reports/audits/preflight/<timestamp>.json` |
 | S7 (partial) | `skill_12_metric` did not consume buffered CV splits | Not a gap — `skill_12` reads `fold_scores` from existing OOF state records; it never re-runs CV splits |
-| S7 | Spatial CV Buffer: skill_09 not consuming buffered splits | Implemented 2026-08-24 — `skill_09_calibration.py` L207 now calls `load_explicit_cv_splits(state)` |
-| S8 | Fixed Pseudo-label Thresholding (adaptive quantiles not implemented) | Implemented 2026-08-24 — Class-wise quantile selection with 0.70 floor, deterministic ranking, and `min_pseudo_samples` guard |
-| S10 | Artifact Fingerprints: no skill writes `derived_artifact_fingerprints` | Implemented 2026-08-24 — Upstream skills (06, 07, 08, 21) write artifact fingerprints via `write_artifact_fingerprint()` |
+| S7 | Spatial CV Buffer: `skill_09` not consuming buffered splits | Implemented 2026-08-24 — `skill_09_calibration.py` L207–210 calls `load_explicit_cv_splits(state)` when explicit splits are present |
+| S8 | Fixed pseudo-label thresholding — adaptive quantiles not implemented | Implemented 2026-08-24 — class-wise quantile selection with 0.70 floor at `skill_21_pseudo_label.py` L762–788; `min_pseudo_samples` guard; `pseudo_quantile` config key drives selection |
+| S10 | No skill wrote `derived_artifact_fingerprints` | Implemented 2026-08-24 — `write_artifact_fingerprint()` called by skill_06 (L196), skill_07 (L1288, L1884), skill_08 (L497, L827); `skill_22` verifier now has data to check |
 
 ---
 
@@ -2522,5 +2522,5 @@ Severity:       Low-Medium — R5 carbon reporting is incomplete at the
 ```
 
 ---
-*Version: v2.5*
-*Status: CURRENT*
+*Version: v2.5 — CLOSED*
+*Next: v2.6 — open items: S6, S11 (root dual-writes), Preflight MT-OOF, R5 telemetry.aggregate, GAP-3 (deferred)*
