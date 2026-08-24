@@ -239,8 +239,8 @@ def test_skill21_recombination_and_multi_target_retraining(monkeypatch):
     for call in mock_store.update.call_args_list:
         called_keys.extend(call[1].keys())
 
-    # Check that branch_anchor-baseline_Target_Reg_augmented_oof is written
-    assert "branch_anchor-baseline_Target_Reg_augmented_oof" in called_keys
+    # Check that branch_anchor-baseline_Target_Reg_oof_augmented is written
+    assert "branch_anchor-baseline_Target_Reg_oof_augmented" in called_keys
 
 
 # 5. ChallengeConfig immutability test (Phase 2)

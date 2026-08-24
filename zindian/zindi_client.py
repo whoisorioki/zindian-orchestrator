@@ -1,7 +1,7 @@
 """
 ZindiClient — Direct API wrapper for the Zindi platform.
 Bypasses the broken select_a_challenge() in the KameniAlexNea package
-and talks directly to https://api.zindi.africa/v1/competitions
+and talks directly to https://api.zindi.world/v1/competitions
 """
 
 import os
@@ -41,7 +41,7 @@ load_dotenv()
 
 
 class ZindiClient:
-    BASE_URL = "https://api.zindi.africa/v1/competitions"
+    BASE_URL = "https://api.zindi.world/v1/competitions"
 
     def __init__(self):
         self._user = Zindian(

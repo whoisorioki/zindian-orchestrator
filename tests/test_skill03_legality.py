@@ -114,6 +114,8 @@ def test_run_normalizes_anchor_features_and_advances_from_phase_one_integrity(
     state = json.loads((comp / "SKILL_STATE.json").read_text(encoding="utf-8"))
     assert state["dag_phase"] == "phase_2_legality_checked"
     assert state["legality_status"] == "GO"
-    report = (comp / "reports" / "legality_report.md").read_text(encoding="utf-8")
+    report = (comp / "reports" / "audits" / "legality_report.md").read_text(
+        encoding="utf-8"
+    )
     assert "region_bucket" in report
     assert "age_band" in report

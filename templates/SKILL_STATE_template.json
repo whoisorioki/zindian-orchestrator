@@ -1,5 +1,6 @@
 {
-    "competition": "<slug>",
+    "competition": "<competition_name>",
+    "competition_slug": "<slug>",
     "md5_target_hash": null,
     "current_git_branch": "main",
     "anchor_git_branch": null,
@@ -22,7 +23,6 @@
     "human_gate_5_selection": [],
     "selected_submissions": [],
     "last_updated": null,
-    "competition_slug": null,
     "md5_train_file": null,
     "md5_test_file": null,
     "md5_sample_sub_file": null,

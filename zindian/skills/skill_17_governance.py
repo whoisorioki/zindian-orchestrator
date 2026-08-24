@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # -- Prerequisite gate keys ------------------------------------------
@@ -228,6 +227,9 @@ def run(
         config: challenge_config.json as dict.
         state: SKILL_STATE.json as dict.
     """
+    print("=" * 60)
+    print("SKILL 17 — Submission Governance")
+    print("=" * 60)
     from zindian.paths import resolve_competition_paths
     from zindian.config import ChallengeConfig
     from zindian.state import SkillStateStore
@@ -295,30 +297,31 @@ def run(
         "selections": selections,
     }
 
-    # Write selection report
-    slug = config.get("slug", "unknown")
-    report_dir = (
-        Path("reports") if slug == "unknown" else Path(f"competitions/{slug}/reports")
-    )
-    report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / "final_selections.json"
+    # Write to audits/
+    paths = resolve_competition_paths()
+    reports_dir = getattr(paths, "reports_dir", None)
+    if reports_dir:
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        audits_dir = reports_dir / "audits"
+        audits_dir.mkdir(parents=True, exist_ok=True)
+        report_path = audits_dir / "final_selections.json"
 
-    report = {
-        "slug": slug,
-        "locked_at": state.get("selected_submissions_locked_at", "unknown"),
-        "selections": selections,
-        "rationale": "Highest two public scores selected by human via Gate 5. "
-        "Both submissions verified compliant before selection.",
-    }
-    report_path.write_text(
-        json.dumps(report, indent=2, sort_keys=False) + "\n",
-        encoding="utf-8",
-    )
+        report = {
+            "slug": config.get("slug", "unknown"),
+            "locked_at": state.get("selected_submissions_locked_at", "unknown"),
+            "selections": selections,
+            "rationale": "Highest two public scores selected by human via Gate 5. "
+            "Both submissions verified compliant before selection.",
+        }
+        report_json = json.dumps(report, indent=2, sort_keys=False) + "\n"
+        report_path.write_text(report_json, encoding="utf-8")
 
-    print("[OK] SKILL 17 COMPLETE")
-    print(f"   Selected: {[s.get('filename') for s in selections]}")
-    print(f"   Report : {report_path}")
-    print("   Structural lock applied — selected_submissions is final.")
+        print("[OK] SKILL 17 COMPLETE")
+        print(f"   Selected: {[s.get('filename') for s in selections]}")
+        print(f"   Report : {report_path}")
+        print("   Structural lock applied — selected_submissions is final.")
+    else:
+        print("[WARN] reports_dir not available, skipping report generation.")
 
     return state
 

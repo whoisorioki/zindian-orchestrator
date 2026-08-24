@@ -12,7 +12,7 @@ Primary implementation
 
 Current implementation notes
 ----------------------------
-- Generates `reports/shap_analysis.json` and `reports/shap_summary.md` and updates `SKILL_STATE.json` with SHAP metrics.
+- Generates `reports/audits/shap_analysis.json` and `reports/audits/shap_summary.md` and updates `SKILL_STATE.json` with SHAP metrics.
 - Uses validation-fold predictions for SHAP computation. Full-train SHAP is prohibited to avoid target leakage.
 - Calculates correlation coefficient between all feature columns and identifies pairs with correlation >0.95.
 
@@ -35,5 +35,5 @@ Recommendations
 
 Outputs
 -------
-- JSON report at `reports/shap_analysis.json` and Markdown summary at `reports/shap_summary.md`.
+- JSON report at `reports/audits/shap_analysis.json` and Markdown summary at `reports/audits/shap_summary.md`.
 - Updates `SKILL_STATE.json` with keys: `shap_completed_at`, `shap_top_feature`, `shap_top_features`, `high_corr_pairs_count`, `pruning_delta_f1`, `pruning_pass`, and writes OOF record `branch_shap_audit_oof`.

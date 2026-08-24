@@ -301,27 +301,23 @@ def write_oof_record(
         record["secondary_metrics"] = secondary_metrics
 
     state = store.read()
-    key = f"branch_{branch_name}_oof"
-    # Enforce SoT retraining rules: when pseudo-label retraining is active,
-    # augmented outputs must use the `_augmented` suffix and original keys
-    # must not be overwritten. This prevents accidental overwrites of baseline OOFs.
     retraining_active = bool(
         (state.get("pseudo_label_result") or {}).get("retraining_required", False)
     )
-    if retraining_active and not str(branch_name).endswith("_augmented"):
-        raise RuntimeError(
-            "Retraining active: OOF records during retraining must use the '_augmented' suffix for branch_name"
-        )
-    # Prevent overwriting original non-augmented key when retraining
-    original_key = f"branch_{str(branch_name).removesuffix('_augmented')}_oof"
-    if (
-        retraining_active
-        and original_key in state
-        and not str(branch_name).endswith("_augmented")
-    ):
-        raise RuntimeError(
-            f"Retraining attempted to overwrite original OOF key: {original_key}. Write to '{original_key}_augmented' instead."
-        )
+    if retraining_active:
+        if not str(branch_name).endswith("_augmented"):
+            raise RuntimeError(
+                "Retraining active: OOF records during retraining must use the '_augmented' suffix for branch_name"
+            )
+        base_branch = str(branch_name).removesuffix("_augmented")
+        key = f"branch_{base_branch}_oof_augmented"
+        original_key = f"branch_{base_branch}_oof"
+        if key == original_key:
+            raise RuntimeError(
+                f"Retraining loop attempted to overwrite original OOF key '{original_key}'. Write to '{key}' instead."
+            )
+    else:
+        key = f"branch_{branch_name}_oof"
 
     state[key] = record
     store.write(state, touch_timestamp=touch_timestamp)

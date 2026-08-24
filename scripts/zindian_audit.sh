@@ -158,7 +158,7 @@ echo "── 9. VENV — REQUIRED PACKAGES ──"
 source .venv/bin/activate 2>/dev/null
 required_pkgs=(
   "lightgbm" "pandas" "numpy" "scikit-learn"
-  "shap" "duckdb" "PyGithub" "python-dotenv" "requests"
+  "shap" "duckdb" "python-dotenv" "requests"
 )
 for pkg in "${required_pkgs[@]}"; do
   version=$(pip show "$pkg" 2>/dev/null | grep Version | awk '{print $2}')

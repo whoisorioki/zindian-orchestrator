@@ -7,6 +7,7 @@ Halts if hash shifts on re-run — indicates data tampering or corruption.
 
 import tabula.skill_state_autopatch  # noqa
 import hashlib
+import json
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timezone
@@ -112,6 +113,8 @@ def run(re_verify: bool = False) -> dict:
     domain = ""
     input_files: dict[str, str] = {}
 
+    cfg = None
+    has_explicit_target_col = False
     try:
         cfg = ChallengeConfig.load()
         target_config = cfg.get("target_config") or {}
@@ -130,9 +133,13 @@ def run(re_verify: bool = False) -> dict:
                 )
             else:
                 sc = tc
+            if tc:
+                has_explicit_target_col = True
         else:
             tc = cfg.get("target_column") or cfg.get("target_col")
             sc = cfg.get("submission_target_column") or cfg.get("submission_target_col")
+            if tc:
+                has_explicit_target_col = True
         if tc:
             target_col = tc
         if sc:
@@ -147,14 +154,74 @@ def run(re_verify: bool = False) -> dict:
     except Exception:
         pass
 
-    train_file = input_files.get("train", "Training_Data.csv")
+    train_file = input_files.get("train", "Train.csv")
     test_file = input_files.get("test", "Test.csv")
     sample_file = input_files.get("sample", "SampleSubmission.csv")
 
     train_path = paths.data_raw_dir / train_file
+    if not train_path.exists():
+        for fn in ["Training_Data.csv", "Train.csv", "train.csv", "training_data.csv"]:
+            if (paths.data_raw_dir / fn).exists():
+                train_file = fn
+                train_path = paths.data_raw_dir / fn
+                break
+
     test_path = paths.data_raw_dir / test_file
+    if not test_path.exists():
+        for fn in ["Test.csv", "test.csv"]:
+            if (paths.data_raw_dir / fn).exists():
+                test_file = fn
+                test_path = paths.data_raw_dir / fn
+                break
+
     sample_path = paths.data_raw_dir / sample_file
+    if not sample_path.exists():
+        for fn in [
+            "SampleSubmission.csv",
+            "sample_submission.csv",
+            "Sample_Submission.csv",
+        ]:
+            if (paths.data_raw_dir / fn).exists():
+                sample_file = fn
+                sample_path = paths.data_raw_dir / fn
+                break
+
     state_path = paths.state_path
+
+    # Save the resolved filenames back to challenge_config.json if they differ
+    if paths.config_path.exists():
+        try:
+            config_data = json.loads(paths.config_path.read_text(encoding="utf-8"))
+            if "input_files" not in config_data or not isinstance(
+                config_data["input_files"], dict
+            ):
+                config_data["input_files"] = {}
+            updated = False
+            for key, val in [
+                ("train", train_file),
+                ("test", test_file),
+                ("sample", sample_file),
+            ]:
+                if config_data["input_files"].get(key) != val:
+                    config_data["input_files"][key] = val
+                    updated = True
+            if updated:
+                import tempfile
+                import shutil
+
+                with tempfile.NamedTemporaryFile(
+                    mode="w", delete=False, suffix=".json"
+                ) as tmp:
+                    json.dump(config_data, tmp, indent=2)
+                    tmp_name = tmp.name
+                shutil.move(tmp_name, paths.config_path)
+                print(
+                    f"[OK] Updated resolved filenames in challenge_config.json: {config_data['input_files']}"
+                )
+        except Exception as e:
+            print(
+                f"[WARN] Failed to write resolved filenames to challenge_config.json: {e}"
+            )
 
     print(f"Loading {train_file} from: {train_path}")
     train = pd.read_csv(train_path)
@@ -165,39 +232,52 @@ def run(re_verify: bool = False) -> dict:
     print(f"  Test shape  : {test.shape}")
     print(f"  Sample sub  : {sub.shape}")
 
-    # Check if we're in INIT mode (no config exists yet)
-    config_exists = paths.config_path.exists()
+    # Check if we're in INIT mode (no config exists yet, or is unpopulated)
+    is_init = (
+        not paths.config_path.exists()
+        or paths.config_path.stat().st_size == 0
+        or cfg is None
+        or not cfg.get("task_type")
+        or not cfg.get("metric")
+    )
 
-    # INIT mode: Skip target validation - skill_02 will detect multi-target structure
-    if not config_exists:
+    # INIT mode: Skip target validation if no target column is configured
+    if is_init and not has_explicit_target_col:
         print("[INFO]  INIT mode detected - skipping target column validation")
         print("   skill_02 will detect target structure from SampleSubmission.csv")
         target_col = None  # Signal to skip target-dependent operations
     else:
-        # ENFORCE mode: Validate expected columns
+        # ENFORCE mode: Validate expected columns (with case-insensitive resolution)
         if target_col not in train.columns:
-            # Check if this is a multi-target competition
-            try:
-                target_config = cfg.get("target_config")
-                if target_config:
-                    print(
-                        "[INFO]  Multi-target competition detected - skipping single target validation"
-                    )
-                    target_col = None  # Skip single-target operations
-                else:
+            train_cols_lower = {c.lower(): c for c in train.columns}
+            if target_col and target_col.lower() in train_cols_lower:
+                target_col = train_cols_lower[target_col.lower()]
+                print(
+                    f"[INFO] Resolved target column to '{target_col}' in {train_file}"
+                )
+            else:
+                # Check if this is a multi-target competition
+                try:
+                    target_config = cfg.get("target_config") if cfg else None
+                    if target_config:
+                        print(
+                            "[INFO]  Multi-target competition detected - skipping single target validation"
+                        )
+                        target_col = None  # Skip single-target operations
+                    else:
+                        raise AssertionError(
+                            f"[FAIL] Target column '{target_col}' not found in {train_file}"
+                        )
+                except Exception:
                     raise AssertionError(
                         f"[FAIL] Target column '{target_col}' not found in {train_file}"
                     )
-            except Exception:
-                raise AssertionError(
-                    f"[FAIL] Target column '{target_col}' not found in {train_file}"
-                )
 
         if id_col not in train.columns:
             raise AssertionError(f"[FAIL] ID column '{id_col}' missing from train")
 
         # Latitude/Longitude check only makes sense for geospatial challenges
-        if domain.lower() == "geospatial":
+        if (domain or "").lower() == "geospatial":
             if "Latitude" not in train.columns or "Longitude" not in train.columns:
                 print(
                     "[WARN] Latitude/Longitude columns missing — continuing (not mandatory)"
@@ -205,9 +285,14 @@ def run(re_verify: bool = False) -> dict:
 
         if submission_target_col not in sub.columns:
             sub_cols_lower = {c.lower(): c for c in sub.columns}
-            if submission_target_col and submission_target_col.lower() in sub_cols_lower:
+            if (
+                submission_target_col
+                and submission_target_col.lower() in sub_cols_lower
+            ):
                 submission_target_col = sub_cols_lower[submission_target_col.lower()]
-                print(f"[INFO] Resolved submission target column to '{submission_target_col}' in SampleSubmission.csv")
+                print(
+                    f"[INFO] Resolved submission target column to '{submission_target_col}' in SampleSubmission.csv"
+                )
             else:
                 raise AssertionError(
                     f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"

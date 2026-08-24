@@ -29,7 +29,13 @@ def test_train_variant_calls_shared_trainer(monkeypatch):
     monkeypatch.setattr(features, "train_lightgbm_cv", fake_trainer)
 
     res = features.train_variant(
-        train, test, ["f1"], "variant-06", anchor_f1=0.5, seed=42
+        train,
+        test,
+        ["f1"],
+        "variant-06",
+        anchor_f1=0.5,
+        seed=42,
+        target_col="Occurrence Status",
     )
     assert res["variant"] == "variant-06"
     assert "oof_f1" in res and res["oof_f1"] == 0.7

@@ -6,8 +6,8 @@ Two functions:
   - check_planned_features(policy, planned_features)
 
 Entry point `run(slug, planned_features=None)` runs both steps, writes
-`reports/feature_policy.json` and `reports/legality_report.md`, and updates
-`SKILL_STATE.json` only when not downgrading the DAG phase.
+`reports/audits/feature_policy.json` and `reports/audits/legality_report.md`,
+and updates `SKILL_STATE.json` only when not downgrading the DAG phase.
 
 Generalisable: reads from `zindi_monitor.json`, `challenge_config.json`, and
 `SKILL_STATE.json`. Does not hardcode specific data sources.
@@ -31,7 +31,7 @@ def policy_writer(
     """Phase 1 function: Synthesize feature policy from monitor and config.
 
     Reads: challenge_config.json, community_signals from skill_00
-    Writes: reports/feature_policy.json
+    Writes: reports/audits/feature_policy.json
     Fields: allowed_features, blocked_features, block_reasons
     Side effects: none — pure writer, no gating
     """
@@ -46,7 +46,7 @@ def policy_gate(
 ) -> Dict[str, Any]:
     """Phase 2A function: Enforce feature exclusions.
 
-    Reads: reports/feature_policy.json, current feature matrix column list
+    Reads: reports/audits/feature_policy.json, current feature matrix column list
     Asserts: no blocked column present in feature matrix
     On violation: Write to SKILL_STATE.json, Halt pipeline
     Side effects: state write and halt only
@@ -277,8 +277,16 @@ def check_planned_features(
 
 
 def _write_feature_policy(paths, policy: Dict[str, Any]) -> None:
-    paths.reports_dir.mkdir(parents=True, exist_ok=True)
-    p = paths.reports_dir / "feature_policy.json"
+    reports_dir = getattr(paths, "reports_dir", None)
+    if not reports_dir:
+        print(
+            "  [WARN] paths.reports_dir not available, skipping writing feature policy."
+        )
+        return
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    audits_dir = reports_dir / "audits"
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    p = audits_dir / "feature_policy.json"
     p.write_text(json.dumps(policy, indent=2), encoding="utf-8")
     print(f"  [OK] feature_policy.json written -> {p}")
 
@@ -286,8 +294,13 @@ def _write_feature_policy(paths, policy: Dict[str, Any]) -> None:
 def _write_legality_report(
     paths, checks: List[Dict[str, Any]], policy: Dict[str, Any]
 ) -> None:
-    paths.reports_dir.mkdir(parents=True, exist_ok=True)
-    p = paths.reports_dir / "legality_report.md"
+    reports_dir = getattr(paths, "reports_dir", None)
+    if not reports_dir:
+        print(
+            "  [WARN] paths.reports_dir not available, skipping writing legality report."
+        )
+        return
+    reports_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Legality Report",
         "",
@@ -308,7 +321,11 @@ def _write_legality_report(
             "",
         ]
 
-    p.write_text("\n".join(lines), encoding="utf-8")
+    report_content = "\n".join(lines)
+    audits_dir = reports_dir / "audits"
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    p = audits_dir / "legality_report.md"
+    p.write_text(report_content, encoding="utf-8")
     print(f"  [OK] legality_report.md written -> {p}")
 
 
@@ -373,7 +390,9 @@ def run(
     state = store.read()
     patch = {
         "legality_status": status,
-        "feature_policy_written": str(paths.reports_dir / "feature_policy.json"),
+        "feature_policy_written": str(
+            paths.reports_dir / "audits" / "feature_policy.json"
+        ),
         "last_legality_checked": datetime.now(timezone.utc).isoformat(),
     }
     # Only advance dag_phase if current is before phase_2_legality_checked

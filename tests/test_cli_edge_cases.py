@@ -245,3 +245,40 @@ def test_cli_ledger_best_no_experiments():
                     main()
                 except SystemExit:
                     pass  # CLI may exit with 0
+
+
+def test_cli_competition_arguments_propagation():
+    """Test that CLI sets correct environment variables when --competition, --slug, or -c is provided."""
+    from zindian.cli import main
+    from unittest.mock import MagicMock
+
+    keys = ["COMPETITION_SLUG", "ZINDIAN_COMPETITION", "ZINDIAN_COMPETITION_SLUG"]
+    original_env = {k: os.environ.get(k) for k in keys}
+
+    try:
+        for option in ["--competition", "--slug", "-c"]:
+            # Clear environment
+            for k in keys:
+                os.environ.pop(k, None)
+
+            with patch(
+                "sys.argv", ["zindian.cli", "status", option, "test-slug-value"]
+            ):
+                # Status command will try to run resolve_competition_paths, mock it to avoid crash
+                with patch("zindian.paths.resolve_competition_paths") as mock_paths:
+                    mock_paths.return_value = MagicMock()
+                    try:
+                        main()
+                    except (SystemExit, Exception):
+                        pass
+
+            assert os.environ.get("COMPETITION_SLUG") == "test-slug-value"
+            assert os.environ.get("ZINDIAN_COMPETITION") == "test-slug-value"
+            assert os.environ.get("ZINDIAN_COMPETITION_SLUG") == "test-slug-value"
+    finally:
+        # Restore environment
+        for k, v in original_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v

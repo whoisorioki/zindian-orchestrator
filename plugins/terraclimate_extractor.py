@@ -164,12 +164,15 @@ def fetch(paths, config: ChallengeConfig, allow_network: bool = True) -> Path:
     return tiff_path
 
 
-def extract(paths, tiff_path: Path, config: ChallengeConfig):
+def extract(
+    paths, tiff_path: Path, config: ChallengeConfig, branch_name: str | None = None
+):
     import rasterio
     from rasterio.transform import rowcol
 
-    out_train = paths.data_processed_dir / "features_train.csv"
-    out_test = paths.data_processed_dir / "features_test.csv"
+    branch = branch_name or "anchor-baseline"
+    out_train = paths.data_processed_dir / f"features_train_{branch}.csv"
+    out_test = paths.data_processed_dir / f"features_test_{branch}.csv"
 
     if out_train.exists() and out_test.exists():
         return pd.read_csv(out_train), pd.read_csv(out_test)
@@ -244,4 +247,4 @@ class Extractor(FeatureExtractor):
     def extract(
         self, paths: Any, tiff_path: Path, config: Any, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return extract(paths, tiff_path, config)
+        return extract(paths, tiff_path, config, branch_name)

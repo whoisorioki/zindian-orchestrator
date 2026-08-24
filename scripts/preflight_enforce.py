@@ -734,7 +734,20 @@ def main():
     config_path = comp_path / "challenge_config.json"
     state_path = comp_path / "SKILL_STATE.json"
 
-    is_init = not config_path.exists() or config_path.stat().st_size == 0
+    # Pre-load config if it exists
+    cfg = {}
+    if config_path.exists() and config_path.stat().st_size > 0:
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    is_init = (
+        not config_path.exists()
+        or config_path.stat().st_size == 0
+        or not cfg.get("task_type")
+        or not cfg.get("metric")
+    )
     mode = "INIT" if is_init else "ENFORCE"
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -769,7 +782,6 @@ def main():
         failures.append("requirements.txt missing")
 
     # Load data for rendering
-    cfg = {}
     state = {}
 
     if is_init:
@@ -780,8 +792,28 @@ def main():
             failures.append(f"Competition path is not writable: {comp_path}")
 
         raw_dir = comp_path / "data" / "raw"
-        train_path = raw_dir / "Train.csv"
-        test_path = raw_dir / "Test.csv"
+        train_file = (cfg.get("input_files") or {}).get("train") or "Train.csv"
+        test_file = (cfg.get("input_files") or {}).get("test") or "Test.csv"
+
+        train_path = raw_dir / train_file
+        if not train_path.exists():
+            for fn in [
+                "Training_Data.csv",
+                "Train.csv",
+                "train.csv",
+                "training_data.csv",
+            ]:
+                if (raw_dir / fn).exists():
+                    train_path = raw_dir / fn
+                    break
+
+        test_path = raw_dir / test_file
+        if not test_path.exists():
+            for fn in ["Test.csv", "test.csv"]:
+                if (raw_dir / fn).exists():
+                    test_path = raw_dir / fn
+                    break
+
         if not train_path.exists() or not test_path.exists():
             failures.append(
                 f"Raw data files Train.csv or Test.csv missing in {raw_dir}"
@@ -795,6 +827,8 @@ def main():
                     "uninitialized",
                     "phase_1_incomplete",
                     "phase_1_integrity",
+                    "phase_1_integrity_locked",
+                    "phase_1_complete",
                 ):
                     failures.append(
                         f"Conflicting SKILL_STATE.json from a prior run exists (phase: {state_data.get('dag_phase')})"
@@ -839,8 +873,10 @@ def main():
         "warnings": warnings,
         "result": "PASS" if not failures else "FAIL",
     }
+    report_file = comp_path / "reports" / "audits" / "preflight"
+    report_file.mkdir(parents=True, exist_ok=True)
     report_file = (
-        reports_dir
+        report_file
         / f"preflight_{mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     )
     report_file.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
@@ -1085,7 +1121,7 @@ PREFLIGHT RESULT: {result_status}
             choice = input("Enter choice [1-3]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nAborted by user.")
-            sys.exit(0)
+            sys.exit(1)
 
         if choice == "1":
             if failures:
@@ -1097,18 +1133,36 @@ PREFLIGHT RESULT: {result_status}
                 print("\nProceeding...")
                 # Write preflight_confirmed to state
                 if is_init:
-                    state = {
-                        "dag_phase": "phase_1_incomplete",
-                        "preflight_confirmed": True,
-                        "competition": comp_slug,
-                    }
+                    existing_state = {}
+                    if state_path.exists():
+                        try:
+                            existing_state = json.loads(
+                                state_path.read_text(encoding="utf-8")
+                            )
+                        except Exception:
+                            pass
+                    if not existing_state:
+                        try:
+                            from zindian.schemas import skill_state_skeleton
+
+                            existing_state = skill_state_skeleton()
+                        except Exception:
+                            pass
+                    state = existing_state
+                    state.update(
+                        {
+                            "dag_phase": "phase_1_incomplete",
+                            "preflight_confirmed": True,
+                            "competition": comp_slug,
+                        }
+                    )
                 else:
                     state["preflight_confirmed"] = True
                 state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
                 sys.exit(0)
         elif choice == "2":
             print("\nAborting session...")
-            sys.exit(0)
+            sys.exit(1)
         elif choice == "3":
             if not warnings and not failures:
                 print("\nOverride not needed - all checks pass.")
@@ -1119,12 +1173,30 @@ PREFLIGHT RESULT: {result_status}
                 continue
             print("\nProceeding with override...")
             if is_init:
-                state = {
-                    "dag_phase": "phase_1_incomplete",
-                    "preflight_confirmed": True,
-                    "preflight_override_reason": reason,
-                    "competition": comp_slug,
-                }
+                existing_state = {}
+                if state_path.exists():
+                    try:
+                        existing_state = json.loads(
+                            state_path.read_text(encoding="utf-8")
+                        )
+                    except Exception:
+                        pass
+                if not existing_state:
+                    try:
+                        from zindian.schemas import skill_state_skeleton
+
+                        existing_state = skill_state_skeleton()
+                    except Exception:
+                        pass
+                state = existing_state
+                state.update(
+                    {
+                        "dag_phase": "phase_1_incomplete",
+                        "preflight_confirmed": True,
+                        "preflight_override_reason": reason,
+                        "competition": comp_slug,
+                    }
+                )
             else:
                 state["preflight_confirmed"] = True
                 state["preflight_override_reason"] = reason

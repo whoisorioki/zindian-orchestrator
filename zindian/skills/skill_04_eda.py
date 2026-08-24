@@ -2,7 +2,8 @@
 Skill 04 — EDA / Data Quality Audit
 
 Generic, competition-agnostic EDA for pipeline stages 2 and 3.
-Writes reports/eda_report.json and reports/eda_summary.md and updates SKILL_STATE.json.
+Writes reports/diagnostics/eda_report.json and reports/diagnostics/eda_summary.md
+and updates SKILL_STATE.json.
 
 Usage: python3 -m zindian.skills.skill_04_eda
 """
@@ -205,6 +206,9 @@ def mcar_mnar_assessment(df: pd.DataFrame, col: str, targets: list[str]) -> str:
 
 
 def run():
+    print("=" * 60)
+    print("SKILL 04 — Exploratory Data Analysis (EDA)")
+    print("=" * 60)
     paths = resolve_competition_paths(require_competition=True)
     competition_dir = paths.competition_dir
     if competition_dir is None:
@@ -293,6 +297,11 @@ def run():
         # Single-target: use legacy target_std
         target_vals = np.asarray(df[targets[0]].values, dtype=float)
         target_std_dict["target_std"] = float(np.std(target_vals, ddof=1))
+
+    print(f"Target column(s) detected: {targets}")
+    print(f"Dataset shape: {df.shape}")
+    for k, v in target_std_dict.items():
+        print(f"Target standard deviation ({k}): {v:.6f}")
 
     # Exclude ID, coords, and all targets
     exclude_lower = {"id", "id_number", "latitude", "longitude"}
@@ -548,8 +557,10 @@ def run():
         "class_separability_index": class_separability_index,
     }
 
-    # Write JSON report
-    rep_path = reports_dir / "eda_report.json"
+    # Write JSON report to diagnostics/
+    diagnostics_dir = reports_dir / "diagnostics"
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    rep_path = diagnostics_dir / "eda_report.json"
     rep_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     # Write human-readable summary
@@ -578,7 +589,7 @@ def run():
     )
     md_lines.append(f"Standardisation verdict: {std_verdict['recommendation']}")
 
-    summary_path = reports_dir / "eda_summary.md"
+    summary_path = diagnostics_dir / "eda_summary.md"
     summary_path.write_text("\n".join(md_lines), encoding="utf-8")
 
     # Update SKILL_STATE.json using SkillStateStore (safe, validated)
@@ -756,11 +767,13 @@ def run():
         raise
 
     # Print clean summary
-    print("EDA complete — report written to:", rep_path)
-    print("Summary written to:", summary_path)
-    print("Zero-variance features:", zero_variance)
-    print("Near-zero variance:", near_zero_variance)
-    print("High-correlation pairs:", len(high_corr_pairs))
+    print(f"  [OK] EDA report written to: {rep_path}")
+    print(f"  [OK] Summary written to: {summary_path}")
+    print("  - Features count:", feature_count)
+    print("  - Zero-variance features:", zero_variance)
+    print("  - Near-zero variance:", near_zero_variance)
+    print("  - High-correlation pairs:", len(high_corr_pairs))
+    print("  - Missing value cells:", total_nulls)
 
 
 if __name__ == "__main__":

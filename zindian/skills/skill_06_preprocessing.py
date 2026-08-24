@@ -130,6 +130,9 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Updated state dict with cleaning metadata written.
     """
+    print("=" * 60)
+    print("SKILL 06 — Data Preprocessing")
+    print("=" * 60)
     # -- Read EDA state ----------------------------------------------
     eda = state.get("eda", {})
     mnar_columns: List[str] = eda.get("mnar_columns", [])
@@ -181,5 +184,17 @@ def run(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     # Surface cleaned matrices back to state for downstream skills
     state["X_train_clean"] = train
     state["X_test_clean"] = test
+
+    # Print preprocessing summary
+    print(f"  - MNAR columns indicators created ({len(indicators)}): {indicators}")
+    print(f"  - MCAR columns imputed ({len(impute_values)}):")
+    for col, val in list(impute_values.items())[:10]:
+        print(f"    * `{col}` -> imputed with {val}")
+    if len(impute_values) > 10:
+        print(f"    * ... and {len(impute_values) - 10} more columns")
+    print(f"  - Constant columns dropped ({len(const_both)}): {const_both}")
+    print(f"  - Train shape change: {list(_x_train_raw.shape)} -> {list(train.shape)}")
+    print(f"  - Test shape change: {list(_x_test_raw.shape)} -> {list(test.shape)}")
+    print("[OK] Preprocessing completed.")
 
     return state

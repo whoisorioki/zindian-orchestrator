@@ -18,7 +18,9 @@ Commands
 
 What it writes
 --------------
-- `competitions/<slug>/reports/phase_1_summary.json`
+- `competitions/<slug>/reports/summaries/phase_1_summary.json`
+- `competitions/<slug>/reports/summaries/phase_<N>_summary.md` (and `<phase>_summary.json`)
+- `competitions/<slug>/reports/sessions/startup_*.jsonl` (session-scoped event logs)
 - `competitions/<slug>/reports/experiments.db` when the ledger is initialized through the reporter path
 
 Current implementation notes

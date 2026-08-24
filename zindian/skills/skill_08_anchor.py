@@ -114,6 +114,8 @@ def compute_oof_predictions(
     Returns (oof_preds, test_preds, oof_logloss, oof_auc, oof_f1, best_threshold).
     Computes F1 using optimal threshold (challenge metric).
     """
+    if state is None:
+        state = {}
     if random_seed is None:
         random_seed = get_seed()
 
@@ -121,10 +123,11 @@ def compute_oof_predictions(
     id_col = config.get("id_col") or config.get("id_column") or cols_cfg.get("id", "ID")
 
     # Resolve active CV strategy from state override first, then config.
-    state = state or {}
-    override_active = state.get("cv_strategy_override", {}).get("active", False)
+    override_active = (state.get("cv_strategy_override") or {}).get("active", False)
     if override_active:
-        active_strategy = state.get("cv_strategy_override", {}).get("override_strategy")
+        active_strategy = (state.get("cv_strategy_override") or {}).get(
+            "override_strategy"
+        )
     else:
         active_strategy = config.get("cv_strategy", {}).get("type")
     if not active_strategy:
@@ -141,7 +144,7 @@ def compute_oof_predictions(
     feature_count = len(feature_cols)
 
     # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
-    anchor_challenge = state.get("anchor_challenge", {})
+    anchor_challenge = state.get("anchor_challenge", {}) or {}
     model_family = "lightgbm"
     model_params = {"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed}
     if anchor_challenge.get("active", False):
@@ -576,8 +579,8 @@ def run(
             "n_splits": n_splits,
             "threshold": float(best_t),
             "active_strategy": (
-                state.get("cv_strategy_override", {}).get("override_strategy")
-                if state.get("cv_strategy_override", {}).get("active", False)
+                (state.get("cv_strategy_override") or {}).get("override_strategy")
+                if (state.get("cv_strategy_override") or {}).get("active", False)
                 else config.get("cv_strategy", {}).get("type")
             ),
             "fold_scores": fold_scores_list,
@@ -962,6 +965,8 @@ def _run_multi_target(
         md5_target_hash=md5_target_hash,
         anchor_oof_score=avg_score,
         anchor_multi_target_metrics=all_metrics,
+        anchor_git_branch="anchor-baseline",
+        anchor_cv_strategy_id=cv_strategy_id,
         dag_phase="phase_2_anchor_confirmed",
         last_updated=datetime.now(timezone.utc).isoformat(),
     )

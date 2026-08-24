@@ -430,9 +430,12 @@ def run_librarian(
       - literature_cache.json — raw search results
       - domain_hypotheses.json — extracted feature hypotheses
     """
+    print("=" * 60)
+    print("SKILL 18 — The Librarian")
+    print("=" * 60)
     if _SS_CLIENT is None:
         print(
-            "[Librarian] WARNING: Semantic Scholar client not initialized. "
+            "  [WARN] Semantic Scholar client not initialized. "
             "No search will be performed."
         )
 
@@ -483,22 +486,43 @@ def run_librarian(
         "entries": entries,
     }
 
+    paths = resolve_competition_paths(require_competition=False)
     if cache_path is None:
-        paths = resolve_competition_paths(require_competition=True)
-        cache_path = str(paths.reports_dir / "literature_cache.json")
+        reports_dir = getattr(paths, "reports_dir", None)
+        if reports_dir:
+            cache_path = str(reports_dir / "literature_cache.json")
+        else:
+            cache_path = "literature_cache.json"
 
+    # Write legacy literature cache
     Path(cache_path).write_text(json.dumps(cache, indent=2))
-    print(f"[Librarian] Cached {len(entries)} unique abstracts → {cache_path}")
+    print(f"  [OK] literature_cache.json written -> {cache_path}")
 
+    # Write categorized literature cache
+    reports_dir = getattr(paths, "reports_dir", None)
+    if reports_dir:
+        diagnostics_dir = reports_dir / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        cache_path_cat = diagnostics_dir / "literature_cache.json"
+        cache_path_cat.write_text(json.dumps(cache, indent=2))
+        print(f"  [OK] literature_cache.json written -> {cache_path_cat}")
+
+    # Write legacy domain hypotheses
     domain_hypotheses_path = Path(cache_path).with_name("domain_hypotheses.json")
     domain_hypotheses = _build_domain_hypotheses(entries)
     domain_hypotheses_path.write_text(
         json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
     )
-    print(
-        f"[Librarian] Wrote {len(domain_hypotheses)} domain hypotheses "
-        f"→ {domain_hypotheses_path}"
-    )
+    print(f"  [OK] domain_hypotheses.json written -> {domain_hypotheses_path}")
+
+    # Write categorized domain hypotheses
+    if reports_dir:
+        diagnostics_dir = reports_dir / "diagnostics"
+        domain_hypotheses_path_cat = diagnostics_dir / "domain_hypotheses.json"
+        domain_hypotheses_path_cat.write_text(
+            json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
+        )
+        print(f"  [OK] domain_hypotheses.json written -> {domain_hypotheses_path_cat}")
 
     return cache
 

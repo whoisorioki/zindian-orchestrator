@@ -198,7 +198,9 @@ def test_heavy_diagnostics_in_report_not_in_state(tmp_path, monkeypatch):
     competition_dir = tmp_path / "competitions" / slug
 
     # The 5 heavy keys must be in eda_report.json
-    report = json.loads((competition_dir / "reports" / "eda_report.json").read_text())
+    report = json.loads(
+        (competition_dir / "reports" / "diagnostics" / "eda_report.json").read_text()
+    )
     for key in _HEAVY_KEYS:
         assert (
             key in report
@@ -210,7 +212,7 @@ def test_heavy_diagnostics_in_report_not_in_state(tmp_path, monkeypatch):
     for key in _HEAVY_KEYS:
         assert key not in eda_state, (
             f"Heavy key '{key}' found in SKILL_STATE.json['eda'] — it should be "
-            f"in reports/eda_report.json only (A6-B violation)"
+            f"in reports/diagnostics/eda_report.json only (A6-B violation)"
         )
 
 

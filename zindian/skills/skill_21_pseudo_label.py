@@ -813,12 +813,16 @@ def run(
             }
         )
 
-        # Persist per-iteration OOF artifact for downstream consumption.
-        reports_dir = paths.reports_dir
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        # Persist per-iteration OOF artifact under diagnostics/predictions/
+        predictions_dir = paths.reports_dir / "diagnostics" / "predictions"
+        predictions_dir.mkdir(parents=True, exist_ok=True)
         suffix = "_augmented" if retraining_required else ""
-        oof_iter_path = reports_dir / f"oof_probs_pseudo_iter{iteration}{suffix}.csv"
-        test_iter_path = reports_dir / f"test_probs_pseudo_iter{iteration}{suffix}.csv"
+        oof_iter_path = (
+            predictions_dir / f"oof_probs_pseudo_iter{iteration}{suffix}.csv"
+        )
+        test_iter_path = (
+            predictions_dir / f"test_probs_pseudo_iter{iteration}{suffix}.csv"
+        )
         pd.DataFrame(
             {str(id_column): train[id_column].values, "oof_prob": oof_labelled}
         ).to_csv(oof_iter_path, index=False)
@@ -1118,7 +1122,7 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
                     "augmented"
                 ):
                     original_key = f"branch_{branch_name}_{t_name}_oof"
-                    augmented_key = f"branch_{branch_name}_{t_name}_augmented_oof"
+                    augmented_key = f"branch_{branch_name}_{t_name}_oof_augmented"
                     if original_key in state:
                         store.update(**{augmented_key: state.get(original_key)})
                         print(

@@ -6,8 +6,8 @@ fold-level TreeSHAP importances, and evaluates a lightweight correlation-pruning
 wrapper using the active gate metric.
 
 Outputs:
-  - competitions/<slug>/reports/shap_analysis.json
-  - competitions/<slug>/reports/shap_summary.md
+  - competitions/<slug>/reports/audits/shap_analysis.json
+  - competitions/<slug>/reports/audits/shap_summary.md
 
 Usage:
   python3 -m zindian.skills.skill_10_shap
@@ -53,6 +53,15 @@ def _load_train_frame(
     if paths.competition_dir is None:
         raise FileNotFoundError("Competition directory could not be resolved")
 
+    # Resolve variant_name from state if None
+    if not variant_name:
+        try:
+            store = SkillStateStore(paths.state_path)
+            state = store.read()
+            variant_name = state.get("anchor_git_branch") or "anchor-baseline"
+        except Exception:
+            variant_name = "anchor-baseline"
+
     if variant_name:
         variant_file = (
             paths.competition_dir
@@ -62,6 +71,17 @@ def _load_train_frame(
         )
         if variant_file.exists():
             return pd.read_csv(variant_file)
+
+    # Fallback to anchor-baseline features if different from variant_name
+    if variant_name != "anchor-baseline":
+        anchor_file = (
+            paths.competition_dir
+            / "data"
+            / "processed"
+            / "features_train_anchor-baseline.csv"
+        )
+        if anchor_file.exists():
+            return pd.read_csv(anchor_file)
 
     full = paths.competition_dir / "data" / "processed" / "features_full_train.csv"
     processed = paths.competition_dir / "data" / "processed" / "features_train.csv"
@@ -556,18 +576,33 @@ def _build_pruned_feature_set(
 def _write_outputs(
     paths: CompetitionPaths, report: dict, summary_lines: Iterable[str]
 ) -> None:
-    paths.reports_dir.mkdir(parents=True, exist_ok=True)
-    report_path = paths.reports_dir / "shap_analysis.json"
-    summary_path = paths.reports_dir / "shap_summary.md"
-    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
-    print(f"OK SHAP report written -> {report_path}")
-    print(f"OK SHAP summary written -> {summary_path}")
+    reports_dir = getattr(paths, "reports_dir", None)
+    if not reports_dir:
+        print(
+            "  [WARN] paths.reports_dir not available, skipping writing SHAP outputs."
+        )
+        return
+    audits_dir = reports_dir / "audits"
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    report_path = audits_dir / "shap_analysis.json"
+    summary_path = audits_dir / "shap_summary.md"
+
+    report_json = json.dumps(report, indent=2)
+    summary_md = "\n".join(summary_lines)
+
+    report_path.write_text(report_json, encoding="utf-8")
+    summary_path.write_text(summary_md, encoding="utf-8")
+
+    print(f"  [OK] SHAP report written -> {report_path}")
+    print(f"  [OK] SHAP summary written -> {summary_path}")
 
 
 def run(
     n_splits: int = 5, seed: int | None = None, variant_name: str | None = None
 ) -> dict:
+    print("=" * 60)
+    print("SKILL 10 — Governed SHAP Audit")
+    print("=" * 60)
     if not SHAP_AVAILABLE:
         return {
             "status": "SKIPPED",

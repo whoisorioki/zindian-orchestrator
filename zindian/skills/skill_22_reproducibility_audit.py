@@ -521,16 +521,29 @@ def run(slug: str | None = None) -> dict[str, Any]:
     if paths.state_path and paths.state_path.exists():
         state_store = SkillStateStore(paths.state_path)
         state = state_store.read()
-        state["reproducibility_audit"] = {
+        audit_dict = {
             "success": success,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+        state["reproducibility_audit"] = audit_dict
         state_store.write(state)
+
+        # Write to categorized audits directory
+        reports_dir = getattr(paths, "reports_dir", None)
+        if reports_dir:
+            audits_dir = reports_dir / "audits"
+            audits_dir.mkdir(parents=True, exist_ok=True)
+            audit_json_path = audits_dir / "reproducibility_audit.json"
+            audit_json_path.write_text(
+                json.dumps(audit_dict, indent=2), encoding="utf-8"
+            )
+            print(f"  [OK] reproducibility_audit.json written -> {audit_json_path}")
 
     if success:
         try:
             config: dict[str, Any] = {}
-            if paths.competition_dir:
+            competition_dir = getattr(paths, "competition_dir", None)
+            if competition_dir:
                 try:
                     config = ChallengeConfig.load()._data
                 except Exception:

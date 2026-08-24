@@ -59,6 +59,10 @@ zindian-orchestrator/
 │       ├── data/
 │       ├── notebooks/
 │       └── reports/
+│           ├── audits/          ← policy, legality, SHAP, governance, reproducibility
+│           ├── diagnostics/     ← EDA, hypotheses (+ predictions/ for pseudo-label CSVs)
+│           ├── summaries/       ← phase summary Markdown/JSON
+│           └── sessions/        ← session-scoped startup event logs
 ├── docs/                             ← Standardized documentation
 │   ├── source_of_truth.md            ← Authoritative specification v2.3
 │   ├── orchestrator_overview.md      ← System architecture & design overview

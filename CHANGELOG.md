@@ -2,6 +2,31 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.4-reporting-logs-2026-08-24]
+
+### Added
+- **Reporting & logging optimization audit** (`docs/reporting_logging_audit.md`): Consolidated investigation of report folder flooding, log organization, and a phase-by-phase SWOT; records Recommendation B (logs/) as the selected path and Recommendation A (report-root cleanup) as largely applied to the writers, with cleanup residue tracked.
+- **Session-scoped event logging** (`skill_15_reporter.py`): Startup events now write to `reports/sessions/startup_*.jsonl` and `reports/sessions/skill_15_error.jsonl` instead of polluting the long-term history log.
+
+### Changed
+- **Categorized report output paths (dual-writes removed):**
+  - `skill_03` → `reports/audits/feature_policy.json` + `reports/audits/legality_report.md`.
+  - `skill_04` → `reports/diagnostics/eda_report.json` + `reports/diagnostics/eda_summary.md`.
+  - `skill_10` → `reports/audits/shap_analysis.json` + `reports/audits/shap_summary.md`.
+  - `skill_15` → `reports/summaries/phase_<N>_summary.md` + `reports/summaries/<phase>_summary.json`.
+  - `skill_21` → pseudo-label prediction CSVs under `reports/diagnostics/predictions/`.
+- **Reader/writer path alignment:** `zindian/orchestrator.py` `policy_gate` now reads `reports/audits/feature_policy.json` (was root `reports/feature_policy.json`), and `skill_03` records `feature_policy_written` with the categorized path — fixing a root-vs-categorized mismatch introduced by the consolidation.
+- **Stale docstrings updated** in `skill_03_legality.py`, `skill_04_eda.py`, `skill_10_shap.py` to reference categorized paths.
+- **Test assertion migration:** `tests/test_deep_research_scaffolds.py` now asserts `reports/audits/feature_policy.json` and `reports/audits/legality_report.md` (was root paths).
+
+### Documentation
+- `AGENTS.md`: Rewrote the "SKILL_STATE.json vs reports/ — Design Boundary" table to categorized paths and added the categorized subdirectory convention + reader/writer path rule.
+- `docs/source_of_truth.md`: Updated all state-hygiene examples and gate criteria to categorized paths; added the categorized report layout section.
+- `README.md`: Project structure now lists `reports/` categorized subdirectories.
+- `docs/quick_start.md`: Updated the Skill & Phase Architecture Matrix rows for skill_03/04/10/15/17/22 to the categorized output paths (removed stale "dual-written" claims).
+- `docs/cli_integration_guide.md`: `report` subcommand description now points at `reports/summaries/<phase>_summary.json` (removed the root backward-compatible claim).
+- `docs/orchestrator_overview.md`: File-structure tree now includes `reports/diagnostics/predictions/`.
+
 ## [v2.4-docs-update-2026-08-04]
 
 ### Added

@@ -43,6 +43,9 @@ def _get_nb_factor(
 
 
 def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    print("=" * 60)
+    print("SKILL 12 — Metric Analysis")
+    print("=" * 60)
     in_memory = state is not None
     if not in_memory:
         paths = resolve_competition_paths(require_competition=True)
@@ -294,6 +297,14 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
         state_store.update(metric_analysis=metric_analysis)
     else:
         state["metric_analysis"] = metric_analysis
+    print(f"  - Active branch: {active_branch}")
+    print(f"  - Number of splits K: {K}")
+    print(f"  - OOF score: {oof_score}")
+    print(f"  - LB score: {lb_score}")
+    print(f"  - OOF-vs-LB delta: {oof_vs_lb_delta}")
+    print(f"  - Fold score sample variance (ddof=1): {fold_score_variance_sample:.6g}")
+    print(f"  - Nadeau-Bengio corrected variance: {fold_score_variance_nb:.6g}")
+    print(f"  - Recommended classification threshold: {recommended_threshold:.4f}")
     print(f"[OK] metric_analysis written (variance ddof=1 = {fold_score_variance:.6g})")
     return state if in_memory else metric_analysis
 

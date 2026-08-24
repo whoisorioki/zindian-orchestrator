@@ -12,9 +12,10 @@
    - [Group B: Phase Execution & Monitoring](#group-b-phase-execution--monitoring)
    - [Group C: Reproducibility & Validation](#group-c-reproducibility--validation)
    - [Group D: Submissions & Leaderboards](#group-d-submissions--leaderboards)
-4. [Command Development Pattern](#command-development-pattern)
-5. [Testing Commands](#testing-commands)
-6. [Common CLI Patterns](#common-cli-patterns)
+4. [Externalized Skill Logging](#externalized-skill-logging)
+5. [Command Development Pattern](#command-development-pattern)
+6. [Testing Commands](#testing-commands)
+7. [Common CLI Patterns](#common-cli-patterns)
 
 ---
 
@@ -24,7 +25,11 @@
 ```bash
 cd path/to/zindian-orchestrator
 
-# Option 1: Set competition via environment variable
+# Option 1: Pass competition context directly via command line (Globally Supported)
+python -m zindian.cli phase 1 --competition ey-biodiversity-challenge
+python -m zindian.cli status -c ey-biodiversity-challenge
+
+# Option 2: Set competition via environment variable
 # Unix/macOS:
 export ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
 # Windows PowerShell:
@@ -32,7 +37,7 @@ $env:ZINDIAN_COMPETITION="world-cup-2026-goal-prediction-challenge"
 # Windows CMD:
 set ZINDIAN_COMPETITION=world-cup-2026-goal-prediction-challenge
 
-# Option 2: Run from competition directory (auto-detects)
+# Option 3: Run from competition directory (auto-detects)
 cd competitions/world-cup-2026-goal-prediction-challenge
 
 # Execute CLI via python module syntax
@@ -47,25 +52,28 @@ If the console script is not available in a source checkout, `python -m zindian.
 ## Competition Context Resolution
 
 The system resolves competition context in this order:
-1. **Current Working Directory (CWD)**: Auto-detects if running inside `competitions/<slug>/`.
-2. **Environment Variable**: `ZINDIAN_COMPETITION` or `COMPETITION_SLUG` or `ZINDIAN_COMPETITION_SLUG`.
-3. **`.env` file**: Parses `.env` from repository root for `ZINDIAN_COMPETITION=<slug>` or `COMPETITION_SLUG=<slug>`.
-4. **Auto-detect Fallback**: Fallback to resolving the active folder if only one competition folder with a state file is present.
-5. **Fallback error** if none are found.
+1. **Explicit Option/Arguments (Globally Supported)**: `--competition <slug>`, `--slug <slug>`, or `-c <slug>` passed directly to the subcommand.
+2. **Current Working Directory (CWD)**: Auto-detects if running inside `competitions/<slug>/`.
+3. **Environment Variable**: `ZINDIAN_COMPETITION` or `COMPETITION_SLUG` or `ZINDIAN_COMPETITION_SLUG`.
+4. **`.env` file**: Parses `.env` from repository root for `ZINDIAN_COMPETITION=<slug>` or `COMPETITION_SLUG=<slug>`.
+5. **Auto-detect Fallback**: Fallback to resolving the active folder if only one competition folder with a state file is present.
+6. **Fallback error** if none are found.
+
+Whenever a competition argument is supplied explicitly via the CLI, the orchestrator automatically injects and overrides the environment variables (`ZINDIAN_COMPETITION`, `COMPETITION_SLUG`, `ZINDIAN_COMPETITION_SLUG`) with the resolved slug so that all downstream scripts, subprocesses, and path lookups seamlessly run in that context.
 
 ---
 
 ## Unified Console Commands (21 Commands)
 
-The Zindian CLI exposes exactly 21 commands, grouped logically by their role in the Competition Data Lifecycle.
+The Zindian CLI exposes exactly 21 commands, grouped logically by their role in the Competition Data Lifecycle. All subcommands accept the global `--competition`, `--slug`, and `-c` parameters.
 
 ### Group A: Intake & Initialization
 
 #### 1. `bootstrap` - Setup Competition Folder
 ```bash
-python -m zindian.cli bootstrap <slug> [--move-files] [--yes]
+python -m zindian.cli bootstrap <slug> [--name <name>]
 ```
-*   **Description:** Creates the directory tree, writes templates for `challenge_config.json` and `SKILL_STATE.json` if missing, and optionally moves known root datasets.
+*   **Description:** Creates the directory tree under `competitions/<slug>/`, writes templates for `challenge_config.json` and `SKILL_STATE.json` using the sanitized slug and optional name, updates `.env` with the active slug and name, and registers the environment state.
 
 #### 2. `init-ledger` - Initialize experiments database
 ```bash
@@ -75,9 +83,9 @@ python -m zindian.cli init-ledger
 
 #### 3. `preflight` - Run compliance checks
 ```bash
-python -m zindian.cli preflight [--competition <path>]
+python -m zindian.cli preflight [--competition <path>] [--non-interactive]
 ```
-*   **Description:** Validates project state, files, gate keys, and schemas under `INIT` or `ENFORCE` modes.
+*   **Description:** Validates project state, files, gate keys, and schemas under `INIT` or `ENFORCE` modes. Pass `--non-interactive` to skip interactive prompts.
 
 #### 4. `preflight-sim` - Run preflight simulations
 ```bash
@@ -97,9 +105,9 @@ python -m zindian.cli sync
 
 #### 6. `phase` - Execute Pipeline Phase
 ```bash
-python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--verbose] [--variant <name>] [--non-interactive]
+python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--competition <path/slug>] [--verbose] [--variant <name>] [--non-interactive]
 ```
-*   **Description:** Executes a complete pipeline phase with all corresponding skills.
+*   **Description:** Executes a complete pipeline phase with all corresponding skills. Target a specific competition slug/path using `--competition`, `--slug`, or `-c`.
 *   **`--variant <name>` Behavior Across Phases**:
     - **Phase 2B**: In Anchor Mode (without `--variant`), trains anchor baseline (`skill_08`) and prompts Gate 1. In Variant Mode (`--variant <name>`), checks Gate 1, skips anchor training, generates variant features & model (`skill_07`), registers sidecar `variants/<name>.json`, and prompts Gate 2 (`human_gate_2_<name>_approved`).
     - **Phase 3A**: Loads `features_train_<name>.csv` and sidecar `variants/<name>.json` for targeted SHAP leak detection (`skill_10`), calibration (`skill_09`), and gate evaluation (`skill_11`).
@@ -121,7 +129,7 @@ python -m zindian.cli monitor
 ```bash
 python -m zindian.cli report
 ```
-*   **Description:** Generates `reports/phase_<N>_summary.json` containing configuration, state, and ledger stats.
+*   **Description:** Generates consolidated Markdown summaries under `reports/summaries/phase_<N>_summary.md` (with embedded JSON metadata) and their JSON counterparts under `reports/summaries/<phase>_summary.json`.
 
 ---
 
@@ -193,9 +201,9 @@ python -m zindian.cli leaderboard [--per-page N]
 
 #### 20. `archive` - Archive completed competition
 ```bash
-python -m zindian.cli archive <slug>
+python -m zindian.cli archive <slug> [--delete]
 ```
-*   **Description:** Wraps `scripts/archive_competition.sh` to compress the competition folder while excluding raw dataset files to conserve space.
+*   **Description:** Wraps `scripts/archive_competition.sh` to compress the competition folder while excluding raw dataset files to conserve space. Pass `--delete` to remove the competition directory after successful archive.
 
 #### 21. `ledger` - Query experiments database
 ```bash
@@ -207,6 +215,16 @@ python -m zindian.cli ledger <experiments|submissions|best|passed|failed>
     - `best`: Show the best experiment.
     - `passed`: Show passed experiments.
     - `failed`: Show failed experiments.
+
+---
+
+## Externalized Skill Logging
+
+The Zindian Orchestrator implements an automatic logging redirection mechanism via a `Tee` wrapper. When any skill runs via the orchestrator (`run_skill` in `zindian/orchestrator.py`), its standard output (`sys.stdout`) and standard error (`sys.stderr`) streams are intercepted.
+
+- **Storage Location**: Logs are written to `competitions/<slug>/logs/<skill_name>.log` (split notation functions like `skill_03.policy_writer` are written to `skill_03_policy_writer.log`).
+- **Tee Behavior**: Messages are simultaneously printed to the active console terminal and saved to the skill-level log file, allowing for easy diagnostics while retaining interactive CLI feedback.
+- **Safety**: Subprocess executions inside the CLI are not affected, ensuring that only in-process skill executions are captured under their respective files.
 
 ---
 

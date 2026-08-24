@@ -16,8 +16,8 @@
 - `competitions/<slug>/SKILL_STATE.json` (for `planned_features` fallback)
 
 **Outputs:**
-- `competitions/<slug>/reports/feature_policy.json`
-- `competitions/<slug>/reports/legality_report.md`
+- `competitions/<slug>/reports/audits/feature_policy.json`
+- `competitions/<slug>/reports/audits/legality_report.md`
 - `competitions/<slug>/SKILL_STATE.json` fields updated: `legality_status`, `feature_policy_written`, `last_legality_checked` (and `dag_phase` only when advancing non-downgrading).
 
 **Behavior & Safety:**

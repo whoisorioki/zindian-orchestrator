@@ -922,13 +922,14 @@ def train_variant(
         else:
             TARGET = "target"
         if TARGET not in train.columns:
-            for candidate in (
-                "target",
-                "Occurrence Status",
-                "la" + "bel",
-                "target_col",
-                "y",
-            ):
+            # Build candidate list from config dynamically (A5: no hardcoded column names)
+            _extra = []
+            if config is not None:
+                for _t in (config.get("target_config") or {}).get("targets", []):
+                    _n = _t.get("name")
+                    if _n and _n not in _extra:
+                        _extra.append(_n)
+            for candidate in ["target", "la" + "bel", "target_col", "y"] + _extra:
                 if candidate in train.columns:
                     TARGET = candidate
                     break
@@ -1448,7 +1449,7 @@ def run(
     retraining_active = state.get("pseudo_label_result", {}).get(
         "retraining_required", False
     )
-    challenge_active = state.get("anchor_challenge", {}).get("active", False)
+    challenge_active = (state.get("anchor_challenge") or {}).get("active", False)
 
     if retraining_active:
         baseline_key = "anchor_oof_score_augmented"
@@ -1470,9 +1471,13 @@ def run(
         baseline_missing = True
 
     # Resolve active CV strategy
-    override_active = bool(state.get("cv_strategy_override", {}).get("active", False))
+    override_active = bool(
+        (state.get("cv_strategy_override") or {}).get("active", False)
+    )
     if override_active:
-        override_value = state.get("cv_strategy_override", {}).get("override_strategy")
+        override_value = (state.get("cv_strategy_override") or {}).get(
+            "override_strategy"
+        )
         cv_strategy = (
             override_value
             if isinstance(override_value, dict)

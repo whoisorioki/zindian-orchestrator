@@ -22,6 +22,16 @@ ROOT = _repo_root()
 TEMPLATES = ROOT / "templates"
 
 
+def sanitize_slug(slug: str) -> str:
+    """Normalize the slug: lowercase, replace underscores/spaces with hyphens, collapse consecutive hyphens, keep alphanumeric and hyphens."""
+    import re
+
+    s = slug.strip().lower().replace("_", "-").replace(" ", "-")
+    s = re.sub(r"[^a-z0-9\-]", "", s)
+    s = re.sub(r"-+", "-", s)
+    return s
+
+
 def write_json_atomic(path: Path, data: dict):
     tmp = path.with_suffix(path.suffix + ".tmp")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +70,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("slug", help="competition slug (e.g. ey-frogs)")
     parser.add_argument(
+        "--name",
+        help="Human-readable name of the competition",
+    )
+    parser.add_argument(
         "--move-files",
         action="store_true",
         help="Move detected root files into competition data/raw/",
@@ -71,22 +85,25 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
 
-    slug = args.slug
+    slug = sanitize_slug(args.slug)
+    name = args.name or slug.replace("-", " ").title()
     comp_dir = ROOT / "competitions" / slug
     raw = comp_dir / "data" / "raw"
     processed = comp_dir / "data" / "processed"
     notebooks = comp_dir / "notebooks"
     reports = comp_dir / "reports"
+    submissions = comp_dir / "submissions"
 
     # create directories
-    for d in (raw, processed, notebooks, reports):
+    for d in (raw, processed, notebooks, reports, submissions):
         d.mkdir(parents=True, exist_ok=True)
 
     # write challenge_config.json if missing
     challenge_path = comp_dir / "challenge_config.json"
     if not challenge_path.exists():
         tpl = load_template("challenge_config_template.json") or {}
-        tpl.setdefault("slug", slug)
+        tpl["slug"] = slug
+        tpl["name"] = name
         write_json_atomic(challenge_path, tpl)
         print(f"Wrote: {challenge_path}")
     else:
@@ -97,7 +114,7 @@ def main(argv=None):
     if not state_path.exists():
         tpl = load_template("SKILL_STATE_template.json") or {}
         # ── Pre-Phase-1 seeds: everything needed before skill_01 runs ──
-        tpl["competition"] = slug
+        tpl["competition"] = name
         tpl["competition_slug"] = slug
         tpl["dag_phase"] = "phase_1_integrity_locked"
         tpl["last_updated"] = datetime.now(timezone.utc).isoformat()
@@ -148,42 +165,52 @@ def main(argv=None):
             )
 
     # Update .env with the competition slug
-    _update_env_slug(slug)
+    _update_env_slug(slug, name)
 
     print(f"Bootstrap complete for slug: {slug}")
     print(f"Competition folder: {comp_dir}")
     return 0
 
 
-def _update_env_slug(slug: str) -> None:
-    """Update ZINDIAN_COMPETITION_SLUG in .env to point to this competition."""
+def _update_env_slug(slug: str, name: str) -> None:
+    """Update ZINDIAN_COMPETITION_SLUG and ZINDIAN_COMPETITION_NAME in .env."""
     env_path = ROOT / ".env"
     if not env_path.exists():
-        print("  ⚠️  No .env file found — skipping slug update")
+        print("  ⚠️  No .env file found — skipping env update")
         return
 
     lines = env_path.read_text(encoding="utf-8").splitlines()
-    updated = False
     new_lines = []
+
+    slug_updated = False
+    name_updated = False
+
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("ZINDIAN_COMPETITION_SLUG=") or stripped.startswith(
             "COMPETITION_SLUG="
         ):
             new_lines.append(f"ZINDIAN_COMPETITION_SLUG={slug}")
-            updated = True
+            slug_updated = True
         elif stripped.startswith("ZINDIAN_COMPETITION="):
             new_lines.append(f"ZINDIAN_COMPETITION={slug}")
-            updated = True
+            slug_updated = True
+        elif stripped.startswith("ZINDIAN_COMPETITION_NAME=") or stripped.startswith(
+            "COMPETITION_NAME="
+        ):
+            new_lines.append(f"ZINDIAN_COMPETITION_NAME={name}")
+            name_updated = True
         else:
             new_lines.append(line)
 
-    if not updated:
-        # Append if no existing slug var found
+    if not slug_updated:
         new_lines.append(f"ZINDIAN_COMPETITION_SLUG={slug}")
+    if not name_updated:
+        new_lines.append(f"ZINDIAN_COMPETITION_NAME={name}")
 
     env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     print(f"  ✅ .env ZINDIAN_COMPETITION_SLUG set to: {slug}")
+    print(f"  ✅ .env ZINDIAN_COMPETITION_NAME set to: {name}")
 
 
 if __name__ == "__main__":

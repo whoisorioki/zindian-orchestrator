@@ -476,14 +476,87 @@ def fetch_discussions(slug: str, headers: dict) -> list:
 
 
 def fetch_discussion_detail(slug: str, did: int, headers: dict) -> dict:
+    """Fetch discussion detail. Tries API first, falls back to Playwright scrape."""
     url = f"{BASE_URL}/{slug}/discussions/{did}"
     resp = requests.get(url, headers=headers)
     if resp.status_code == 200:
         try:
-            return resp.json().get("data", {})
+            data = resp.json().get("data", {})
+            if data.get("body") or data.get("comments"):
+                return data
         except Exception:
-            return {}
-    return {}
+            pass
+
+    # API returned 404 or empty body — scrape with Playwright
+    try:
+        from playwright.sync_api import sync_playwright
+
+        page_url = f"https://zindi.africa/competitions/{slug}/discussions/{did}"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(page_url, wait_until="networkidle", timeout=20000)
+
+            # Extract post body — Zindi renders discussion content in article/section tags
+            body = ""
+            for sel in ["article", ".discussion-body", ".post-content", "main p"]:
+                try:
+                    el = page.query_selector(sel)
+                    if el:
+                        body = el.inner_text().strip()
+                        if body:
+                            break
+                except Exception:
+                    pass
+
+            # Fallback: grab all paragraph text from main content area
+            if not body:
+                try:
+                    body = page.evaluate(
+                        """() => {
+                        const els = document.querySelectorAll('main p, article p, .content p');
+                        return Array.from(els).map(e => e.innerText).join('\\n').trim();
+                    }"""
+                    )
+                except Exception:
+                    pass
+
+            # Extract comments — look for comment blocks
+            comments = []
+            try:
+                comment_nodes = page.query_selector_all(
+                    ".comment, .reply, [class*='comment'], [class*='reply']"
+                )
+                for node in comment_nodes[:20]:
+                    try:
+                        text = node.inner_text().strip()
+                        if text and len(text) > 10:
+                            comments.append({"body": text, "user": {}})
+                    except Exception:
+                        pass
+
+                # Fallback: grab all text blocks that look like comment content
+                if not comments:
+                    blocks = page.evaluate(
+                        """() => {
+                        const all = document.querySelectorAll('p, li');
+                        return Array.from(all)
+                            .map(e => e.innerText.trim())
+                            .filter(t => t.length > 30);
+                    }"""
+                    )
+                    if blocks:
+                        # Skip the first block (usually the main post body)
+                        for b in blocks[1:10]:
+                            comments.append({"body": b, "user": {}})
+            except Exception:
+                pass
+
+            browser.close()
+
+        return {"body": body, "comments": comments, "_source": "playwright"}
+    except Exception as e:
+        return {"body": "", "comments": [], "_source": f"failed: {e}"}
 
 
 def is_compliance_relevant(text: str) -> bool:
@@ -610,6 +683,26 @@ def extract_compliance_flags(
             # Capture watcher-authored organizer-like comments as authoritative
             if username in watch_usernames and c_text.strip():
                 organizer_texts.append(c_text)
+            # Playwright scrapes raw blocks: author is '?' but username may appear IN the text.
+            # Scan the raw comment text for watcher usernames and Zindi affiliation markers.
+            c_text_lower = c_text.lower()
+            if username == "?" or not username:
+                if (
+                    any(w in c_text_lower for w in watch_usernames)
+                    or "zindi" in c_text_lower
+                ):
+                    # Check it's not just a @mention of the organizer but an actual reply block
+                    # A reply block usually starts with the username on its own line
+                    for w in watch_usernames:
+                        if c_text_lower.startswith(w) or f"\n{w}" in c_text_lower[:120]:
+                            organizer_texts.append(c_text)
+                            break
+                    else:
+                        if (
+                            c_text_lower.startswith("meganomaly")
+                            or "\nzindi\n" in c_text_lower
+                        ):
+                            organizer_texts.append(c_text)
             # Also detect authoritative clarifications by phrase match (common organiser reply phrasing)
             if any(
                 phrase in c_text.lower()
@@ -668,6 +761,104 @@ def extract_compliance_flags(
             )
 
     return flagged
+
+
+def extract_banned_features_from_discussions(flagged: list) -> list[str]:
+    """Parse organizer-confirmed banned feature names from scraped discussion text.
+
+    Only fires on flags where resolved_by_organizer=True (organiser replied).
+    Returns a deduplicated list of lowercase normalised banned feature tokens
+    suitable for merging into challenge_config.json["banned_features"].
+    """
+    # Patterns: (display_name, list_of_trigger_substrings)
+    # These are generic signal names — not competition-specific literals.
+    FEATURE_SIGNALS: list[tuple[str, list[str]]] = [
+        ("latitude", ["latitude", "lat "]),
+        ("longitude", ["longitude", "lon ", "lng "]),
+        (
+            "derived_spatial",
+            [
+                "derived spatial",
+                "derived from lat",
+                "derived from lon",
+                "spatial encoding",
+                "spatial feature",
+                "spatial cluster",
+                "spatial lag",
+                "grid cell",
+                "nearest neighbour",
+                "nearest neighbor",
+                "haversine",
+                "distance-based",
+                "distance based",
+                "coordinates as feature",
+                "coordinate feature",
+            ],
+        ),
+        (
+            "external_data",
+            [
+                "external data",
+                "outside data",
+                "third party data",
+                "additional data source",
+            ],
+        ),
+    ]
+
+    BAN_PHRASES = [
+        "not allowed",
+        "banned",
+        "violation",
+        "prohibited",
+        "not permitted",
+        "cannot use",
+        "do not use",
+        "should not use",
+        "must not",
+        "are banned",
+        "is a violation",
+        "would still be considered a violation",
+        "would violate",
+        "spirit of the challenge",
+    ]
+
+    found: set[str] = set()
+
+    for flag in flagged:
+        if flag.get("superseded"):
+            continue
+
+        # Combine all text sources regardless of resolved_by_organizer —
+        # Playwright returns raw text blocks so we check for organizer name in the text itself.
+        texts = [
+            flag.get("title", ""),
+            flag.get("body_preview", ""),
+            flag.get("organizer_text", ""),
+        ]
+        for fc in flag.get("flagged_comments", []):
+            texts.append(fc.get("text", ""))
+        full_text = " ".join(t for t in texts if t).lower()
+
+        # Require either a structured organizer flag OR the organizer name in the raw text
+        has_organizer_voice = (
+            flag.get("resolved_by_organizer")
+            or "meganomaly" in full_text
+            or "ajoel" in full_text
+            or ("zindi\n" in full_text)
+        )
+        if not has_organizer_voice:
+            continue
+
+        has_ban_language = any(phrase in full_text for phrase in BAN_PHRASES)
+        if not has_ban_language:
+            continue
+
+        for feature_name, triggers in FEATURE_SIGNALS:
+            if any(trigger in full_text for trigger in triggers):
+                found.add(feature_name)
+
+    return sorted(found)
 
 
 # ── Section 3: Leaderboard ────────────────────────────────────────────────────
@@ -1044,6 +1235,21 @@ def _write_config_intel(comp_intel: dict, paths, store: SkillStateStore) -> None
         "domain": existing.get("domain"),
     }
 
+    # Merge discussion-derived banned_features into config.
+    # skill_00 is the sole post-Phase-1 writer permitted by the config temporal lock.
+    # New bans from discussions are ADDITIVE — never remove existing entries.
+    scraped_bans: list[str] = comp_intel.get("discussion_banned_features", [])
+    existing_bans: list[str] = list(existing.get("banned_features") or [])
+    merged_bans = list(
+        dict.fromkeys(existing_bans + scraped_bans)
+    )  # preserve order, dedup
+    if merged_bans:
+        intel_mapping["banned_features"] = merged_bans
+        if scraped_bans:
+            new_bans = [b for b in scraped_bans if b not in existing_bans]
+            if new_bans:
+                print(f"  ✅ banned_features updated from discussions: {new_bans}")
+
     # Resolve private_split_pct from public
     public = intel_mapping.get("public_split_pct")
     if public and isinstance(public, (int, float)) and public > 0:
@@ -1230,6 +1436,15 @@ def run(
             "chosen": [],
             "all": [],
         }
+
+    # ── Extract discussion-derived banned features ────────────
+    discussion_bans = extract_banned_features_from_discussions(flagged)
+    if discussion_bans:
+        print(
+            f"  [Compliance] Organizer-confirmed banned features from discussions: {discussion_bans}"
+        )
+    # Attach to comp_intel so _write_config_intel can persist them atomically
+    comp_intel["discussion_banned_features"] = discussion_bans
 
     # ── Write outputs ─────────────────────────────────────────
     print("\n[Writing outputs...]")

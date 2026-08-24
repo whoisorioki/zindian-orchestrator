@@ -668,14 +668,26 @@ decision logic (not a human reading a report) need this value?" If no, it goes t
 
 | Skill | Heavy output (→ reports/) | Lean output (→ SKILL_STATE) |
 |-------|--------------------------|------------------------------|
-| skill_03 (L374–387) | `reports/feature_policy.json`, `reports/legality_report.md` | `legality_status`, `feature_policy_written`, `last_legality_checked` |
-| skill_10 (L749–761) | `reports/shap_analysis.json`, `reports/shap_summary.md` | `shap_top_features` (10-name list), `shap_feature_count`, `pruning_delta_f1`, `pruning_pass` |
-| skill_15 (L555) | `reports/phase_*.md`, `reports/phase_1_summary.json` | `last_reported` (timestamp only) |
-| skill_04 (v2.3 fix) | `reports/eda_report.json` (band_summary_stats, seasonal_amplitude, temporal_trends, target_correlation_per_feature, class_separability_index) | `temporal_index_confirmed`, `group_structure_confirmed` (booleans), `outlier_columns` (short list), `target_skew` (float) |
+| skill_03 (L279–329) | `reports/audits/feature_policy.json`, `reports/audits/legality_report.md` | `legality_status`, `feature_policy_written`, `last_legality_checked` |
+| skill_04 (v2.3 fix) | `reports/diagnostics/eda_report.json` + `reports/diagnostics/eda_summary.md` (band_summary_stats, seasonal_amplitude, temporal_trends, target_correlation_per_feature, class_separability_index) | `temporal_index_confirmed`, `group_structure_confirmed` (booleans), `outlier_columns` (short list), `target_skew` (float) |
+| skill_10 (L576–597) | `reports/audits/shap_analysis.json`, `reports/audits/shap_summary.md` | `shap_top_features` (10-name list), `shap_feature_count`, `pruning_delta_f1`, `pruning_pass` |
+| skill_15 (L667–724) | `reports/summaries/phase_*.md`, `reports/summaries/<phase>_summary.json`; session events → `reports/sessions/startup_*.jsonl` | `last_reported` (timestamp only) |
+
+**Categorized subdirectory convention (`reports/`):**
+
+- `reports/audits/` — policy/legality, SHAP leak audit, governance selections, reproducibility audit (skill_03, skill_10, skill_17, skill_22).
+- `reports/diagnostics/` — EDA reports, literature/domain hypotheses (skill_04, skill_18, skill_20).
+- `reports/diagnostics/predictions/` — OOF/test probability CSVs from the pseudo-label loop (skill_21).
+- `reports/summaries/` — phase summary Markdown + JSON (skill_15).
+- `reports/sessions/` — session-scoped event logs (startup JSONL, skill_15 error log).
 
 `skill_04` was the only skill violating this convention — previously writing five
 large per-band/per-feature dicts directly into `SKILL_STATE.json["eda"]`. Fixed in
 v2.3. If you find another skill doing this, treat it as the same class of bug.
+
+**Reader/writer path rule:** every consumer must read the same categorized path the
+writer used. Do not reintroduce root-level duplicate reads (e.g. reading
+`reports/feature_policy.json` when skill_03 writes `reports/audits/feature_policy.json`).
 
 ---
 

@@ -76,7 +76,7 @@ def test_scientist_two_stage_validation_and_ledger_blocking(
 
     frame = pd.DataFrame(
         {
-            "Occurrence Status": [0, 1] * 10,
+            "target": [0, 1] * 10,
             "ppt_mean": [0.0, 1.0] * 10,
         }
     )

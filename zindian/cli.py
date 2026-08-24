@@ -85,33 +85,59 @@ def main():
     parser = argparse.ArgumentParser(description="Zindian CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # Helper function to add competition context arguments to a subparser
+    def add_competition_args(p):
+        p.add_argument(
+            "--competition", "--slug", "-c", help="Competition folder path or slug"
+        )
+
     # ---------------------------------------------------------
     # Core Commands
     # ---------------------------------------------------------
     submit_parser = subparsers.add_parser("submit", help="Submit a file to Zindi")
     submit_parser.add_argument("file", help="Path to submission file")
+    add_competition_args(submit_parser)
 
-    subparsers.add_parser("submissions", help="Show submission board")
+    submissions_parser = subparsers.add_parser(
+        "submissions", help="Show submission board"
+    )
+    add_competition_args(submissions_parser)
 
     lb_parser = subparsers.add_parser("leaderboard", help="Show leaderboard")
     lb_parser.add_argument("--per-page", type=int, default=20, help="Number of entries")
+    add_competition_args(lb_parser)
 
     ledger_parser = subparsers.add_parser("ledger", help="Query experiments ledger")
     ledger_sub = ledger_parser.add_subparsers(dest="ledger_command")
-    ledger_sub.add_parser("experiments", help="Show all experiments")
-    ledger_sub.add_parser("submissions", help="Show all submissions")
-    ledger_sub.add_parser("best", help="Show best experiment")
-    ledger_sub.add_parser("passed", help="Show passed experiments")
-    ledger_sub.add_parser("failed", help="Show failed experiments")
+    ledger_exps = ledger_sub.add_parser("experiments", help="Show all experiments")
+    ledger_subs = ledger_sub.add_parser("submissions", help="Show all submissions")
+    ledger_best = ledger_sub.add_parser("best", help="Show best experiment")
+    ledger_passed = ledger_sub.add_parser("passed", help="Show passed experiments")
+    ledger_failed = ledger_sub.add_parser("failed", help="Show failed experiments")
 
-    subparsers.add_parser("monitor", help="Monitor Zindi competition")
-    subparsers.add_parser("report", help="Generate phase summary report")
+    # Add competition context to ledger and all its subcommand subparsers
+    add_competition_args(ledger_parser)
+    for sub in [ledger_exps, ledger_subs, ledger_best, ledger_passed, ledger_failed]:
+        add_competition_args(sub)
+
+    monitor_parser = subparsers.add_parser("monitor", help="Monitor Zindi competition")
+    add_competition_args(monitor_parser)
+
+    report_parser = subparsers.add_parser(
+        "report", help="Generate phase summary report"
+    )
+    add_competition_args(report_parser)
 
     audit_parser = subparsers.add_parser("audit", help="Run reproducibility audit")
-    audit_parser.add_argument("--slug", help="Competition slug")
+    add_competition_args(audit_parser)
 
-    subparsers.add_parser("status", help="Show current competition status")
-    subparsers.add_parser("sync", help="Sync state with git and Zindi")
+    status_parser = subparsers.add_parser(
+        "status", help="Show current competition status"
+    )
+    add_competition_args(status_parser)
+
+    sync_parser = subparsers.add_parser("sync", help="Sync state with git and Zindi")
+    add_competition_args(sync_parser)
 
     phase_parser = subparsers.add_parser("phase", help="Execute pipeline phase")
     phase_parser.add_argument(
@@ -120,15 +146,13 @@ def main():
         help="Phase to execute (1, 2A, 2B, 3A, 3B, 4)",
     )
     phase_parser.add_argument(
-        "--competition", "--slug", "-c", help="Competition folder path or slug"
-    )
-    phase_parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show detailed skill output"
     )
     phase_parser.add_argument("--variant", help="Variant name to pass to phase skills")
     phase_parser.add_argument(
         "--non-interactive", action="store_true", help="Run phase non-interactively"
     )
+    add_competition_args(phase_parser)
 
     # ---------------------------------------------------------
     # Utility Commands
@@ -138,6 +162,10 @@ def main():
     )
     bootstrap_parser.add_argument("slug", help="Competition slug (e.g. ey-frogs)")
     bootstrap_parser.add_argument(
+        "--name",
+        help="Human-readable name of the competition",
+    )
+    bootstrap_parser.add_argument(
         "--move-files",
         action="store_true",
         help="Move detected root files to data/raw/",
@@ -145,51 +173,69 @@ def main():
     bootstrap_parser.add_argument(
         "--yes", "-y", action="store_true", help="Assume yes for confirmations"
     )
+    add_competition_args(bootstrap_parser)
 
-    subparsers.add_parser(
+    init_ledger_parser = subparsers.add_parser(
         "init-ledger", help="Initialize the experiments ledger database"
     )
+    add_competition_args(init_ledger_parser)
 
     preflight_parser = subparsers.add_parser(
         "preflight", help="Run preflight compliance verification checks"
     )
     preflight_parser.add_argument(
-        "--competition", help="Competition folder path (e.g., competitions/ey-frogs)"
-    )
-    preflight_parser.add_argument(
         "--non-interactive", action="store_true", help="Run preflight non-interactively"
     )
+    add_competition_args(preflight_parser)
 
-    subparsers.add_parser(
+    preflight_sim_parser = subparsers.add_parser(
         "preflight-sim", help="Run preflight simulation checks (tmpcomp and ey-frogs)"
     )
-    subparsers.add_parser(
+    add_competition_args(preflight_sim_parser)
+
+    verify_state_parser = subparsers.add_parser(
         "verify-state", help="Verify the competition state files and datasets"
     )
-    subparsers.add_parser(
+    add_competition_args(verify_state_parser)
+
+    verify_phase_b_parser = subparsers.add_parser(
         "verify-phase-b", help="Verify Phase B package hardening assertions"
     )
-    subparsers.add_parser(
+    add_competition_args(verify_phase_b_parser)
+
+    write_oof_meta_parser = subparsers.add_parser(
         "write-oof-meta", help="Write per-OOF metadata JSON files alongside OOF CSVs"
     )
-    subparsers.add_parser(
+    add_competition_args(write_oof_meta_parser)
+
+    compile_requirements_parser = subparsers.add_parser(
         "compile-requirements",
         help="Compile pinned requirements.txt from requirements.in",
     )
+    add_competition_args(compile_requirements_parser)
 
     archive_parser = subparsers.add_parser(
         "archive", help="Archive a completed competition folder (excludes CSVs)"
     )
     archive_parser.add_argument("slug", help="Competition slug (e.g. ey-frogs)")
+    archive_parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="Delete the competition directory after archiving",
+    )
+    add_competition_args(archive_parser)
 
-    subparsers.add_parser(
+    audit_framework_parser = subparsers.add_parser(
         "audit-framework",
         help="Perform full framework audit of workspace, stubs, and venv",
     )
-    subparsers.add_parser(
+    add_competition_args(audit_framework_parser)
+
+    check_deployment_parser = subparsers.add_parser(
         "check-deployment",
         help="Check SKILL_STATE storage optimization and migration status",
     )
+    add_competition_args(check_deployment_parser)
 
     args = parser.parse_args()
 
@@ -197,6 +243,7 @@ def main():
     if comp_arg:
         os.environ["ZINDIAN_COMPETITION_SLUG"] = str(comp_arg)
         os.environ["ZINDIAN_COMPETITION"] = str(comp_arg)
+        os.environ["COMPETITION_SLUG"] = str(comp_arg)
 
     # ---------------------------------------------------------
     # Core Command Handlers
@@ -289,7 +336,7 @@ def main():
         try:
             from zindian.skills.skill_22_reproducibility_audit import run as _audit_run
 
-            result = _audit_run(slug=args.slug if hasattr(args, "slug") else None)
+            result = _audit_run(slug=comp_arg)
             if not result.get("success"):
                 sys.exit(1)
         except Exception as e:
@@ -339,8 +386,11 @@ def main():
             try:
                 from zindian.paths import resolve_competition_paths
 
-                paths = resolve_competition_paths(require_competition=False)
+                paths = resolve_competition_paths(
+                    slug=comp_arg, require_competition=False
+                )
                 if paths.competition_dir:
+                    os.environ["COMPETITION_SLUG"] = paths.competition_dir.name
                     cmd.extend(["--competition", str(paths.competition_dir)])
             except Exception:
                 pass
@@ -403,7 +453,13 @@ def main():
         try:
             from scripts.bootstrap_competition import main as _bootstrap_main
 
-            argv = [args.slug]
+            target_slug = comp_arg or args.slug
+            if not target_slug:
+                print("Error: Competition slug is required.")
+                sys.exit(1)
+            argv = [target_slug]
+            if args.name:
+                argv.extend(["--name", args.name])
             if args.move_files:
                 argv.append("--move-files")
             if args.yes:
@@ -430,8 +486,8 @@ def main():
         try:
             root = Path(__file__).resolve().parent.parent
             cmd = [sys.executable, str(root / "scripts" / "preflight_enforce.py")]
-            if args.competition:
-                cmd.extend(["--competition", args.competition])
+            if comp_arg:
+                cmd.extend(["--competition", comp_arg])
             if args.non_interactive:
                 cmd.append("--non-interactive")
             proc = subprocess.run(cmd, cwd=str(root))
@@ -491,7 +547,11 @@ def main():
         from datetime import datetime
 
         root = Path(__file__).resolve().parent.parent
-        comp_dir = root / "competitions" / args.slug
+        target_slug = comp_arg or args.slug
+        if not target_slug:
+            print("Error: Competition slug is required.")
+            sys.exit(1)
+        comp_dir = root / "competitions" / target_slug
         if not comp_dir.exists():
             print(f"Error: Competition directory not found: {comp_dir}")
             sys.exit(1)
@@ -500,12 +560,20 @@ def main():
         archives_dir.mkdir(exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        archive_name = f"{args.slug}-archive-{timestamp}.tar.gz"
+        archive_name = f"{target_slug}-archive-{timestamp}.tar.gz"
         archive_path = archives_dir / archive_name
 
-        print(f"Archiving {args.slug}...")
+        def exclude_csv(tarinfo):
+            name = tarinfo.name
+            if name.endswith(".csv") and (
+                "data/raw" in name or "data/processed" in name
+            ):
+                return None
+            return tarinfo
+
+        print(f"Archiving {target_slug}...")
         with tarfile.open(archive_path, "w:gz") as tar:
-            tar.add(comp_dir, arcname=comp_dir.name)
+            tar.add(comp_dir, arcname=comp_dir.name, filter=exclude_csv)
 
         archive_size_bytes = archive_path.stat().st_size
         if archive_size_bytes >= 1024 * 1024:
@@ -518,11 +586,13 @@ def main():
         print(f"✓ Archived to: {archive_path}")
         print(f"✓ Size: {size_str}")
 
-        # Remove the competition directory after successful archive
-        import shutil
+        if args.delete:
+            import shutil
 
-        shutil.rmtree(comp_dir)
-        print(f"✓ Removed: {comp_dir}")
+            shutil.rmtree(comp_dir)
+            print(f"✓ Removed: {comp_dir}")
+        else:
+            print("ℹ Competition directory preserved. Use --delete to remove it.")
 
     elif args.command == "audit-framework":
         _run_shell_script("scripts/zindian_audit.sh")

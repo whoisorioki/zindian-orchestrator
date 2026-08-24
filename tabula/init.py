@@ -16,6 +16,16 @@ ROOT = _repo_root()
 TEMPLATES = ROOT / "templates"
 
 
+def sanitize_slug(slug: str) -> str:
+    """Normalize the slug: lowercase, replace underscores/spaces with hyphens, collapse consecutive hyphens, keep alphanumeric and hyphens."""
+    import re
+
+    s = slug.strip().lower().replace("_", "-").replace(" ", "-")
+    s = re.sub(r"[^a-z0-9\-]", "", s)
+    s = re.sub(r"-+", "-", s)
+    return s
+
+
 def write_json_atomic(path: Path, data: dict, *, dry_run: bool = False) -> None:
     if dry_run:
         print(f"[dry-run] write {path}")
@@ -65,13 +75,57 @@ def find_candidates(root: Path) -> dict[str, Path]:
     return candidates
 
 
+def _update_env_slug(slug: str, name: str) -> None:
+    """Update ZINDIAN_COMPETITION_SLUG and ZINDIAN_COMPETITION_NAME in .env."""
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        print("  ⚠️  No .env file found — skipping env update")
+        return
+
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    new_lines = []
+
+    slug_updated = False
+    name_updated = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("ZINDIAN_COMPETITION_SLUG=") or stripped.startswith(
+            "COMPETITION_SLUG="
+        ):
+            new_lines.append(f"ZINDIAN_COMPETITION_SLUG={slug}")
+            slug_updated = True
+        elif stripped.startswith("ZINDIAN_COMPETITION="):
+            new_lines.append(f"ZINDIAN_COMPETITION={slug}")
+            slug_updated = True
+        elif stripped.startswith("ZINDIAN_COMPETITION_NAME=") or stripped.startswith(
+            "COMPETITION_NAME="
+        ):
+            new_lines.append(f"ZINDIAN_COMPETITION_NAME={name}")
+            name_updated = True
+        else:
+            new_lines.append(line)
+
+    if not slug_updated:
+        new_lines.append(f"ZINDIAN_COMPETITION_SLUG={slug}")
+    if not name_updated:
+        new_lines.append(f"ZINDIAN_COMPETITION_NAME={name}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    print(f"  ✅ .env ZINDIAN_COMPETITION_SLUG set to: {slug}")
+    print(f"  ✅ .env ZINDIAN_COMPETITION_NAME set to: {name}")
+
+
 def init_competition(
     slug: str,
     *,
+    name: str | None = None,
     move_files: bool = False,
     assume_yes: bool = False,
     dry_run: bool = False,
 ) -> int:
+    slug = sanitize_slug(slug)
+    resolved_name = name or slug.replace("-", " ").title()
     comp_dir = ROOT / "competitions" / slug
     raw = comp_dir / "data" / "raw"
     processed = comp_dir / "data" / "processed"
@@ -86,7 +140,8 @@ def init_competition(
         print(f"Found existing: {challenge_path}")
     else:
         challenge = load_template("challenge_config_template.json")
-        challenge.setdefault("slug", slug)
+        challenge["slug"] = slug
+        challenge["name"] = resolved_name
         write_json_atomic(challenge_path, challenge, dry_run=dry_run)
 
     state_path = comp_dir / "SKILL_STATE.json"
@@ -95,10 +150,24 @@ def init_competition(
     else:
         state = load_template("SKILL_STATE_template.json")
         # Keep both for backward compatibility with existing code/docs.
-        state.setdefault("competition", slug)
-        state.setdefault("competition_slug", slug)
-        state.setdefault("dag_phase", "phase_0_foundation")
-        state.setdefault("last_updated", datetime.now(timezone.utc).isoformat())
+        state["competition"] = resolved_name
+        state["competition_slug"] = slug
+        state["dag_phase"] = "phase_1_integrity_locked"
+        state["last_updated"] = datetime.now(timezone.utc).isoformat()
+        # Resolve current git branch
+        try:
+            import subprocess
+
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=str(ROOT),
+            )
+            if branch.returncode == 0:
+                state["current_git_branch"] = branch.stdout.strip()
+        except Exception:
+            pass
         write_json_atomic(state_path, state, dry_run=dry_run)
 
     candidates = find_candidates(ROOT)
@@ -127,6 +196,9 @@ def init_competition(
         else:
             print("Run with --move-files to migrate detected artifacts.")
 
+    if not dry_run:
+        _update_env_slug(slug, resolved_name)
+
     mode = "DRY-RUN" if dry_run else "APPLY"
     print(f"Bootstrap complete ({mode}) for slug: {slug}")
     print(f"Competition folder: {comp_dir}")
@@ -139,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = sub.add_parser("init", help="Bootstrap competition workspace")
     init_parser.add_argument("slug", help="competition slug (e.g. ey-frogs)")
+    init_parser.add_argument(
+        "--name",
+        help="Human-readable name of the competition",
+    )
     init_parser.add_argument(
         "--move-files",
         action="store_true",
@@ -165,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return init_competition(
             args.slug,
+            name=args.name,
             move_files=args.move_files,
             assume_yes=args.yes,
             dry_run=args.dry_run,

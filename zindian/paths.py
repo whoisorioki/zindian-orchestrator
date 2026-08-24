@@ -121,6 +121,11 @@ def resolve_competition_paths(
             notebooks_dir=root / "notebooks",
         )
 
+    resolved_slug = comp_dir.name
+    os.environ["COMPETITION_SLUG"] = resolved_slug
+    os.environ["ZINDIAN_COMPETITION_SLUG"] = resolved_slug
+    os.environ["ZINDIAN_COMPETITION"] = resolved_slug
+
     return CompetitionPaths(
         root=root,
         competition_dir=comp_dir,

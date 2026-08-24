@@ -35,6 +35,11 @@ PHASE_3A_SKILLS = ["skill_10", "skill_09", "skill_12"]  # Generalization audit
 PHASE_3B_SKILLS = ["skill_11", "skill_21", "skill_13"]  # Promotion and fusion
 PHASE_4_SKILLS = ["skill_14", "skill_16", "skill_17", "skill_22"]  # Governance
 
+# Session-scoped log directory — set once by run_phase, None for standalone run_skill calls.
+# run_skill reads this; when set, it writes to <session_dir>/<skill>.log AND
+# appends to <session_dir>/session.log.  When None, fallback is logs/<skill>.log.
+_current_run_dir: "Optional[Any]" = None
+
 
 def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
     """Dynamically discover and import modules under `zindian.skills`.
@@ -213,149 +218,257 @@ def run_skill(
         Result dict from skill
     """
     import time
+    import sys
     import tracemalloc
+    from .paths import resolve_competition_paths
 
-    # Start telemetry
-    start_time = time.time()
-    tracemalloc.start()
+    class Tee:
+        def __init__(self, original_stream, log_file):
+            self.original_stream = original_stream
+            self.log_file = log_file
 
-    # Handle split function notation (e.g., "skill_03.policy_writer")
-    if "." in skill_name:
-        base_skill, func_name = skill_name.split(".", 1)
-        if base_skill not in SKILL_REGISTRY:
-            return {
-                "status": "ERROR",
-                "message": f"Unknown skill: {base_skill}. Available: {list(SKILL_REGISTRY.keys())}",
-            }
+        def write(self, data):
+            if self.original_stream:
+                self.original_stream.write(data)
+            if self.log_file:
+                self.log_file.write(data)
 
-        description, skill_module = SKILL_REGISTRY[base_skill]
+        def flush(self):
+            if self.original_stream:
+                self.original_stream.flush()
+            if self.log_file:
+                self.log_file.flush()
 
-        if skill_module is None:
-            return {
-                "status": "ERROR",
-                "message": f"Skill {base_skill} ({description}) not loaded",
-            }
+        def __getattr__(self, name):
+            return getattr(self.original_stream, name)
 
-        # Call the specific function
-        if not hasattr(skill_module, func_name):
-            return {
-                "status": "ERROR",
-                "message": f"Skill {base_skill} has no function {func_name}",
-            }
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    log_file_handler = None
 
-        try:
-            func = getattr(skill_module, func_name)
-            import inspect
-
-            sig = inspect.signature(func)
-            has_var_keyword = any(
-                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
-            )
-            filtered_kwargs = (
-                kwargs
-                if has_var_keyword
-                else {k: v for k, v in kwargs.items() if k in sig.parameters}
-            )
-            result = func(**filtered_kwargs)
-        except Exception as e:
-            import traceback
-            from .config import ConfigNotPopulated
-
-            # Graceful diagnostics for configuration errors
-            if isinstance(e, ConfigNotPopulated):
-                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
-            elif isinstance(e, KeyError):
-                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
-
-            result = {
-                "status": "ERROR",
-                "message": f"Skill {skill_name} failed: {str(e)}",
-                "traceback": traceback.format_exc(),
-            }
-    else:
-        # Standard skill execution — skill_02 needs merge mode to preserve pre-set config
-        if skill_name == "skill_02":
-            kwargs.setdefault("merge", True)
-        if skill_name not in SKILL_REGISTRY:
-            return {
-                "status": "ERROR",
-                "message": f"Unknown skill: {skill_name}. Available: {list(SKILL_REGISTRY.keys())}",
-            }
-
-        description, skill_module = SKILL_REGISTRY[skill_name]
-
-        if skill_module is None:
-            return {
-                "status": "ERROR",
-                "message": f"Skill {skill_name} ({description}) not loaded",
-            }
-
-        try:
-            import inspect
-
-            sig = inspect.signature(skill_module.run)
-            has_var_keyword = any(
-                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
-            )
-            filtered_kwargs = (
-                kwargs
-                if has_var_keyword
-                else {k: v for k, v in kwargs.items() if k in sig.parameters}
-            )
-            result = skill_module.run(**filtered_kwargs)
-        except Exception as e:
-            import traceback
-            from .config import ConfigNotPopulated
-
-            # Graceful diagnostics for configuration errors
-            if isinstance(e, ConfigNotPopulated):
-                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
-            elif isinstance(e, KeyError):
-                print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
-
-            result = {
-                "status": "ERROR",
-                "message": f"Skill {skill_name} failed: {str(e)}",
-                "traceback": traceback.format_exc(),
-            }
-
-    # Stop telemetry
-    duration_sec = time.time() - start_time
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    peak_memory_mb = peak / 1024 / 1024
-
-    # R5: Carbon tracking
-    carbon_data = {}
     try:
-        from .carbon_tracker import estimate_carbon
-        from .config import ChallengeConfig
+        try:
+            paths = resolve_competition_paths(require_competition=False)
+            if paths.competition_dir:
+                sanitized_name = skill_name.replace(".", "_")
+                run_dir = _current_run_dir  # may be None for standalone calls
+                if run_dir is not None:
+                    # Session-scoped: write to run_dir/<skill>.log
+                    skill_log_path = run_dir / f"{sanitized_name}.log"
+                    log_file_handler = skill_log_path.open("w", encoding="utf-8")
+                    # Also open the shared session.log in append mode
+                    session_log_path = run_dir / "session.log"
+                    session_log_handler = session_log_path.open("a", encoding="utf-8")
+                    separator = f"\n{'=' * 60}\n=== {skill_name} ===\n{'=' * 60}\n"
+                    session_log_handler.write(separator)
+                    session_log_handler.flush()
 
-        config_obj = ChallengeConfig.load()
-        carbon_data = estimate_carbon(duration_sec, peak_memory_mb, config_obj._data)
-    except Exception:
-        carbon_data = {
-            "carbon_kg_estimate": None,
-            "tracker_method": "not_instrumented",
-            "hardware_type": "unknown",
-            "region": "unknown",
+                    # Tee stdout/stderr to both the per-skill file and the session log
+                    class _MultiTee:
+                        """Fan-out stdout/stderr to multiple sinks."""
+
+                        def __init__(self, original, *sinks):
+                            self.original_stream = original
+                            self._sinks = sinks
+
+                        def write(self, data):
+                            if self.original_stream:
+                                self.original_stream.write(data)
+                            for s in self._sinks:
+                                try:
+                                    s.write(data)
+                                except Exception:
+                                    pass
+
+                        def flush(self):
+                            if self.original_stream:
+                                self.original_stream.flush()
+                            for s in self._sinks:
+                                try:
+                                    s.flush()
+                                except Exception:
+                                    pass
+
+                        def __getattr__(self, name):
+                            return getattr(self.original_stream, name)
+
+                    sys.stdout = _MultiTee(  # type: ignore[assignment]
+                        original_stdout, log_file_handler, session_log_handler
+                    )
+                    sys.stderr = _MultiTee(  # type: ignore[assignment]
+                        original_stderr, log_file_handler, session_log_handler
+                    )
+                    # Keep references so finally block can close them
+                    log_file_handler = (log_file_handler, session_log_handler)
+                else:
+                    # Flat fallback: logs/<skill>.log (used by standalone calls & tests)
+                    logs_dir = paths.competition_dir / "logs"
+                    logs_dir.mkdir(parents=True, exist_ok=True)
+                    log_path = logs_dir / f"{sanitized_name}.log"
+                    log_file_handler = log_path.open("w", encoding="utf-8")
+                    sys.stdout = Tee(original_stdout, log_file_handler)  # type: ignore[assignment]
+                    sys.stderr = Tee(original_stderr, log_file_handler)  # type: ignore[assignment]
+        except Exception:
+            pass
+
+        # Start telemetry
+        start_time = time.time()
+        tracemalloc.start()
+
+        # Handle split function notation (e.g., "skill_03.policy_writer")
+        if "." in skill_name:
+            base_skill, func_name = skill_name.split(".", 1)
+            if base_skill not in SKILL_REGISTRY:
+                return {
+                    "status": "ERROR",
+                    "message": f"Unknown skill: {base_skill}. Available: {list(SKILL_REGISTRY.keys())}",
+                }
+
+            description, skill_module = SKILL_REGISTRY[base_skill]
+
+            if skill_module is None:
+                return {
+                    "status": "ERROR",
+                    "message": f"Skill {base_skill} ({description}) not loaded",
+                }
+
+            # Call the specific function
+            if not hasattr(skill_module, func_name):
+                return {
+                    "status": "ERROR",
+                    "message": f"Skill {base_skill} has no function {func_name}",
+                }
+
+            try:
+                func = getattr(skill_module, func_name)
+                import inspect
+
+                sig = inspect.signature(func)
+                has_var_keyword = any(
+                    p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+                )
+                filtered_kwargs = (
+                    kwargs
+                    if has_var_keyword
+                    else {k: v for k, v in kwargs.items() if k in sig.parameters}
+                )
+                result = func(**filtered_kwargs)
+            except Exception as e:
+                import traceback
+                from .config import ConfigNotPopulated
+
+                # Graceful diagnostics for configuration errors
+                if isinstance(e, ConfigNotPopulated):
+                    print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
+                elif isinstance(e, KeyError):
+                    print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+
+                result = {
+                    "status": "ERROR",
+                    "message": f"Skill {skill_name} failed: {str(e)}",
+                    "traceback": traceback.format_exc(),
+                }
+        else:
+            # Standard skill execution — skill_02 needs merge mode to preserve pre-set config
+            if skill_name == "skill_02":
+                kwargs.setdefault("merge", True)
+            if skill_name not in SKILL_REGISTRY:
+                return {
+                    "status": "ERROR",
+                    "message": f"Unknown skill: {skill_name}. Available: {list(SKILL_REGISTRY.keys())}",
+                }
+
+            description, skill_module = SKILL_REGISTRY[skill_name]
+
+            if skill_module is None:
+                return {
+                    "status": "ERROR",
+                    "message": f"Skill {skill_name} ({description}) not loaded",
+                }
+
+            try:
+                import inspect
+
+                sig = inspect.signature(skill_module.run)
+                has_var_keyword = any(
+                    p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+                )
+                filtered_kwargs = (
+                    kwargs
+                    if has_var_keyword
+                    else {k: v for k, v in kwargs.items() if k in sig.parameters}
+                )
+                result = skill_module.run(**filtered_kwargs)
+            except Exception as e:
+                import traceback
+                from .config import ConfigNotPopulated
+
+                # Graceful diagnostics for configuration errors
+                if isinstance(e, ConfigNotPopulated):
+                    print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
+                elif isinstance(e, KeyError):
+                    print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+
+                result = {
+                    "status": "ERROR",
+                    "message": f"Skill {skill_name} failed: {str(e)}",
+                    "traceback": traceback.format_exc(),
+                }
+
+        # Stop telemetry
+        duration_sec = time.time() - start_time
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_memory_mb = peak / 1024 / 1024
+
+        # R5: Carbon tracking
+        carbon_data = {}
+        try:
+            from .carbon_tracker import estimate_carbon
+            from .config import ChallengeConfig
+
+            config_obj = ChallengeConfig.load()
+            carbon_data = estimate_carbon(
+                duration_sec, peak_memory_mb, config_obj._data
+            )
+        except Exception:
+            carbon_data = {
+                "carbon_kg_estimate": None,
+                "tracker_method": "not_instrumented",
+                "hardware_type": "unknown",
+                "region": "Africa",
+            }
+
+        # Normalize result
+        if result is None or not isinstance(result, dict):
+            result = {"status": "COMPLETED"}
+        elif "status" not in result:
+            result["status"] = "COMPLETED"
+
+        # Add telemetry with carbon data
+        result_dict = cast(dict[str, Any], result)
+        result_dict["telemetry"] = {
+            "duration_sec": round(duration_sec, 2),
+            "peak_memory_mb": round(peak_memory_mb, 2),
+            **carbon_data,
         }
 
-    # Normalize result
-    if result is None or not isinstance(result, dict):
-        result = {"status": "COMPLETED"}
-    elif "status" not in result:
-        result["status"] = "COMPLETED"
+        return result_dict
 
-    # Add telemetry with carbon data
-    result_dict = cast(dict[str, Any], result)
-    result_dict["telemetry"] = {
-        "duration_sec": round(duration_sec, 2),
-        "peak_memory_mb": round(peak_memory_mb, 2),
-        **carbon_data,
-    }
-
-    return result_dict
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        if log_file_handler:
+            try:
+                handles = (
+                    log_file_handler
+                    if isinstance(log_file_handler, tuple)
+                    else (log_file_handler,)
+                )
+                for h in handles:
+                    h.close()
+            except Exception:
+                pass
 
 
 def prompt_human_gate(
@@ -786,6 +899,25 @@ def run_phase(
                 "message": f"Invalid phase: {phase}. Must be 1, 2A, 2B, 3A, 3B, or 4.",
             }
 
+    # --- Session-scoped log directory (Track 1 / Recommendation B) ---
+    # Create once per run_phase call; all run_skill calls within this phase
+    # write their per-skill log here AND append to a shared session.log.
+    global _current_run_dir
+    try:
+        from datetime import datetime, timezone
+
+        _phase_paths = (
+            paths if paths else resolve_competition_paths(require_competition=False)
+        )
+        if _phase_paths and _phase_paths.competition_dir:
+            _ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            _run_dir = _phase_paths.competition_dir / "logs" / f"run_{_ts}_phase{phase}"
+            _run_dir.mkdir(parents=True, exist_ok=True)
+            _current_run_dir = _run_dir
+            print(f"  [Orchestrator] Session logs → {_run_dir}")
+    except Exception:
+        _current_run_dir = None
+
     results = {}
     for skill_name in skills:
         variant_arg = kwargs.get("variant_name")
@@ -857,7 +989,9 @@ def run_phase(
                     import json
 
                     if paths is not None:
-                        policy_path = paths.reports_dir / "feature_policy.json"
+                        policy_path = (
+                            paths.reports_dir / "audits" / "feature_policy.json"
+                        )
                         if policy_path.exists():
                             policy = json.loads(policy_path.read_text())
                             skill_kwargs["policy"] = policy
@@ -875,15 +1009,21 @@ def run_phase(
                 # Materialize feature matrices for skill_06
                 import pandas as pd
 
+                input_files = (
+                    config._data.get("input_files", {}) or {} if config else {}
+                )
+                train_file = input_files.get("train", "Train.csv")
+                test_file = input_files.get("test", "Test.csv")
+
                 if paths is not None:
-                    train_path = paths.data_raw_dir / "Train.csv"
-                    test_path = paths.data_raw_dir / "Test.csv"
+                    train_path = paths.data_raw_dir / train_file
+                    test_path = paths.data_raw_dir / test_file
                 else:
                     from zindian.paths import resolve_competition_paths as _rcp
 
                     _p = _rcp()
-                    train_path = _p.data_raw_dir / "Train.csv"
-                    test_path = _p.data_raw_dir / "Test.csv"
+                    train_path = _p.data_raw_dir / train_file
+                    test_path = _p.data_raw_dir / test_file
 
                 df_train = pd.read_csv(train_path)
                 df_test = pd.read_csv(test_path)

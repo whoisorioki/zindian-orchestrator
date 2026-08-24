@@ -16,8 +16,9 @@ Reads:
 
 Writes:
     state["last_reported"]       -- timestamp of last report generation
-    reports/{phase}_summary.json -- per-phase summary files
-    reports/phase_{2b,3b}_summary.md -- Phase 2B / 3B Markdown branch summaries
+    reports/summaries/{phase}_summary.json -- per-phase summary files
+    reports/summaries/phase_{2b,3b}_summary.md -- Phase 2B / 3B Markdown branch summaries
+    reports/sessions/startup_*.jsonl -- session-scoped startup event logs
 
 Does NOT write:
     - Does NOT write to long-term history_log.jsonl during initialisation
@@ -165,10 +166,14 @@ def run(
         }
         _log_startup_event(session_log_path, startup_event)
 
-        # -- Generate phase summary report --------------------------
-        report_path = paths.reports_dir / "phase_1_summary.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
+        print("=" * 60)
+        print("SKILL 15 — Central Reporter (Initialization)")
+        print("=" * 60)
+        print(f"Connecting to ledger: {ledger_path}")
+        print(f"Found {exp_count} experiments, {sub_count} submissions.")
+        print(f"Session log initialised at: {session_log_path}")
 
+        # -- Generate phase summary report --------------------------
         report = {
             "phase": "phase_1_integrity_intake",
             "competition": config.slug,
@@ -197,23 +202,40 @@ def run(
             "status": "INITIALIZED",
         }
 
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=False) + "\n",
-            encoding="utf-8",
-        )
-
         # Append integrity audit if available
         integrity_path = paths.reports_dir / "integrity_audit.json"
         if integrity_path.exists():
             try:
                 integrity_data = json.loads(integrity_path.read_text())
                 report["integrity_audit"] = integrity_data
-                report_path.write_text(
-                    json.dumps(report, indent=2, sort_keys=False) + "\n",
-                    encoding="utf-8",
-                )
             except Exception:
                 pass
+
+        # Write JSON summary exclusively to summaries/ directory
+        summaries_dir = paths.reports_dir / "summaries"
+        summaries_dir.mkdir(parents=True, exist_ok=True)
+        report_path = summaries_dir / "phase_1_summary.json"
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+
+        # Call run_phase_summary("1") to generate the Markdown file
+        run_phase_summary("1")
+
+        # Now consolidate: append report JSON to the summaries/ Markdown file
+        md_filename = "phase_1_summary.md"
+        md_path = summaries_dir / md_filename
+        if md_path.exists():
+            md_content = md_path.read_text(encoding="utf-8")
+            if "## Raw Metadata" in md_content:
+                md_content = md_content.split("## Raw Metadata")[0]
+            fenced_json = (
+                f"\n\n## Raw Metadata\n```json\n{json.dumps(report, indent=2)}\n```\n"
+            )
+            updated_md = md_content.rstrip() + fenced_json
+
+            md_path.write_text(updated_md, encoding="utf-8")
 
         def _rel(p) -> str:
             if not p:
@@ -627,16 +649,23 @@ def run_phase_summary(phase: str = "1") -> Dict[str, Any]:
             f"- **Reproducibility Audit Status:** `{state.get('audit_status', 'PASSED')}`",
         ]
 
-    # Write report
-    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    # Print standardized header for summary run
+    print("=" * 60)
+    print(f"SKILL 15 — Phase {phase.upper()} Reporter")
+    print("=" * 60)
+
+    # Write report exclusively to summaries/
+    summaries_dir = paths.reports_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
     report_filename = f"phase_{phase}_summary.md"
-    report_path = paths.reports_dir / report_filename
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    report_path = summaries_dir / report_filename
+    md_content = "\n".join(lines) + "\n"
+    report_path.write_text(md_content, encoding="utf-8")
 
     # Update SKILL_STATE
     state_store.update(last_reported=now)
 
-    print(f"[OK] Phase {phase.upper()} summary -> {report_path}")
+    print(f"  [OK] Phase {phase.upper()} summary -> {report_path}")
     return {
         "status": "OK",
         "phase": phase,
@@ -650,20 +679,50 @@ def _write_json_summary(
     state: dict,
     include_keys: list[str],
 ) -> Dict[str, Any]:
-    """Write a lightweight JSON summary for any phase."""
+    """Write a lightweight JSON summary for any phase and consolidate into Markdown."""
+    phase = phase.lower().strip()
+
+    # Build JSON report
     report: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "phase": phase,
-        "competition": state.get("competition", "unknown"),
+        "competition": (
+            state.get("competition", "unknown")
+            if state.get("competition")
+            else (
+                ChallengeConfig.load().slug if paths.config_path.exists() else "unknown"
+            )
+        ),
         "dag_phase": state.get("dag_phase"),
     }
     for key in include_keys:
         if key in state:
             report[key] = state[key]
 
-    report_path = paths.reports_dir / f"{phase}_summary.json"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write JSON and Markdown exclusively to summaries/
+    summaries_dir = paths.reports_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    json_filename = "phase_1_summary.json" if phase == "1" else f"{phase}_summary.json"
+    report_path = summaries_dir / json_filename
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+    # Consolidate: read Markdown from summaries/, append fenced JSON, and save
+    md_filename = f"phase_{phase}_summary.md"
+    md_path = summaries_dir / md_filename
+
+    if md_path.exists():
+        md_content = md_path.read_text(encoding="utf-8")
+        if "## Raw Metadata" in md_content:
+            md_content = md_content.split("## Raw Metadata")[0]
+
+        fenced_json = (
+            f"\n\n## Raw Metadata\n```json\n{json.dumps(report, indent=2)}\n```\n"
+        )
+        updated_md = md_content.rstrip() + fenced_json
+
+        md_path.write_text(updated_md, encoding="utf-8")
+        print(f"  [OK] Consolidated {md_filename} with JSON metadata")
+
     return {"status": "OK", "path": str(report_path)}
 
 

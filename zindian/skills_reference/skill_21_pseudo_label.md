@@ -20,7 +20,7 @@ Inputs
 Outputs
 -------
 - Appends high-confidence pseudo-labeled data points to training splits of each fold during CV iterations.
-- Generates `oof_probs_pseudo_iter{N}.csv` and `test_probs_pseudo_iter{N}.csv` under the reports directory.
+- Generates `oof_probs_pseudo_iter{N}.csv` and `test_probs_pseudo_iter{N}.csv` under `competitions/<slug>/reports/diagnostics/predictions/`.
 - Updates `SKILL_STATE.json` with the canonical `pseudo_label_result` block containing `ran`, `n_pseudo_labels_added`, `retraining_required`, `guard_conditions_met`, `guard_failure_reason`, and `guard_condition_flags` (Boolean flags for `gc1` to `gc6`).
 - Writes the retrained OOF predictions to the `branch_{name}_oof_augmented` namespace (raising a RuntimeError if trying to overwrite a non-augmented OOF key).
 

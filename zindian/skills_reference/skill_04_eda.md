@@ -15,7 +15,7 @@ Current implementation notes
 - Automatically detects the target column from config/state.
 - Computes unbiased sample standard deviation (`ddof=1`) of the target.
 - Identifies missingness patterns (MCAR vs. MNAR), constants, near-zero variance features, high-correlation pairs (>0.95), and PII risks.
-- Generates `reports/eda_report.json` and a human-readable `reports/eda_summary.md`.
+- Generates `reports/diagnostics/eda_report.json` and a human-readable `reports/diagnostics/eda_summary.md`.
 
 Commands
 --------

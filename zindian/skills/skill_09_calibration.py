@@ -76,15 +76,34 @@ def _resolve_candidate_branch(state: dict[str, Any], retraining_active: bool) ->
 
     branch_names: list[str] = []
     for key, value in state.items():
-        if not (
-            isinstance(key, str) and key.startswith("branch_") and key.endswith("_oof")
-        ):
+        is_oof_key = (
+            isinstance(key, str)
+            and key.startswith("branch_")
+            and (
+                key.endswith("_oof")
+                or key.endswith("_oof_augmented")
+                or key.endswith("_augmented_oof")
+            )
+        )
+        if not is_oof_key:
             continue
         if not isinstance(value, dict):
             continue
-        branch_name = str(
-            value.get("branch_name") or key.removeprefix("branch_").removesuffix("_oof")
-        )
+
+        if key.endswith("_oof_augmented"):
+            default_branch = (
+                key.removeprefix("branch_").removesuffix("_oof_augmented")
+                + "_augmented"
+            )
+        elif key.endswith("_augmented_oof"):
+            default_branch = (
+                key.removeprefix("branch_").removesuffix("_augmented_oof")
+                + "_augmented"
+            )
+        else:
+            default_branch = key.removeprefix("branch_").removesuffix("_oof")
+
+        branch_name = str(value.get("branch_name") or default_branch)
         if retraining_active and not branch_name.endswith("_augmented"):
             continue
         if not retraining_active and branch_name.endswith("_augmented"):
@@ -103,12 +122,15 @@ def _resolve_oof_record(
 ) -> dict[str, Any]:
     candidates = []
     if retraining_active and not branch_name.endswith("_augmented"):
-        candidates.append(f"branch_{branch_name}_augmented_oof")
         candidates.append(f"branch_{branch_name}_oof_augmented")
+        candidates.append(f"branch_{branch_name}_augmented_oof")
     candidates.append(f"branch_{branch_name}_oof")
     if branch_name.endswith("_augmented"):
         candidates.append(
             f"branch_{branch_name.removesuffix('_augmented')}_oof_augmented"
+        )
+        candidates.append(
+            f"branch_{branch_name.removesuffix('_augmented')}_augmented_oof"
         )
 
     for key in candidates:
@@ -260,8 +282,11 @@ def run(
 
     proc_dir = paths.data_processed_dir
     reports_dir = paths.reports_dir
-    # Load target from raw Train.csv because feature extraction drops target columns
-    train_raw = pd.read_csv(paths.data_raw_dir / "Train.csv")
+    # Load target from raw train file because feature extraction drops target columns
+    raw_config = getattr(config, "_data", {}) or {}
+    input_files = raw_config.get("input_files") or raw_config.get("file_manifest") or {}
+    train_file = input_files.get("train", "Train.csv")
+    train_raw = pd.read_csv(paths.data_raw_dir / train_file)
 
     target = _resolve_target_col(config)
     if target not in train_raw.columns:
@@ -411,8 +436,11 @@ def _run_multi_target(
     targets = target_config.get("targets", [])
     proc_dir = paths.data_processed_dir
     reports_dir = paths.reports_dir
-    train_features = pd.read_csv(proc_dir / "features_train.csv")
-    train_raw = pd.read_csv(paths.data_raw_dir / "Train.csv")
+
+    raw_config = getattr(config, "_data", {}) or {}
+    input_files = raw_config.get("input_files") or raw_config.get("file_manifest") or {}
+    train_file = input_files.get("train", "Train.csv")
+    train_raw = pd.read_csv(paths.data_raw_dir / train_file)
 
     retraining_active = bool(
         state.get("pseudo_label_result", {}).get("retraining_required", False)
@@ -425,20 +453,27 @@ def _run_multi_target(
             target_name = target_spec.get("name")
             # Look for OOF keys for this target
             for key in state.keys():
-                if (
-                    key.startswith("branch_")
-                    and f"_{target_name}" in key
-                    and key.endswith("_oof")
-                ):
-                    # Extract branch name
-                    parts = key.removeprefix("branch_").removesuffix("_oof")
-                    if retraining_active and parts.endswith("_augmented"):
-                        candidate_branch = parts.removesuffix(
-                            f"_{target_name}_augmented"
+                if key.startswith("branch_") and f"_{target_name}" in key:
+                    if key.endswith("_oof_augmented"):
+                        parts = key.removeprefix("branch_").removesuffix(
+                            "_oof_augmented"
                         )
-                    else:
                         candidate_branch = parts.removesuffix(f"_{target_name}")
-                    break
+                    elif key.endswith("_augmented_oof"):
+                        parts = key.removeprefix("branch_").removesuffix(
+                            "_augmented_oof"
+                        )
+                        candidate_branch = parts.removesuffix(f"_{target_name}")
+                    elif key.endswith("_oof"):
+                        parts = key.removeprefix("branch_").removesuffix("_oof")
+                        if retraining_active and parts.endswith("_augmented"):
+                            candidate_branch = parts.removesuffix(
+                                f"_{target_name}_augmented"
+                            )
+                        else:
+                            candidate_branch = parts.removesuffix(f"_{target_name}")
+                    if candidate_branch:
+                        break
             if candidate_branch:
                 break
 
@@ -448,6 +483,14 @@ def _run_multi_target(
         )
 
     print(f"Using branch: {candidate_branch}")
+
+    # Load branch-specific features or use fallbacks
+    feat_path = proc_dir / f"features_train_{candidate_branch}.csv"
+    if not feat_path.exists():
+        feat_path = proc_dir / "features_train_anchor-baseline.csv"
+        if not feat_path.exists():
+            feat_path = paths.data_raw_dir / train_file
+    train_features = pd.read_csv(feat_path)
 
     cv_strategy = _resolve_cv_strategy(config, state)
     groups = _get_groups(train_features, config)
@@ -536,7 +579,14 @@ def _run_multi_target(
 
         oof_key = f"branch_{candidate_branch}_{target_name}_oof"
         if retraining_active and not candidate_branch.endswith("_augmented"):
-            oof_key = f"branch_{candidate_branch}_{target_name}_augmented_oof"
+            primary_oof_key = f"branch_{candidate_branch}_{target_name}_oof_augmented"
+            fallback_oof_key = f"branch_{candidate_branch}_{target_name}_augmented_oof"
+            if primary_oof_key in state:
+                oof_key = primary_oof_key
+            elif fallback_oof_key in state:
+                oof_key = fallback_oof_key
+            else:
+                oof_key = primary_oof_key
 
         oof_record = state.get(oof_key)
         if not isinstance(oof_record, dict):

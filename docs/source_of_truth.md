@@ -75,10 +75,18 @@ No skill holds internal state between runs. All execution state is written to an
 *State Hygiene & Boundary Rule:* `SKILL_STATE.json` holds only what downstream skills or gates need to make a decision (booleans, counts, OOF scores, short column-name lists, phase/gate flags, file hashes, and small scalar summaries). Any diagnostic artifact for human review — per-feature, per-band, or per-row dictionaries whose size scales with feature/row count — belongs in `reports/` as JSON or Markdown, with at most a short pointer or single derived flag left in state.
 
 Examples of the standard boundary:
-- `skill_03`: `checks[]` + `policy{}` → `reports/feature_policy.json` + `reports/legality_report.md`. State gets `legality_status`, `feature_policy_written`, `last_legality_checked`.
-- `skill_04`: heavy per-band/per-feature diagnostic dicts (`band_summary_stats`, `seasonal_amplitude`, `temporal_trends`, `target_correlation_per_feature`, `class_separability_index`) → `reports/eda_report.json`. State gets `temporal_index_confirmed`, `group_structure_confirmed`.
-- `skill_10`: heavy SHAP ranking & corr pairs → `reports/shap_analysis.json`. State gets `shap_top_features`, `shap_feature_count`, `pruning_delta_f1`, `pruning_pass`.
-- `skill_15`: phase summaries → `reports/phase_*.md`. State gets `last_reported`.
+- `skill_03`: `checks[]` + `policy{}` → `reports/audits/feature_policy.json` + `reports/audits/legality_report.md`. State gets `legality_status`, `feature_policy_written`, `last_legality_checked`.
+- `skill_04`: heavy per-band/per-feature diagnostic dicts (`band_summary_stats`, `seasonal_amplitude`, `temporal_trends`, `target_correlation_per_feature`, `class_separability_index`) → `reports/diagnostics/eda_report.json`. State gets `temporal_index_confirmed`, `group_structure_confirmed`.
+- `skill_10`: heavy SHAP ranking & corr pairs → `reports/audits/shap_analysis.json` + `reports/audits/shap_summary.md`. State gets `shap_top_features`, `shap_feature_count`, `pruning_delta_f1`, `pruning_pass`.
+- `skill_15`: phase summaries → `reports/summaries/phase_*.md` + `reports/summaries/<phase>_summary.json`; session events → `reports/sessions/startup_*.jsonl`. State gets `last_reported`.
+
+**Categorized report layout (`reports/`):** artifacts are written to categorized
+subdirectories, and every consumer reads from the same categorized path (root-level
+report duplicates are deprecated):
+- `reports/audits/` — feature policy, legality report, SHAP leak audit (`skill_03`, `skill_10`), governance selections (`skill_17`), reproducibility audit (`skill_22`).
+- `reports/diagnostics/` — EDA report/summary (`skill_04`), literature & domain hypotheses (`skill_18`, `skill_20`), and `diagnostics/predictions/` for OOF/test pseudo-label CSVs (`skill_21`).
+- `reports/summaries/` — phase summary Markdown + JSON (`skill_15`).
+- `reports/sessions/` — session-scoped startup event logs (`skill_15`).
 
 **A7 — The OOF contract is universal.**
 Every skill that generates or evaluates OOF scores uses the CV
@@ -894,13 +902,13 @@ independently testable functions.
 policy_writer():
     Reads : challenge_config.json,
             community_signals from skill_00
-    Writes: reports/feature_policy.json
+    Writes: reports/audits/feature_policy.json
     Fields: allowed_features, blocked_features,
             block_reasons
     Side effects: none — pure writer, no gating
 
 policy_gate():
-    Reads : reports/feature_policy.json,
+    Reads : reports/audits/feature_policy.json,
             current feature matrix column list
     Asserts: no blocked column present in feature matrix
     On violation:
@@ -915,12 +923,12 @@ policy_gate():
 ---
 
 **`skill_04_eda` — Writes to `SKILL_STATE.json` (lean fields) and
-`reports/eda_report.json` (heavy diagnostics):**
+`reports/diagnostics/eda_report.json` (heavy diagnostics):**
 
 **[CORRECTION — v2.3]** The five per-band/per-feature diagnostic dicts
 previously listed here as SKILL_STATE fields (`band_summary_stats`,
 `seasonal_amplitude`, `temporal_trends`, `target_correlation_per_feature`,
-`class_separability_index`) have been moved to `reports/eda_report.json`.
+`class_separability_index`) have been moved to `reports/diagnostics/eda_report.json`.
 They do not belong in SKILL_STATE.json per rule A6-B — their size scales
 with feature/band count. Only the lean boolean derived from them is kept
 in state.
@@ -951,7 +959,7 @@ and computing consecutive differences within each group separately, excluding bo
 to prevent cross-group outlier deltas. Used as the denominator baseline for MASE (S2) once
 that metric is implemented.
 
-`reports/eda_report.json` holds the heavy diagnostics:
+`reports/diagnostics/eda_report.json` holds the heavy diagnostics:
 
 ```json
 {
@@ -1112,7 +1120,7 @@ No string literals permitted in `skill_05` body.
 [ ] target_domain_bounds written if task_type == regression
 [ ] file_hashes locked and written by skill_01
 [ ] policy_filters written by skill_03 policy_writer()
-[ ] reports/feature_policy.json present, non-empty,
+[ ] reports/audits/feature_policy.json present, non-empty,
     and valid JSON
 [ ] feature_policy.json contains required keys:
     allowed_data_sources, banned_transformations, lat_lon_permitted_as_feature
@@ -1161,7 +1169,7 @@ Config is read-only from this point.
 **`policy_gate()` runs first:**
 
 ```
-Reads: reports/feature_policy.json
+Reads: reports/audits/feature_policy.json
 Asserts: all blocked columns absent from feature matrix
 On violation:
     Write violation entry to SKILL_STATE.json
@@ -2557,7 +2565,7 @@ optimisation.
 **`skill_03`**
 ```
 [ ] policy_writer() runs in Phase 1 —
-    writes reports/feature_policy.json
+    writes reports/audits/feature_policy.json
 [ ] policy_gate() runs as first action of Phase 2A —
     enforces blocked columns
 [ ] No dataset-specific strings in either function
@@ -2976,7 +2984,7 @@ optimisation.
 [ ] target_domain_bounds written if regression
 [ ] File hashes locked
 [ ] policy_filters written
-[ ] reports/feature_policy.json present, non-empty,
+[ ] reports/audits/feature_policy.json present, non-empty,
     and valid JSON
 [ ] feature_policy.json contains required keys:
     allowed_data_sources, banned_transformations, lat_lon_permitted_as_feature
@@ -3241,7 +3249,7 @@ Code Reality:   Resolved in v2.3. skill_04_eda now writes both lean booleans
                 derived from BAND_MM pattern match, datetime/monotonicity
                 dtype inference, and cardinality ratio (<5% distinct non-ID
                 feature values). Heavy diagnostic dicts moved to
-                reports/eda_report.json.
+                reports/diagnostics/eda_report.json.
 ```
 
 ---

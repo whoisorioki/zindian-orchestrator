@@ -66,7 +66,7 @@ def test_feature_hypothesis_exists_and_valid_json():
 def test_feature_policy_exists_and_has_required_keys():
     if not REPORTS_AVAILABLE:
         pytest.skip("reports not available in this environment")
-    p = REPORTS / "feature_policy.json"
+    p = REPORTS / "audits" / "feature_policy.json"
     assert p.exists(), "feature_policy.json not found"
     policy = json.loads(p.read_text())
     for key in (
@@ -80,7 +80,7 @@ def test_feature_policy_exists_and_has_required_keys():
 def test_legality_report_exists():
     if not REPORTS_AVAILABLE:
         pytest.skip("reports not available in this environment")
-    p = REPORTS / "legality_report.md"
+    p = REPORTS / "audits" / "legality_report.md"
     assert p.exists(), "legality_report.md not found"
     content = p.read_text()
     assert "PASS" in content or "BLOCK" in content, "Report missing status"

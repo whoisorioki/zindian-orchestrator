@@ -45,8 +45,8 @@ def test_governance_runs_and_records_selection(tmp_path, monkeypatch):
     assert res_state["selected_submissions"][0]["filename"] == "sub1.csv"
     assert res_state["selected_submissions"][1]["filename"] == "sub2.csv"
 
-    # Verify report is written
-    report_file = comp / "reports" / "final_selections.json"
+    # Verify report is written to categorized audits/ path
+    report_file = comp / "reports" / "audits" / "final_selections.json"
     assert report_file.exists()
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["slug"] == "cmp-gov-ok"

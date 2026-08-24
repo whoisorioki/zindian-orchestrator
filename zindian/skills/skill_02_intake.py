@@ -18,7 +18,7 @@ from zindian.config import ConfigNotPopulated
 from zindian.state import SkillStateStore
 from zindian.schemas import validate_challenge_config
 
-BASE_URL = "https://api.zindi.africa/v1/competitions"
+BASE_URL = "https://api.zindi.world/v1/competitions"
 
 
 def fetch_competition(slug: str, headers: dict) -> dict:
@@ -34,13 +34,22 @@ def extract_config(data: dict, slug: str) -> dict:
     These values are ground truth — hardcoding nothing.
     """
     sections = data.get("sections", [])
+    pages = data.get("pages", [])
 
-    # Extract rules text from sections
+    # Extract rules text from sections and pages
     rules_text = ""
     for s in sections:
-        ct = s.get("content_text", "")
+        ct = s.get("content_text") or s.get("content_html", "")
         if ct:
-            rules_text += ct + " "
+            import re
+
+            rules_text += re.sub(r"<[^>]+>", " ", ct) + " "
+    for p in pages:
+        ct = p.get("content_text") or p.get("content_html", "")
+        if ct:
+            import re
+
+            rules_text += re.sub(r"<[^>]+>", " ", ct) + " "
 
     # Parse known fields from the API response; do not hardcode defaults.
     # These fields should be treated as authoritative when provided by the API.
@@ -49,7 +58,13 @@ def extract_config(data: dict, slug: str) -> dict:
     end_time = data.get("end_time")
 
     # Metric must come from API or be parsed from sections. If missing, write null.
-    metric = data.get("metric")
+    metric = data.get("metric") or data.get("error_metric")
+    if metric:
+        metric = str(metric).lower().strip()
+        if metric in ("f1", "f-1", "f1_score"):
+            metric = "f1_score"
+        elif metric in ("logloss", "log_loss"):
+            metric = "log_loss"
     if metric is None and rules_text:
         text_lower = rules_text.lower()
         import re
@@ -151,10 +166,71 @@ def extract_config(data: dict, slug: str) -> dict:
     allowed_external_data = data.get("allowed_external_data")
     automl_permitted = data.get("automl_permitted")
     data_modality = data.get("data_modality") or data.get("modality")
+    if not data_modality:
+        if rules_text:
+            text_lower = rules_text.lower()
+            # Positive tabular signals — check FIRST before ambiguous keywords
+            _tabular_signals = (
+                "csv",
+                "tabular",
+                "terraclimate",
+                "satellite",
+                "climate variable",
+                "structured data",
+                "dataframe",
+                "features",
+                "predictor variable",
+                "machine learning model",
+                "dataset",
+                "column",
+            )
+            _is_tabular = any(sig in text_lower for sig in _tabular_signals)
+            if _is_tabular:
+                data_modality = "tabular"
+            elif (
+                "image" in text_lower
+                or "computer vision" in text_lower
+                or "pixel" in text_lower
+            ):
+                data_modality = "image"
+            elif (
+                "speech recognition" in text_lower
+                or "audio file" in text_lower
+                or "waveform" in text_lower
+            ):
+                # Require unambiguous audio-processing signals, not just ecology words
+                data_modality = "audio"
+            elif (
+                "nlp" in text_lower
+                or "natural language" in text_lower
+                or "translation" in text_lower
+            ):
+                data_modality = "text"
+            else:
+                data_modality = "tabular"
+        else:
+            data_modality = "tabular"
     domain = data.get("domain")
 
     skills_required = data.get("skills", [])
-    banned_features = data.get("banned_features", [])
+    banned_features = list(data.get("banned_features", []))
+    if rules_text:
+        text_lower = rules_text.lower()
+        if (
+            "not use latitude" in text_lower
+            or "not use longitude" in text_lower
+            or "should not use latitude" in text_lower
+            or "should not use longitude" in text_lower
+            or "without latitude" in text_lower
+            or "without longitude" in text_lower
+            or "exclude latitude" in text_lower
+            or "exclude longitude" in text_lower
+            or "latitude and longitude should only be used to query" in text_lower
+        ):
+            if "latitude" not in banned_features:
+                banned_features.append("latitude")
+            if "longitude" not in banned_features:
+                banned_features.append("longitude")
 
     target_col = data.get("target_col") or data.get("target_column")
     target_domain_bounds = data.get("target_domain_bounds") or {
@@ -585,7 +661,11 @@ def run(
     if slug is None:
         import os
 
-        slug = os.environ.get("COMPETITION_SLUG")
+        slug = (
+            os.environ.get("COMPETITION_SLUG")
+            or os.environ.get("ZINDIAN_COMPETITION_SLUG")
+            or os.environ.get("ZINDIAN_COMPETITION")
+        )
         if not slug:
             try:
                 from zindian.config import ChallengeConfig
@@ -697,6 +777,64 @@ def run(
         except Exception as e:
             print(f"Multi-target detection skipped: {e}")
 
+    # Fallback: infer target_col from SampleSubmission.csv when API returned null.
+    # Per SoT architecture, Phase 1 must populate this before config is locked.
+    if not final_to_write.get("target_col"):
+        try:
+            import pandas as _pd
+
+            _sample_path = paths.data_raw_dir / (
+                existing.get("input_files", {}).get("sample") or "SampleSubmission.csv"
+            )
+            if not _sample_path.exists():
+                # Try file_manifest fallback
+                _sample_path = paths.data_raw_dir / (
+                    existing.get("file_manifest", {}).get("sample")
+                    or "SampleSubmission.csv"
+                )
+            if _sample_path.exists():
+                _sub = _pd.read_csv(_sample_path, nrows=1)
+                # The target column is the non-ID column (second column by convention)
+                _sub_cols = list(_sub.columns)
+                _id_candidates = {"id", "ID"}
+                _inferred_target = next(
+                    (
+                        c
+                        for c in _sub_cols
+                        if c not in _id_candidates and c.upper() != "ID"
+                    ),
+                    _sub_cols[-1] if len(_sub_cols) > 1 else None,
+                )
+                if _inferred_target:
+                    final_to_write["target_col"] = _inferred_target
+                    print(
+                        f"[OK] Inferred target_col '{_inferred_target}' from SampleSubmission.csv"
+                    )
+        except Exception as _e:
+            print(f"[WARN] Could not infer target_col from SampleSubmission.csv: {_e}")
+
+    # Fallback: infer task_type from metric if still null.
+    if not final_to_write.get("task_type") and final_to_write.get("metric"):
+        _m = str(final_to_write["metric"]).lower()
+        if _m in ("rmse", "mae", "mse", "mape", "rmsle"):
+            final_to_write["task_type"] = "regression"
+        else:
+            final_to_write["task_type"] = "classification"
+        print(
+            f"[OK] Inferred task_type '{final_to_write['task_type']}' from metric '{final_to_write['metric']}'"
+        )
+
+    # Fallback: infer metric_direction if still null
+    if not final_to_write.get("metric_direction") and final_to_write.get("metric"):
+        _m = str(final_to_write["metric"]).lower()
+        if _m in ("rmse", "mae", "mse", "mape", "rmsle", "log_loss", "logloss"):
+            final_to_write["metric_direction"] = "minimize"
+        else:
+            final_to_write["metric_direction"] = "maximize"
+        print(
+            f"[OK] Inferred metric_direction '{final_to_write['metric_direction']}' from metric"
+        )
+
     # R5: Add infrastructure block if missing (must happen before write_config
     # below, otherwise the block only ever exists in the in-memory dict and
     # is never persisted to challenge_config.json)
@@ -723,6 +861,7 @@ def run(
             "uninitialized",
             "phase_0_foundation",
             "phase_1",
+            "phase_1_incomplete",  # Preflight INIT phase string
             "phase_1_complete",
             "phase_1_integrity",
             "phase_1_integrity_locked",  # Bootstrap phase string

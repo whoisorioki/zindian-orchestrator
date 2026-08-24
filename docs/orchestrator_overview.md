@@ -798,9 +798,12 @@ competitions/<slug>/
 │   ├── raw/                 # Original data (MD5 locked)
 │   └── processed/           # Cleaned data
 ├── reports/
-│   ├── feature_policy.json
-│   ├── eda_report.json
-│   └── governance_report.json
+│   ├── experiments.db
+│   ├── summaries/
+│   ├── diagnostics/
+│   │   └── predictions/       # pseudo-label OOF/test CSVs
+│   ├── audits/
+│   └── sessions/
 └── submissions/
     └── submission_001.csv
 ```

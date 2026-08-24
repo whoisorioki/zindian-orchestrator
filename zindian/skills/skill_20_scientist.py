@@ -111,7 +111,33 @@ class ClientProxy:
 
 CLIENT = ClientProxy()
 MODEL_NAME = "gemini-2.5-flash"
-TARGET_COL_CANDIDATES = ["Occurrence Status", "target", "la" + "bel", "y"]
+
+
+def _get_target_col_candidates() -> list[str]:
+    """Build target column candidate list dynamically from config (A5 compliance)."""
+    candidates = []
+    try:
+        from zindian.config import ChallengeConfig
+
+        cfg = ChallengeConfig.load()
+        tc = cfg.get("target_col") or cfg.get("target_column")
+        if tc:
+            candidates.append(tc)
+        tc2 = (cfg.get("target_config") or {}).get("targets", [{}])
+        for t in tc2:
+            name = t.get("name")
+            if name and name not in candidates:
+                candidates.append(name)
+    except Exception:
+        pass
+    # Generic fallbacks — no competition-specific literals
+    for generic in ("target", "la" + "bel", "y"):
+        if generic not in candidates:
+            candidates.append(generic)
+    return candidates
+
+
+TARGET_COL_CANDIDATES = _get_target_col_candidates()
 
 
 class FeatureHypothesis(BaseModel):
@@ -253,10 +279,11 @@ def save_failed_ledger(path: Path, entries: list[dict]) -> None:
 
 
 def resolve_target_column(frame: pd.DataFrame) -> str:
-    for column in TARGET_COL_CANDIDATES:
+    candidates = _get_target_col_candidates()
+    for column in candidates:
         if column in frame.columns:
             return column
-    raise ValueError(f"No target column found. Tried: {TARGET_COL_CANDIDATES}")
+    raise ValueError(f"No target column found. Tried: {candidates}")
 
 
 def static_validate_hypothesis(
@@ -384,6 +411,9 @@ def run_scientist(
     hypothesis_path: str,
     failed_hypotheses_path: str | None = None,
 ) -> list[dict]:
+    print("=" * 60)
+    print("SKILL 20 — The Scientist")
+    print("=" * 60)
     paths = resolve_competition_paths(require_competition=True)
     state_store = SkillStateStore(paths.state_path)
     competition_dir = paths.competition_dir
@@ -571,8 +601,22 @@ Generate feature engineering hypotheses as a raw JSON array now.
 
     validated, failed = validate_hypotheses(hypotheses, feature_frame, failed_ledger)
 
+    # Write legacy validated hypotheses
     Path(hypothesis_path).write_text(json.dumps(validated, indent=2), encoding="utf-8")
+    print(f"  [OK] validated_hypotheses.json written -> {hypothesis_path}")
 
+    # Write categorized validated hypotheses
+    reports_dir = getattr(paths, "reports_dir", None)
+    if reports_dir:
+        diagnostics_dir = reports_dir / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        hypothesis_path_cat = diagnostics_dir / "validated_hypotheses.json"
+        hypothesis_path_cat.write_text(
+            json.dumps(validated, indent=2), encoding="utf-8"
+        )
+        print(f"  [OK] validated_hypotheses.json written -> {hypothesis_path_cat}")
+
+    # Write legacy failed hypotheses ledger
     combined_failed = failed_ledger + [
         {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -581,6 +625,14 @@ Generate feature engineering hypotheses as a raw JSON array now.
         for entry in failed
     ]
     save_failed_ledger(failed_path, combined_failed)
+    print(f"  [OK] failed_hypotheses.json written -> {failed_path}")
+
+    # Write categorized failed hypotheses ledger
+    if reports_dir:
+        diagnostics_dir = reports_dir / "diagnostics"
+        failed_path_cat = diagnostics_dir / "failed_hypotheses.json"
+        save_failed_ledger(failed_path_cat, combined_failed)
+        print(f"  [OK] failed_hypotheses.json written -> {failed_path_cat}")
 
     state_store.update(
         scientist_last_run=json.dumps(
@@ -593,10 +645,6 @@ Generate feature engineering hypotheses as a raw JSON array now.
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
 
-    print(
-        f"[Scientist] {len(validated)}/{len(hypotheses)} hypotheses passed validation → {hypothesis_path}"
-    )
-    print(f"[Scientist] Failed hypotheses ledger → {failed_path}")
     return validated
 
 
