@@ -661,11 +661,13 @@ def _run_multi_target_gate(config, store, state) -> dict:
     # composite_direction is fixed "minimize_composite_distance": a lower
     # composite distance is better, so improvement means avg is below baseline
     # by more than the margin. When retraining_required == True the baseline
-    # resolves to anchor_oof_score_augmented via _baseline_score.
+        # resolves to anchor_oof_score_augmented via _baseline_score.
     baseline_score, baseline_key = _baseline_score(state, "score")
+    diagnosis["baseline_key"] = baseline_key
+    if baseline_score is not None:
+        diagnosis["baseline_score"] = baseline_score
     if baseline_score is None:
         diagnosis["failure_reason"] = "baseline gate failed (no baseline)"
-        diagnosis["baseline_key"] = baseline_key
         _write_failure_diagnosis(store, diagnosis)
         return {
             "status": "BLOCKED",
@@ -783,7 +785,13 @@ def _run_multi_target_gate(config, store, state) -> dict:
         },
     )
     print(f"\n[OK] Multi-target gate PASSED. New branch: {new_branch}")
-    return {"status": "PASS", "new_branch": new_branch, "avg_score": avg_score}
+    return {
+        "status": "PASS",
+        "new_branch": new_branch,
+        "avg_score": avg_score,
+        "baseline_key": baseline_key,
+        "diagnosis": {**diagnosis, "passed": True, "new_branch": new_branch},
+    }
 
 
 if __name__ == "__main__":

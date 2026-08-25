@@ -93,3 +93,77 @@ def test_block_policy_allows_when_all_classification_targets_augment(monkeypatch
     passes the composite through with retraining_required == True."""
     result, _ = _drive(monkeypatch, ["targetA", "targetB"], fail_first=False)
     assert result["retraining_required"] is True
+
+
+def _extract_pseudo_label_result(store):
+    """Pull the canonical pseudo_label_result dict out of the store updates."""
+    pr = None
+    for call in store.update.call_args_list:
+        candidate = call.kwargs.get("pseudo_label_result")
+        if isinstance(candidate, dict) and "retraining_required" in candidate:
+            pr = candidate
+    return pr
+
+
+def test_end_to_end_real_policy_flag_gates_augmented_baseline(monkeypatch):
+    """Step 8: the retraining_required=True reaching the gate must come from the
+    REAL skill_21 block-policy output (every target augmented), not a hand-set
+    boolean — and the multi-target gate must then consume
+    anchor_oof_score_augmented rather than the original anchor."""
+    from zindian.skills.skill_11_gate import _run_multi_target_gate
+
+    # -- Stage 1: real block policy, all classification targets augment -------
+    result, store = _drive(monkeypatch, ["targetA", "targetB"], fail_first=False)
+    assert result["retraining_required"] is True
+    pr = _extract_pseudo_label_result(store)
+    assert pr is not None and pr["retraining_required"] is True
+
+    # -- Stage 2: feed that real flag into the multi-target gate -------------
+    gate_config = {
+        "task_type": "classification",
+        "metric": "composite",
+        "variance_gate_threshold": 0.01,
+        "gate_margin": 0.001,
+        "use_inverse_variance_weighting": False,
+        "target_config": {
+            "targets": [
+                {"name": "targetA", "task_type": "classification", "weight": 0.5},
+                {"name": "targetB", "task_type": "classification", "weight": 0.5},
+            ]
+        },
+    }
+    gate_state = {
+        "best_variant_this_round": "variant-a",
+        "feature_round": 1,
+        "anchor_multi_target_metrics": {
+            "targetA": {"oof_f1": 0.9},
+            "targetB": {"oof_f1": 0.9},
+        },
+        "shap_multi_target_results": {
+            "targetA": {"pruning_pass": True},
+            "targetB": {"pruning_pass": True},
+        },
+        "human_gate_2_variant-a_approved": True,
+        "anchor_oof_score": 0.05,           # unfavourable original anchor
+        "anchor_oof_score_augmented": 0.20,  # favourable augmented baseline
+        "eda": {},
+        "metric_analysis": {"composite_fold_score_variance": 0.001},
+        "pseudo_label_result": pr,  # <-- real skill_21 output, not hand-set
+    }
+
+    mock_store = MagicMock()
+    gate_result = _run_multi_target_gate(gate_config, mock_store, gate_state)
+    assert gate_result["status"] == "PASS"
+    assert gate_result["diagnosis"]["baseline_key"] == "anchor_oof_score_augmented"
+
+    # Control: without the policy flag the gate must fall back to the original
+    # (unfavourable) anchor and BLOCK — proving the augmented path really is
+    # gated by skill_21's output.
+    control_state = dict(gate_state)
+    control_state["pseudo_label_result"] = {"ran": True, "retraining_required": False}
+    control_result = _run_multi_target_gate(
+        gate_config, MagicMock(), control_state
+    )
+    assert control_result["status"] == "BLOCKED"
+    assert control_result["reason"] == "baseline gate failed"
+    assert control_result["diagnosis"]["baseline_key"] == "anchor_oof_score"
