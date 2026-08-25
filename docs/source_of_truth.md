@@ -1,9 +1,9 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.6
+**Version:** v2.7
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.6: Pairwise Mutual Information S6, Consolidated S11 root writes, Preflight MT-OOF, R5 telemetry.aggregate, and logging deduplication)
+**Last updated:** August 2026 (v2.7: MASE fold-score space closed (F4), multi-target gate parity (H1), augmented-baseline consumption (H3/D2), composite `se_oof` + regression-only scope, `fold_score_variance` doc fix (D1), strict A12 block policy (D1-skill_21))
 
 ---
 
@@ -321,7 +321,9 @@ an evaluation matrix determined by `config["metric"]`:
    * If `config["metric"] == "rmsle"`: Transform targets to
      log-space: `y_trans = ln(y + 1)`.
    * If `config["metric"] == "root_mean_squared_error"` or
-     `"mean_absolute_error"`: Maintain identity scale: `y_trans = y`.
+     `"mean_absolute_error"` or `"mase"`: Maintain identity scale:
+     `y_trans = y`. MASE operates on the original target scale — never
+     log-space.
 
 2. **Prediction Domain Mapping Matrix:**
    * If `config["metric"] == "rmsle"`: Clip log-space predictions
@@ -329,7 +331,7 @@ an evaluation matrix determined by `config["metric"]`:
      then execute inverse exponential mapping to restore original
      scale: `y_pred = exp(y_pred_log) - 1`.
    * If `config["metric"] == "root_mean_squared_error"` or
-     `"mean_absolute_error"`: Apply domain clipping directly to
+     `"mean_absolute_error"` or `"mase"`: Apply domain clipping directly to
      the raw output using bounds specified in
      `config["target_domain_bounds"]`:
      `y_pred = max(min_bound, min(max_bound, y_pred))`.
@@ -338,6 +340,30 @@ an evaluation matrix determined by `config["metric"]`:
    * RMSLE is computed in original space:
      `sqrt( (1/N) * sum( (ln(y_i + 1) - ln(y_hat_i + 1))^2 ) )`
    * RMSE (root_mean_squared_error) and MAE (mean_absolute_error) are computed in original space with standard scikit-learn functions, operating on the domain-clipped predictions.
+   * MASE (`"mase"`) — **[v2.7] F4 closed** — uses Option A with a single
+     **global** `MAE_naive_baseline` as denominator (the naive/persistence
+     baseline of the training series, computed once in `skill_04` and
+     stored as `eda["MAE_naive_baseline"]`); each fold is scored on
+     **MAE** (not RMSE):
+     `MASE_fold = mean_absolute_error(y_val, yhat_val) / MAE_naive_baseline`
+     The final OOF score is the mean of the MASE fold scores
+     `oof_mase = mean(MASE_fold_scores)`.
+     Direction: `minimize` (MASE = 1.0 is the naive baseline; lower is
+     better).
+     **Baseline guard (no silent unscaled fallback):** a `"mase"` config
+     without a positive `MAE_naive_baseline` is invalid. `skill_08_anchor`
+     raises `ValueError` **before** training begins (single point of
+     failure), and the in-loop fold scorer in `_lightgbm_shared.py`
+     **asserts** the baseline is present and `> 0`. A soft "log a warning
+     and substitute the unscaled `fold_mae`" fallback is explicitly
+     **forbidden** — it would export a raw-MAE value under the MASE name
+     and resurrect the F4 silent-wrong-gating failure one layer lower.
+     For backward compatibility `oof_rmse = mean(MASE_fold_scores)` is
+     still populated on the run result so `skill_08`'s
+     `oof_logloss = oof_rmse` mapping stays correct, but the unambiguous
+     value is the new `oof_mase` field. Multi-target `mase` seeds the
+     composite distance directly with the dimensionless MASE score
+     (no `target_std` division, mirroring `rmsle`).
 
 Breaking this contract in any skill invalidates all cross-branch score comparisons. A contract violation is a hard halt — not a warning.
 
@@ -387,6 +413,48 @@ effective_variance_threshold = (
 ```
 
 Dividing by the sum of regression weights (rather than treating them as summing to 1.0) removes the suppression artifact when classification targets are present. Verified against single regression target at weight 0.60 (reduces to `target_std` unmodified) and two regression targets at 0.30/0.30 (produces proper weighted RMS independent of classification weight).
+
+#### Composite `se_oof` for the 1-SE promotion margin (multi-target only) — **[v2.7]**
+
+The multi-target gate folds a regression-bearing composite standard error into
+the promotion margin exactly as the single-target gate folds the NB-based
+`se_oof`. With the per-target NB variances already computed in
+`metric_analysis["per_target"][name]["fold_score_variance"]` (each NB-corrected,
+so each already embeds the K-fold geometry correction `1/K + gamma_bar`), the
+composite standard error of the weighted mean is:
+
+```
+composite_se_oof = sqrt( SUM_{i in regression_targets} ( w_eff_i * per_target_fold_score_variance_i ) )
+```
+
+**Two hard rules (v2.7, resolving D0/Fix-1 and Fix-3):**
+
+1. **No `/sqrt(K)`, no `/sqrt(N)`.** `Var_NB` already embeds the K-fold geometry
+   correction; dividing the composite by any further square-root of the fold
+   count discount the margin a second time and makes the composite gate
+   systematically too tight relative to the per-target margins it is built from.
+   This is the same A.1 double-scaling error the single-target `SE_OOF` guard
+   (`tests/test_nadeau_bengio_exact_value.py`) already forbids — the composite
+   must obey the identical convention so both levels stay consistent.
+
+2. **Regression targets only (`Fix-3` scope).** The sum iterates only
+   `t["task_type"] == "regression"` targets, matching `effective_target_std`
+   (which also sums only regression targets) and the D0/D4 1-SE scope
+   (bounded classification metrics are excluded — a classification-target level
+   of variance must NOT raise the margin of the promotion comparison). When no
+   regression target exists, `composite_se_oof` is `None`/absent and the
+   classification-only composite uses the raw thresholds with no SE floor.
+
+The gate then writes the margin as
+`effective_gate_margin = max(scaled_gate_margin, 1 * composite_se_oof)` for the
+regression-bearing composite (mirroring the single-target
+`max(gate_margin * target_std, 1 * se_oof)`).
+
+`skill_12` also emits a per-target `se_oof = sqrt(per_target_fold_score_variance)`
+for **every** target (classification and regression) so downstream consumers
+and L2-style tooling can read the per-target standard error directly — this
+resolves the former "multi-target path emits no per-target `se_oof`" gap
+(L2).
 
 
 ---
@@ -1450,20 +1518,28 @@ population variance (ddof=0) underestimates by a factor of
 5/4 = 1.25 — a meaningful difference at the
 `variance_gate_threshold: 0.01` boundary.
 
-`fold_score_variance` written here is the raw unbiased sample
-variance (ddof=1). Normalisation by `target_std` for regression
-tasks occurs at `skill_11` gate consumption time, not here.
-`skill_12` writes the raw value; `skill_11` computes
-`effective_variance_threshold = variance_gate_threshold *
-(target_std ** 2)` when `task_type == regression`.
+The primary `fold_score_variance` written here is the **Nadeau-Bengio corrected**
+value (`fold_score_variance_nb = raw_sample_variance(ddof=1) * (1/K + n_val/n_train)`)
+— **[v2.7] D1** rectifies an earlier paragraph that called this key the "raw
+value": code (`skill_12_metric.py`) has always written `fold_score_variance =
+fold_score_variance_nb`, and `skill_11` consumes it on that basis. The raw
+unbiased sample variance (`ddof=1`) is reported separately as
+`fold_score_variance_sample`. The same naming carries into the multi-target
+`per_target` block: `per_target[*]["fold_score_variance"]` is NB-corrected and
+`per_target[*]["fold_score_variance_sample"]` is the raw ddof=1 sample variance.
 
 For classification tasks, the raw `variance_gate_threshold`
 is used directly at `skill_11` — bounded metrics need no
 scale correction and `skill_12` output is consumed as-is.
 
-composite_fold_score_variance uses the identical weighted-normalized-
-distance approach as the composite score, computed per-fold before
-aggregating with ddof=1.
+`composite_fold_score_variance` uses the identical weighted-normalized-
+distance approach as the composite score, computed per-fold and then
+aggregated with ddof=1. **Documented asymmetry:** the composite is the **raw**
+ddof=1 sample variance of the composite fold scores (never NB-corrected) —
+it is an aggregate diagnostic, while the per-target and single-target
+variances are NB-corrected because they feed the 1-SE promotion margin and
+inverse-variance weighting. (See the "[v2.7] composite `se_oof`" section for
+the NB-grounded composite standard error used in the gate margin.)
 
 For multi-target competitions, the variance threshold uses:
 
@@ -2441,7 +2517,7 @@ and are recorded here for audit trail only.
 | R5 | `telemetry.aggregate` not written | Implemented 2026-08-24 — orchestrator post-phase loop aggregation added; verification checks implemented in `skill_22`. |
 | Track 2B | Orphaned `feature_policy.json` at root | Implemented 2026-08-24 — verified via workspace and competition grep that no root writes or reads remain. |
 | F3 | Hardcoded seeds in skill_10_shap.py | Resolved 2026-08-25 — Replaced hardcoded seed=42 with config-driven random_seed parameter. |
-| F4 (partial) | MASE Routing in target lifecycle | Routing key landed 2026-08-25 — `"mase"` mapped in `skill_08_anchor.py` `metric_map`, preventing silent `oof_f1` fallback. Fold-score space remains RMSE (no naive-baseline scaling in `_lightgbm_shared.py`); residual tracked in OPEN section as F4. |
+| F4 (partial) | MASE Routing in target lifecycle | Routing key landed 2026-08-25 — `"mase"` mapped in `skill_08_anchor.py` `metric_map`. **Closed 2026-08-25 (v2.7):** full Option A MASE fold scoring shipped (per-fold MAE / global `MAE_naive_baseline`, `oof_mase` field, hard baseline-assert in `_lightgbm_shared.py`, upstream `ValueError` guard in `skill_08_anchor`). No longer OPEN — see §7 resolved designation. |
 
 ---
 
@@ -2469,22 +2545,22 @@ Status:         Pending numeric-equivalence reference test suite integration.
 Severity:       Low — estimator functions correctly, but numerical precision is unverified.
 ```
 
-**F4 (partial) — MASE Score-Space Residual**
+**F4 — MASE Score-Space Residual — [RESOLVED — v2.7]**
 
 ```
-Description:    Primary-metric routing exists ("mase" key in skill_08_anchor.py
-                metric_map), but oof_logloss resolves to oof_rmse (skill_08 L223) and
-                _lightgbm_shared.py computes plain RMSE fold scores — there is no
-                branch dividing by MAE_naive_baseline when config metric is "mase".
-                Meanwhile skill_11_gate SCALE_INVARIANT_METRICS treats mase thresholds
-                as scale-invariant. A competition configuring metric: "mase" would
-                therefore compare RMSE-space scores against MASE-calibrated
-                thresholds — a unit-space mismatch, not a correct MASE evaluation.
-Status:         Pending SoT §2 Regression Target Transformation Lifecycle definition
-                of a "mase" case, plus a naive-baseline-scaled fold-scoring branch in
-                _lightgbm_shared.py. Do not implement without that contract first.
-Severity:       Medium — silently wrong gating scale if mase is ever configured;
-                latent only (no active competition currently uses metric: "mase").
+Description:    Primary-metric routing existed ("mase" key in skill_08_anchor.py
+                metric_map) but fold scores resolved to plain RMSE — no
+                naive-baseline branch — so a mase config compared RMSE-space
+                scores against MASE-calibrated thresholds.
+Status:         RESOLVED 2026-08-25 (v2.7). Full Option A MASE folding shipped:
+                (a) SoT §2 defines the "mase" lifecycle; (b) _lightgbm_shared.py
+                scores each fold as MAE(y_val, yhat_val) / MAE_naive_baseline
+                with a hard assertion (no silent unscaled fallback) and exposes
+                a dedicated oof_mase field (oof_rmse = oof_mase for backward
+                compatibility); (c) skill_08_anchor threads the baseline and
+                raises ValueError before training if a mase config has no
+                positive MAE_naive_baseline. Skill_11 thresholds are now correctly
+                applied to MASE-space scores.
 ```
 
 ---
@@ -2505,7 +2581,7 @@ Severity:       Low — interaction-based leakage is rare in standard tabular
 ```
 
 ---
-*Version: v2.6 — OPEN (F1, F2, F4-residual)*
+*Version: v2.7 — OPEN (F1, F2)*
 *Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*
-*S2/F4 note (2026-08-25): "mase" routing key mapped in skill_08_anchor.py metric_map;
-fold-score space correction (naive-baseline scaling) remains open as F4 (partial).*
+*F4 note (2026-08-25): "mase" routed and fully option-A scored in v2.7 —
+fold-score space closed; no residual.*
