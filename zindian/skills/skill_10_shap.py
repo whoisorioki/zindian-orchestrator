@@ -573,12 +573,14 @@ def _build_pruned_feature_set(
     }
 
 
+# S6 - implemented 2026-08-24
 def _run_pairwise_mi_audit(
     frame: pd.DataFrame,
     ranking: pd.DataFrame,
     target: str,
     task_type: str,
     cfg_shap: Any,
+    seed: int | None = None,
 ) -> list[dict]:
     """S6: Pairwise Multicollinear Leak Detection (advisory, non-blocking)."""
     if cfg_shap is None:
@@ -605,7 +607,14 @@ def _run_pairwise_mi_audit(
     from sklearn.neighbors import NearestNeighbors, KDTree
     from sklearn.preprocessing import scale
 
-    rng = np.random.default_rng(42)
+    if seed is None:
+        from zindian.config import get_seed
+        seed_val = get_seed()
+    else:
+        seed_val = seed
+    seed_val = int(seed_val if seed_val is not None else 42)
+
+    rng = np.random.default_rng(seed_val)
 
     for i in range(len(top_features)):
         for j in range(i + 1, len(top_features)):
@@ -912,6 +921,7 @@ def run(
         target=target,
         task_type=task_type,
         cfg_shap=_cfg_shap,
+        seed=seed,
     )
 
     # Use the shared LightGBM CV path to test the correlation-pruning wrapper.
@@ -1154,6 +1164,7 @@ def _run_multi_target_shap(
             target=target_name,
             task_type=target_task,
             cfg_shap=config.get("shap"),
+            seed=seed,
         )
 
         # Use appropriate CV strategy for task type

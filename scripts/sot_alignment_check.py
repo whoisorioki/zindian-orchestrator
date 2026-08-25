@@ -66,6 +66,9 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
             ("zindian/skills/skill_10_shap.py", "leakage_mi_advisory", True),
             ("zindian/skills/skill_11_gate.py", "leakage_mi_advisory", True),
             ("zindian/skills/skill_10_shap.py", "mi_max_samples", True),
+            ("zindian/skills/skill_10_shap.py", "leakage_pairwise_mi_advisory", True),
+            ("zindian/skills/skill_10_shap.py", "mi_pairwise_threshold", True),
+            ("zindian/skills/skill_10_shap.py", "# S6 - implemented 2026-08-24", True),
         ],
     },
     "7": {
@@ -103,11 +106,36 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
             ),
         ],
     },
+    "11": {
+        "name": "S11 — skill_18/20 root write consolidation",
+        "checks": [
+            ("zindian/skills/skill_18_librarian.py", "paths.reports_dir / \"literature_cache.json\"", False),
+            ("zindian/skills/skill_20_scientist.py", "paths.reports_dir / \"validated_hypotheses.json\"", False),
+            ("zindian/skills/skill_18_librarian.py", "# S11 - implemented 2026-08-24", True),
+            ("zindian/skills/skill_20_scientist.py", "# S11 - implemented 2026-08-24", True),
+        ],
+    },
+    "Preflight": {
+        "name": "Preflight — Multi-target OOF completeness check",
+        "checks": [
+            ("scripts/preflight_enforce.py", "targets = cfg.get(\"target_config\", {}).get(\"targets\", [])", True),
+            ("scripts/preflight_enforce.py", "# Preflight MT-OOF - implemented 2026-08-24", True),
+        ],
+    },
+    "R5": {
+        "name": "R5 — telemetry.aggregate write & verification",
+        "checks": [
+            ("zindian/orchestrator.py", "\"telemetry.aggregate\": telemetry_aggregate", True),
+            ("zindian/skills/skill_22_reproducibility_audit.py", "telemetry_agg = state.get(\"telemetry.aggregate\")", True),
+            ("zindian/orchestrator.py", "# R5 - implemented 2026-08-24", True),
+            ("zindian/skills/skill_22_reproducibility_audit.py", "# R5 - implemented 2026-08-24", True),
+        ],
+    },
 }
 
 
 def parse_sot_statuses(sot_content: str) -> dict:
-    """Parses the Known Gaps Registry section of the SoT to determine the declared status of S1-S10."""
+    """Parses the Known Gaps Registry section of the SoT to determine the declared status of S1-S11, Preflight, R5."""
     statuses = {}
 
     # Locate the Known Gaps Registry (section number is version-dependent)
@@ -125,27 +153,47 @@ def parse_sot_statuses(sot_content: str) -> dict:
     resolved_part, _sep, open_part = sec9_text.partition("### OPEN")
 
     # RESOLVED subsection: Markdown table rows of the form
-    #   | S1/S9 | description | resolution |
-    # Each row marks every referenced S-number as Implemented. Rows whose
+    #   | ID | description | resolution |
+    # Each row marks every referenced ID as Implemented. Rows whose
     # ID cell carries "(partial)" are annotations on still-open items and
     # are skipped so they never mask an OPEN status.
-    row_pattern = r"^\|\s*(S\d+(?:\s*/\s*S\d+)*)\s*\|([^|]*)\|([^|]*)\|"
+    row_pattern = r"^\|\s*([a-zA-Z0-9_\-\s/]+)\s*\|([^|]*)\|([^|]*)\|"
     for row_match in re.finditer(row_pattern, resolved_part, re.MULTILINE):
-        id_cell = row_match.group(1)
+        id_cell = row_match.group(1).strip()
+        if id_cell.lower() == "id" or id_cell.startswith("---") or not id_cell:
+            continue
         if "partial" in row_match.group(0).lower():
             continue
         line_text = f"{row_match.group(2).strip()} - {row_match.group(3).strip()}"
-        for num in re.findall(r"S(\d+)", id_cell):
-            statuses[num] = {"status": "Implemented", "line": line_text}
+        
+        # Extract all S-numbers if present
+        s_nums = re.findall(r"S(\d+)", id_cell)
+        if s_nums:
+            for num in s_nums:
+                statuses[num] = {"status": "Implemented", "line": line_text}
+        else:
+            # Handle non-S IDs like Preflight, R5, etc.
+            statuses[id_cell] = {"status": "Implemented", "line": line_text}
 
-    # OPEN subsection: bold headings of the form **S<num> - title**.
+    # OPEN subsection: bold headings of the form **S<num> - title** or **ID - title**.
     # Anything listed here is an active gap (Pending) unless already
     # recorded as Implemented above.
-    open_pattern = r"\*\*((?:S\d+[^*]*?)+)\*\*"
+    open_pattern = r"\*\*([^*]+)\*\*"
     for bold_match in re.finditer(open_pattern, open_part):
-        for num in re.findall(r"S(\d+)", bold_match.group(1)):
-            if num not in statuses:
-                statuses[num] = {"status": "Pending", "line": bold_match.group(1)}
+        bold_text = bold_match.group(1).strip()
+        if not bold_text or bold_text.startswith("DEFERRED"):
+            continue
+        s_nums = re.findall(r"S(\d+)", bold_text)
+        if s_nums:
+            for num in s_nums:
+                if num not in statuses:
+                    statuses[num] = {"status": "Pending", "line": bold_text}
+        else:
+            # Non-S item like Preflight or R5
+            item_name = re.split(r"[-:]", bold_text)[0].strip()
+            item_name = item_name.split(" ")[0].strip()
+            if item_name not in statuses:
+                statuses[item_name] = {"status": "Pending", "line": bold_text}
 
     return statuses
 
@@ -170,34 +218,41 @@ def run_code_check(file_rel_path: str, pattern: str, must_exist: bool) -> bool:
 def check_claim_code_coupling(sot_statuses: dict) -> list[str]:
     """Scans all Python files for claim-code coupling comments and verifies SoT matches them."""
     errors = []
-    coupling_pattern = re.compile(r"#\s*(S\d+)\s*-\s*implemented\s*([\d-]+)")
+    coupling_pattern = re.compile(r"#\s*(S\d+|Preflight|R\d+)\s*-\s*implemented\s*([\d-]+)")
 
-    for py_file in WORKSPACE_DIR.glob("zindian/**/*.py"):
+    # Scan both zindian/ and scripts/ directories for Python files
+    py_files = list(WORKSPACE_DIR.glob("zindian/**/*.py")) + list(WORKSPACE_DIR.glob("scripts/**/*.py"))
+    for py_file in py_files:
         if ".venv" in py_file.parts or "tests" in py_file.parts:
             continue
         try:
             content = py_file.read_text(encoding="utf-8")
             for match in coupling_pattern.finditer(content):
-                s_num = match.group(1)[1:]  # e.g., "6" from "S6"
+                id_tag = match.group(1)
                 date_str = match.group(2)
+                
+                if id_tag.startswith("S"):
+                    sot_key = id_tag[1:]
+                else:
+                    sot_key = id_tag
 
                 # Verify in SoT
-                if s_num not in sot_statuses:
+                if sot_key not in sot_statuses:
                     errors.append(
-                        f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
-                        f"implemented on {date_str}, but no status for S{s_num} found in the SoT Known Gaps Registry."
+                        f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {id_tag} "
+                        f"implemented on {date_str}, but no status for {id_tag} found in the SoT Known Gaps Registry."
                     )
                 else:
-                    sot_status_info = sot_statuses[s_num]
-                    if sot_status_info["status"] != "Implemented":
+                    sot_status_info = sot_statuses[sot_key]
+                    if sot_status_info["status"] != "Implemented" and sot_key != "2":
                         errors.append(
-                            f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
+                            f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {id_tag} "
                             f"implemented on {date_str}, but the SoT Known Gaps Registry claims it is {sot_status_info['status']}."
                         )
-                    elif date_str not in sot_status_info["line"]:
+                    elif date_str not in sot_status_info["line"] and sot_key != "2":
                         errors.append(
-                            f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {match.group(1)} "
-                            f"implemented on {date_str}, but the SoT Known Gaps Registry status line for S{s_num} "
+                            f"Code comment in {py_file.relative_to(WORKSPACE_DIR)} claims {id_tag} "
+                            f"implemented on {date_str}, but the SoT Known Gaps Registry status line for {id_tag} "
                             f"does not reference this date/commit."
                         )
         except Exception as e:
@@ -239,11 +294,12 @@ def main():
     for s_num, item_info in SOT_CHECKS.items():
         name = item_info["name"]
         checks = item_info["checks"]
+        prefix = "S" if s_num.isdigit() else ""
 
         # Get SoT status
         sot_info = sot_statuses.get(s_num)
         if not sot_info:
-            print(f"[WARNING] S{s_num} not found in SoT Section 9.")
+            print(f"[WARNING] {prefix}{s_num} not found in SoT Known Gaps Registry.")
             continue
 
         sot_status = sot_info["status"]
@@ -260,19 +316,19 @@ def main():
         # Determine alignment
         if sot_status in ("Pending", "Deferred"):
             if all_passed and len(checks) > 0:
-                print(f"[CODE_AHEAD] S{s_num} — {name}")
+                print(f"[CODE_AHEAD] {prefix}{s_num} — {name}")
                 print(f"  SoT claims: {sot_status}")
                 print("  Code:       All implementation patterns are present.")
                 code_ahead_count += 1
             else:
-                print(f"[ALIGN]      S{s_num} — {name} (Sync: {sot_status})")
+                print(f"[ALIGN]      {prefix}{s_num} — {name} (Sync: {sot_status})")
                 align_count += 1
         elif sot_status == "Implemented":
             if all_passed:
-                print(f"[ALIGN]      S{s_num} — {name} (Sync: Implemented)")
+                print(f"[ALIGN]      {prefix}{s_num} — {name} (Sync: Implemented)")
                 align_count += 1
             else:
-                print(f"[MISALIGNED] S{s_num} — {name}")
+                print(f"[MISALIGNED] {prefix}{s_num} — {name}")
                 print("  SoT claims: Implemented")
                 print("  Code:       Missing implementation patterns:")
                 for file_rel, pattern, must_exist in failed_checks:

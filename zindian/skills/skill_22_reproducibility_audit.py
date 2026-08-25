@@ -234,6 +234,7 @@ def _audit_derived_artifact_fingerprints(
     return (len(issues) == 0, issues)
 
 
+# R5 - implemented 2026-08-24
 def _check_telemetry_aggregate(
     state: dict[str, Any], config: dict[str, Any]
 ) -> tuple[bool, list[str]]:

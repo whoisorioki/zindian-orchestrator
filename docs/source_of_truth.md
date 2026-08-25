@@ -3,7 +3,7 @@
 **Version:** v2.6
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.6: Pairwise Pearson group proxy S6, Consolidated S11 root writes, Preflight MT-OOF, R5 telemetry.aggregate, and logging deduplication)
+**Last updated:** August 2026 (v2.6: Pairwise Mutual Information S6, Consolidated S11 root writes, Preflight MT-OOF, R5 telemetry.aggregate, and logging deduplication)
 
 ---
 
@@ -1388,7 +1388,9 @@ For each feature variant branch:
 >   - **Classification:** NMI >= threshold remains primary/blocking.
 >   - **Regression — Primary (blocking):** Pearson |r| >= `regression_threshold` (0.98) flags feature to `leaked_features`, blocks promotion, and triggers `skill_07` regenerate directive (checked on SHAP-dominant feature).
 >   - **Regression — Verification (advisory, non-blocking):** If `enable_mi_regression_subsample: true` in config, subsampled `mutual_info_regression` runs systematically on all feature columns. Features flagged by MI are written to `SKILL_STATE.json["leakage_mi_advisory"]` (not `leaked_features`), do NOT block `skill_11` promotion, and do NOT trigger auto-regeneration.
->   - **Pairwise Multicollinear Leak Detection (advisory, non-blocking):** If `enable_mi_regression_subsample: true` is enabled in config, the system computes the joint mutual information score for all pairs of the top $N$ features (default $N=10$, config-overridable via `mi_pairwise_top_n`, ranked by mean absolute SHAP value). For each pair, the joint MI is computed by running `mutual_info_regression` (or `mutual_info_classif` for classification) on the 2-column feature matrix against the target. If the score exceeds the threshold `mi_pairwise_threshold` (default `0.90`), the pair is written to `SKILL_STATE.json["leakage_pairwise_mi_advisory"]`.
+>   - **Pairwise Multicollinear Leak Detection (advisory, non-blocking):** If `enable_mi_regression_subsample: true` is enabled in config, the system computes the joint mutual information score for all pairs of the top $N$ features (default $N=10$, config-overridable via `mi_pairwise_top_n`, ranked by mean absolute SHAP value). For each pair, the joint MI is computed on the 2-column feature matrix against the target, normalized by dividing the joint MI by the target entropy (for classification) or `var(y)` (for regression) to yield a scale-bounded score. If the normalized joint MI score exceeds the threshold `mi_pairwise_threshold` (default `0.90`), the pair is written to `SKILL_STATE.json["leakage_pairwise_mi_advisory"]`.
+>     - **Reproducibility (R1):** Subsampling and noise injection use the global configuration seed to ensure deterministic, reproducible audits.
+>     - **Limitations:** (1) **SHAP Scope Restriction:** Scanning is limited to the top-$N$ SHAP features; it does not capture split-leakage involving lower-ranked features or split-leakage across 3+ features. (2) **Multiple testing:** Performing $C(N, 2)$ tests (45 tests at $N=10$) increases the family-wise error rate; no multiple-testing correction (e.g. Bonferroni) is applied, hence the audit is strictly advisory.
 >   - **Surfacing:** Non-empty `leakage_mi_advisory` and `leakage_pairwise_mi_advisory` entries are surfaced to the operator at **Human Gate 2** for review. Threshold parameters are read from `challenge_config.json` per A5.
 
 Multi-target extension:
@@ -2420,7 +2422,7 @@ and are recorded here for audit trail only.
 | C1 | Bootstrap `dag_phase` prevented config writes | `"phase_1_integrity_locked"` added to `allowed_write_phases` in skill_02 (L867) and skill_05 (L610); bootstrap sets this phase at L119 |
 | GAP-4 | `skill_04_eda` did not write `temporal_index_confirmed` / `group_structure_confirmed` | Resolved v2.3 — both lean booleans now derived from BAND_MM pattern, datetime/monotonicity dtype inference, and <5% cardinality ratio |
 | S1/S9 | Bessel's correction underestimation + absolute promotion margins | Implemented 2026-08-03 — `skill_12_metric` L167–182 computes NB-corrected `fold_score_variance_nb` + `se_oof`; `skill_11_gate` L134 applies `max(margin, 1.0 * se_oof)` |
-| S2 | MAPE zero-target bias + MASE baseline | Implemented 2026-08-03 — `compute_secondary_metrics` in `state.py` L173–214; group-wise naive baseline in `skill_04_eda` L671–692 |
+| S2 (partial) | MAPE zero-target bias + MASE baseline | Implemented 2026-08-03 — secondary diagnostic MASE implemented; primary-metric MASE routing remains open |
 | S3 | Non-uniform metric scaling / composite weighting | Implemented 2026-08-03 — Inverse-variance weighting in `skill_12_metric` L88–149 and `skill_11_gate` L188–236 |
 | S4 | Correlation-based pruning used raw predictions not residuals | Implemented 2026-08-03 — `_prune_collinear()` in `oracle_fusion_core.py` accepts `y_true` and computes error residuals; call site at L687 passes `y_true` |
 | S5 | Multi-target pseudo-label recombination policy not enforced | Implemented 2026-08-03 — Both policies (`freeze_unaugmented_targets_at_original`, `block_composite_until_all_targets_augmented_or_none`) enforced at `skill_21_pseudo_label.py` L567 and L1034–1132 |
@@ -2438,6 +2440,25 @@ and are recorded here for audit trail only.
 | Preflight | Multi-target OOF completeness check not per-branch | Implemented 2026-08-24 — added per-branch OOF completeness count assertion to A7 check in `preflight_enforce.py` |
 | R5 | `telemetry.aggregate` not written | Implemented 2026-08-24 — orchestrator post-phase loop aggregation added; verification checks implemented in `skill_22` |
 | Track 2B | Orphaned `feature_policy.json` at root | Implemented 2026-08-24 — verified via workspace and competition grep that no root writes or reads remain; all feature policies are written strictly to `reports/audits/feature_policy.json`. |
+
+---
+
+### OPEN — Active gaps
+
+**S2 (partial) — Primary-Metric MASE Routing**
+
+```
+SoT Contract:   MASE is handled as a primary optimization metric. If a competition
+                configures "mase" as the primary metric, the model training and
+                gating logic evaluates candidates using MASE.
+Code Reality:   MASE is only computed as a secondary diagnostic metric in the state
+                OOF records. If a competition configures "mase" as the primary
+                metric, the model evaluation maps "mase" to the default RMSE score
+                (yielding 0.0 for regression tasks or evaluating RMSE instead of
+                scale-invariant MASE).
+Status:         Pending implementation of scale-invariant MASE routing.
+Severity:       Medium — prevents using MASE as the primary optimization metric.
+```
 
 ---
 

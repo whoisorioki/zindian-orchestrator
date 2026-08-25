@@ -405,6 +405,7 @@ def validate_hypotheses(
     return kept, failed
 
 
+# S11 - implemented 2026-08-24
 def run_scientist(
     hypotheses_path: str,
     priorart_path: str,

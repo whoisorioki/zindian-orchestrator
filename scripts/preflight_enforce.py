@@ -564,6 +564,7 @@ def verify_section_1_assumptions(
                     f"[A7 OOF contract Violation] '{k}' is missing 'cv_strategy_id' tag in state"
                 )
 
+    # Preflight MT-OOF - implemented 2026-08-24
     # Completeness check (multi-target only)
     targets = cfg.get("target_config", {}).get("targets", [])
     if isinstance(targets, list) and len(targets) > 1:

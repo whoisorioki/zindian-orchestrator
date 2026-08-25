@@ -732,7 +732,7 @@ before it is resolved in code.
 
 **v2.4 Statistical Migration (August 2026):**
 - ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
-- ✅ **S2 (MASE Metric):** Shipped MASE naive baseline reporting and error handling in `skill_12`.
+- ⚠️ **S2 (MASE Metric):** Shipped MASE naive baseline reporting and error handling in `skill_12` (secondary diagnostic only); primary-metric MASE routing remains an open gap.
 - ✅ **S3 (Inverse-Variance Weighting):** Shipped dynamic target weighting `w_k_eff = w_k / (sigma_k_NB^2 + epsilon)` for multi-target composite scores.
 - ✅ **S4 (Residual Diversity):** Shipped Kuncheva residual vector correlation in `skill_13` model fusion collinearity pruning.
 - ✅ **S6 (Two-Tier Leak Audit):** Shipped Pearson primary/blocking + advisory subsampled MI audit in `skill_10`.
@@ -785,6 +785,7 @@ all SoT-specified eda sub-block fields with correct defaults.
 2. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
 3. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
 4. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
+5. **S2 (partial) — Primary-Metric MASE Routing:** MASE is only implemented as a secondary diagnostic metric. Primary MASE routing in training and gating remains an open gap.
 
 ---
 

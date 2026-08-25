@@ -421,6 +421,7 @@ def _build_domain_hypotheses(entries: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+# S11 - implemented 2026-08-24
 def run_librarian(
     config_path: str | None = None, cache_path: str | None = None
 ) -> dict:

@@ -1118,6 +1118,7 @@ def run_phase(
                 "message": f"Skill {skill_name} not yet implemented",
             }
 
+    # R5 - implemented 2026-08-24
     # Mark phase complete and write telemetry.aggregate in state
     try:
         from .state import SkillStateStore
