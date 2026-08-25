@@ -1075,14 +1075,13 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
 
-    # A12 only applies when there are multiple targets AND mixed task types
+    # A12 applies when there are multiple targets AND at least one is
+    # classification (SoT A12 mandatory-field rule). [v2.7] Widened from the
+    # previous mixed-only gate, which left the strict block policy unreachable
+    # for all-classification multi-target competitions.
     if len(targets) > 1:
         task_types = set(t.get("task_type") for t in targets if isinstance(t, dict))
-        if (
-            len(task_types) > 1
-            and "classification" in task_types
-            and "regression" in task_types
-        ):
+        if "classification" in task_types:
             policy = target_config.get("pseudo_label_recombination_policy")
             LEGAL_POLICIES = {
                 "freeze_unaugmented_targets_at_original",
@@ -1182,10 +1181,23 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
                         )
 
     elif policy == "block_composite_until_all_targets_augmented_or_none":
-        if regression_targets:
-            print(
-                "\n[FAIL] A12 Policy: BLOCKED - Cannot augment all targets (regression not supported)"
-            )
+        # [v2.7 / D1-skill_21] Strict A12 block: verify EVERY classification target
+        # actually augmented (not just check regression-target presence). Regression
+        # pseudo-labelling is out of scope, so any regression target also blocks.
+        all_augmented = all(
+            augmented_results.get(t["name"], {}).get("augmented", False)
+            for t in classification_targets
+        )
+        if regression_targets or not all_augmented:
+            if regression_targets:
+                print(
+                    "\n[FAIL] A12 Policy: BLOCKED - Cannot augment all targets (regression not supported)"
+                )
+            else:
+                print(
+                    "\n[FAIL] A12 Policy: BLOCKED - One or more classification targets "
+                    "failed to augment; the composite must not be promoted partially augmented."
+                )
             retraining_required = False
         else:
             print(
