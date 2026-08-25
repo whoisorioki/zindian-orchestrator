@@ -5,18 +5,30 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 ## [v2.6-close-2026-08-25]
 
 ### Added
-- **Pairwise Mutual Information Leakage Audit (S6):** Implemented pairwise MI scan for top-10 SHAP features in `zindian/skills/skill_10_shap.py`. For each pair, the joint MI against the target is computed and compared against the `mi_pairwise_threshold` (default 0.90). If it exceeds the threshold, the pair is flagged in `SKILL_STATE.json["leakage_pairwise_mi_advisory"]` as an advisory alert for human review.
-- **Robust Session Log Deduplication & Retention (Track 2A):** Implemented content-hash-based session log deduplication in `zindian/skills/skill_15_reporter.py` to prevent filesystem flooding. Identical startup events (excluding timestamp) reuse the latest existing session log file. Enforced a rolling 14-file retention window to clean up older session log files under `reports/sessions/`.
-- **Preflight Multi-Target OOF Completeness Check (A7-MT):** Added per-branch OOF record completeness check in `scripts/preflight_enforce.py` to verify that every active branch has exactly $N$ OOF records, where $N$ = number of targets in `target_config.targets`.
-- **Post-Loop Telemetry Aggregation (R5):** Configured orchestrator `run_phase` in `zindian/orchestrator.py` to write `telemetry.aggregate` containing summed duration, token counts, and cost metrics post-phase; verified by `skill_22_reproducibility_audit.py` during sign-off.
-- **Unit and Integration Tests:** Developed comprehensive unit tests in `tests/test_real_findings.py`, `tests/test_shap_audit_unit.py`, and `tests/test_skill22_audit.py` to verify the pairwise MI, session log deduplication, preflight MT-OOF, and telemetry aggregation logic.
+- **Pairwise Mutual Information Leakage Audit (S6):** Implemented pairwise MI scan for top-10 SHAP features in `zindian/skills/skill_10_shap.py` (`_run_pairwise_mi_audit`). Joint MI is estimated via a KSG-style digamma/kNN estimator (sklearn `mutual_info_*` cannot compute joint two-feature MI), normalized by target entropy (classification) or `var(y)` (regression), compared against `mi_pairwise_threshold` (default 0.90). Flagged pairs land in `SKILL_STATE.json["leakage_pairwise_mi_advisory"]` — advisory-only, surfaced at Human Gate 2. Known limitation logged as SoT §7 **F1** (regression normalization not scale-invariant); estimator known-answer validation pending as **F2**.
+- **Robust Session Log Deduplication & Retention (Track 2A):** Implemented content-hash-based session log deduplication in `zindian/skills/skill_15_reporter.py`. Identical startup events (excluding timestamp) reuse the latest existing session log file; rolling 14-file retention window prunes old logs under `reports/sessions/`.
+- **Preflight Multi-Target OOF Completeness Check (A7-MT):** Added per-branch OOF record completeness check in `scripts/preflight_enforce.py` verifying every active branch has exactly $N$ OOF records, where $N$ = number of targets in `target_config.targets`.
+- **Post-Loop Telemetry Aggregation (R5):** Orchestrator `run_phase` writes `telemetry.aggregate` (`phase`, `total_duration_sec`, `total_carbon_kg_estimate`, `skill_count`, `written_at`) post-phase; verified by `_check_telemetry_aggregate()` in `skill_22_reproducibility_audit.py` during sign-off (Check 5).
+- **MASE Routing Key (F4/S2, partial):** `"mase"` mapped in `skill_08_anchor.py` `metric_map`, preventing silent `oof_f1` fallback. Fold scores remain RMSE-space — residual tracked as SoT §7 **F4 (partial)**; do not implement scaled scoring without an SoT §2 lifecycle definition.
+- **Seed Discipline (F3):** All hardcoded `seed=42` literals in `skill_10_shap.py` replaced with config-driven seed threading (`get_seed()` fallback).
+- **Tooling:** `scripts/sot_alignment_check.py` extended with S6-pairwise/S11/Preflight/R5/F3/S2 checks, negative assertions on legacy root paths, non-S registry ID parsing, and `scripts/` scan coverage.
+- **Unit and Integration Tests:** `tests/test_real_findings.py` (`test_s11_no_root_writes`, `test_preflight_mt_oof_completeness`, `test_session_log_deduplication`), `tests/test_shap_audit_unit.py` (`test_pairwise_mi_audit_regression`, `test_pairwise_mi_audit_classification`), `tests/test_skill22_audit.py` (`test_check_telemetry_aggregate`, `test_telemetry_aggregate_written`).
 
 ### Changed
-- **Librarian and Scientist Consolidation (S11):** Removed legacy root `reports/` dual-writes from `skill_18_librarian.py` and `skill_20_scientist.py`, consolidating all sidecar outputs under `reports/diagnostics/`. All consumers, tests, and documentation updated accordingly.
-- **`AGENTS.md` and `docs/source_of_truth.md` Updates:** Bumped both documents to v2.6, marked closed gaps (S6, S11, preflight MT-OOF, R5 aggregate, Track 2B) as resolved, and verified all code citations.
+- **Librarian and Scientist Consolidation (S11):** Removed legacy root `reports/` dual-writes from `skill_18_librarian.py` and `skill_20_scientist.py`, consolidating all sidecar outputs under `reports/diagnostics/`. All consumers (including orchestrator prior-art handoff), tests, and documentation updated accordingly.
+- **Documentation sync:** SoT §7 registry carries explicit OPEN entries (F1, F2, F4-residual) instead of silent gaps; footer reads `v2.6 — OPEN (F1, F2, F4-residual)`. `AGENTS.md` synced (stale S2 claims replaced with partial-residual wording).
 
 ### Verification
-- Full test suite: 15/15 tests in `tests/test_real_findings.py` passed, and all other tests are green (totaling 338+ tests).
+- Full test suite: 338 passed, 6 skipped (exit 0).
+- `scripts/sot_alignment_check.py`: 12 aligned, 0 misaligned, 0 code-ahead; claim-code coupling audit clean.
+- `scripts/formula_correctness_check.py`: all demonstrations behaved as predicted.
+- `scripts/verify_v22_contracts.py`: 24 passed, 0 failed.
+
+### Open Items Carried Forward (canonical: SoT §7)
+- **F1** — pairwise-MI regression normalization not scale-invariant (Low; advisory-only).
+- **F2** — KSG estimator bivariate-Gaussian known-answer test not yet added (Low).
+- **F4 residual** — true naive-baseline-scaled MASE fold scoring, blocked on SoT §2 lifecycle definition (Medium, latent).
+- **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
 ## [v2.5-close-2026-08-24]
 
