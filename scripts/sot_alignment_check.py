@@ -263,6 +263,49 @@ def check_claim_code_coupling(sot_statuses: dict) -> list[str]:
     return errors
 
 
+# ---------------------------------------------------------------------------
+# Doc-version consistency (single-point versioning; canonical = VERSION file).
+# Each entry: (relative path, capture regex whose group 1 is the declared
+# version). A doc missing from this list is a tooling gap — add it here AND
+# give it a BANNER_RULES entry in scripts/bump_version.py.
+# ---------------------------------------------------------------------------
+DOC_VERSION_CHECKS = [
+    ("docs/source_of_truth.md", r"\*\*Version:\*\* v(\d+\.\d+)"),
+    ("AGENTS.md", r"SoT version \*\*v(\d+\.\d+)\*\*"),
+    ("README.md", r"`docs/source_of_truth\.md` v(\d+\.\d+)"),
+    ("docs/orchestrator_overview.md", r"\*\*Version:\*\* (\d+\.\d+)"),
+    ("docs/quick_start.md", r"\*\*Source of Truth Version:\*\* v(\d+\.\d+)"),
+    ("docs/ledger_architecture.md", r"\*\*Version:\*\* (\d+\.\d+)"),
+    ("docs/reporting_logging_audit.md", r"Verified against SoT v(\d+\.\d+)"),
+    ("docs/document_map.md",
+     r"Documentation Structure Map \(v(\d+\.\d+)\)"),
+]
+
+
+def check_doc_versions(expected: str) -> list[str]:
+    """Verifies every doc banner declares the canonical VERSION value."""
+    errors = []
+    for rel_path, capture_rx in DOC_VERSION_CHECKS:
+        path = WORKSPACE_DIR / rel_path
+        if not path.exists():
+            errors.append(f"{rel_path}: file not found")
+            continue
+        content = path.read_text(encoding="utf-8")
+        cap = re.search(capture_rx, content)
+        if not cap:
+            errors.append(
+                f"{rel_path}: version banner not found / drifted from known "
+                f"shape (pattern: {capture_rx})"
+            )
+            continue
+        declared = cap.group(1)
+        if declared != expected:
+            errors.append(
+                f"{rel_path}: declares v{declared} but VERSION is v{expected}"
+            )
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check SoT alignment with codebase.")
     parser.add_argument(
@@ -349,6 +392,27 @@ def main():
             misaligned_count += 1
     else:
         print("[ALIGN]      No claim-code coupling errors found.")
+
+    # Doc-version consistency check (canonical: VERSION file)
+    print("-" * 80)
+    print("DOC VERSION CONSISTENCY (canonical: VERSION file)")
+    print("-" * 80)
+    version_file = WORKSPACE_DIR / "VERSION"
+    if not version_file.exists():
+        print("[MISALIGNED] VERSION file missing at repo root.")
+        misaligned_count += 1
+    else:
+        expected_version = version_file.read_text(encoding="utf-8").strip()
+        version_errors = check_doc_versions(expected_version)
+        if version_errors:
+            for err in version_errors:
+                print(f"[MISALIGNED] {err}")
+                misaligned_count += 1
+            print(f"  Canonical version: v{expected_version} "
+                  f"(fix with: python scripts/bump_version.py)")
+        else:
+            print(f"[ALIGN]      All doc banners declare v{expected_version} "
+                  f"(matches VERSION).")
 
     # Print Summary
     print("=" * 80)

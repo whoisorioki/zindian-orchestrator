@@ -2,7 +2,7 @@
 
 An **autonomous multi-phase ML competition framework** for tabular supervised learning competitions on the Zindi Africa platform. Reads competition schemas, target definitions, and evaluation rules dynamically from a locked configuration contract — zero hardcoded competition literals.
 
-Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. The system is governed by the **Source of Truth** (`docs/source_of_truth.md` v2.5). When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
+Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw tabular data and a `challenge_config.json` contract into submission-ready predictions. The system is governed by the **Source of Truth** (`docs/source_of_truth.md` v2.6). When code, documentation, and `AGENTS.md` disagree, resolution order is: runtime behavior > SoT > AGENTS.md.
 
 **System properties:**
 - **Phase-gated execution** — 4 phases with 5 human gates; state transitions recorded atomically in `SKILL_STATE.json`
@@ -32,7 +32,7 @@ Phase 1 (Fingerprint) → Phase 2 (Anchor + Variants) → Phase 3 (Audit + Promo
 Five human gates: Gate 1 (anchor), Gate 2 (per variant), Gate 3 (fusion), Gate 4 (inference), Gate 5 (final select)
 ```
 
-See [docs/source_of_truth.md](docs/source_of_truth.md) v2.5 for the full v2.4 feature specifications (S1–S10, R1–R6).
+See [docs/source_of_truth.md](docs/source_of_truth.md) v2.6 for the full  feature specifications (S1–S10, R1–R6).
 
 ---
 
@@ -52,7 +52,7 @@ zindian-orchestrator/
 │           ├── summaries/       ← phase summary Markdown/JSON
 │           └── sessions/        ← session-scoped startup event logs
 ├── docs/                             ← Standardized documentation
-│   ├── source_of_truth.md            ← Authoritative specification v2.5
+│   ├── source_of_truth.md            ← Authoritative specification v2.6
 │   ├── orchestrator_overview.md      ← System architecture & design overview
 │   ├── quick_start.md                ← Local run onboarding & execution flow
 │   ├── cli_integration_guide.md      ← CLI command usage reference
@@ -139,7 +139,7 @@ python scripts/test_phase_1.py
 | Document | Purpose |
 |----------|---------|
 | **[docs/orchestrator_overview.md](docs/orchestrator_overview.md)** | Complete system guide (non-technical + technical) |
-| [docs/source_of_truth.md](docs/source_of_truth.md) | Authoritative architectural spec (v2.5) |
+| [docs/source_of_truth.md](docs/source_of_truth.md) | Authoritative architectural spec (v2.6) |
 | [docs/quick_start.md](docs/quick_start.md) | Local run setup walkthrough |
 | [docs/cli_integration_guide.md](docs/cli_integration_guide.md) | All CLI commands reference |
 | [docs/ledger_architecture.md](docs/ledger_architecture.md) | Experiment ledger schema |
@@ -248,4 +248,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 ---
 
 **Last Updated:** August 2026
-**Status:** v2.5 Production Ready
+**Status:** v2.6 Production Ready

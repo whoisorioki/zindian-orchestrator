@@ -1,6 +1,6 @@
 # Zindian Orchestrator - Complete Overview
 
-**Version:** 2.5
+**Version:** 2.6
 **Last Updated:** August 2026
 **Status:** Production Ready
 
@@ -293,7 +293,7 @@ For detailed technical specifications, refer to the following documents:
 
 | Document | Content |
 |---|---|
-| [Source of Truth v2.5](source_of_truth.md) | Architecture contracts, phase specs, OOF schemas, gate logic formulas, known gaps |
+| [Source of Truth v2.6](source_of_truth.md) | Architecture contracts, phase specs, OOF schemas, gate logic formulas, known gaps |
 | [AGENTS.md](../AGENTS.md) | Safe state access patterns, implementation conventions, known live risks |
 | [Quick Start Guide](quick_start.md) | CLI bootstrap walkthrough, full skill matrix, competition setup |
 | [CLI Integration Guide](cli_integration_guide.md) | All 21 CLI commands reference |
@@ -307,4 +307,4 @@ For detailed technical specifications, refer to the following documents:
 **Document Version:** 1.3
 **Orchestrator Version:** 2.5
 **Last Updated:** August 2026
-**Scope:** Non-technical overview and navigation hub. See [source_of_truth.md](source_of_truth.md) v2.5 for architecture details.
+**Scope:** Non-technical overview and navigation hub. See [source_of_truth.md](source_of_truth.md) v2.6 for architecture details.

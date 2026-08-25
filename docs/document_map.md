@@ -1,4 +1,4 @@
-# Zindian Orchestrator Documentation Structure Map (v2.5)
+# Zindian Orchestrator Documentation Structure Map (v2.6)
 
 This document provides a consolidated, unified map of the structure, cross-document overlaps, and ownership details for all nine files in the Zindian Orchestrator documentation suite. This map helps developers navigate the documentation and maintain structure during the v2.5 lean restructure.
 
@@ -6,7 +6,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 
 ## 1. Document Structure Map
 
-### source_of_truth.md (v2.5) — Architecture Authority
+### source_of_truth.md (v2.6) — Architecture Authority
 | Section | Subsections | Information Category |
 |---|---|---|
 | **Header** | Version, Status, Scope, Last updated | Metadata |

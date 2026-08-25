@@ -1,6 +1,6 @@
 # Zindian Orchestrator — Quick Start Guide
 
-This guide walks you through initializing a competition workspace, running preflight verification, executing the 5-phase competition pipeline, and tracking experiments using the **Zindian Orchestrator CLI** and **Preflight Engine** aligned with **Source of Truth v2.5**.
+This guide walks you through initializing a competition workspace, running preflight verification, executing the 5-phase competition pipeline, and tracking experiments using the **Zindian Orchestrator CLI** and **Preflight Engine** aligned with **Source of Truth v2.6**.
 
 ---
 
@@ -146,7 +146,7 @@ python -m zindian.cli init-ledger
 
 ## 5. Preflight Compliance Engine
 
-Before executing pipeline phases, run the preflight verification check to guarantee environment lock and Source of Truth (SoT v2.5) compliance.
+Before executing pipeline phases, run the preflight verification check to guarantee environment lock and Source of Truth (SoT v2.6) compliance.
 
 ```bash
 python -m zindian.cli preflight --competition competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge --non-interactive
@@ -284,5 +284,5 @@ python -m zindian.cli ledger submissions
 
 ---
 
-**Source of Truth Version:** v2.5
+**Source of Truth Version:** v2.6
 **Last Updated:** August 2026
