@@ -201,6 +201,25 @@ def compute_oof_predictions(
     # Resolve regression metric for target transformation lifecycle (SoT v2.2)
     regression_metric = config.get("metric") if task_type == "regression" else None
 
+    # [v2.7 / F4] Upstream MASE guard — single point of failure before training.
+    # _lightgbm_shared.py asserts this value is present inside the fold loop;
+    # raising here gives a clearer error message and skips all setup work.
+    eda_block_08 = (state or {}).get("eda", {}) or {}
+    mae_naive_baseline_08: float | None = None
+    if regression_metric == "mase":
+        _raw_baseline = eda_block_08.get("MAE_naive_baseline")
+        try:
+            _baseline_float = float(_raw_baseline) if _raw_baseline is not None else None
+        except (TypeError, ValueError):
+            _baseline_float = None
+        if _baseline_float is None or _baseline_float <= 0:
+            raise ValueError(
+                "config metric is 'mase' but eda['MAE_naive_baseline'] is missing or "
+                f"<= 0 (got {_raw_baseline!r}). Compute MAE_naive_baseline in skill_04 "
+                "and store it in SKILL_STATE['eda'] before running skill_08."
+            )
+        mae_naive_baseline_08 = _baseline_float
+
     result = train_lightgbm_cv(
         train=train,
         test=test,
@@ -215,6 +234,7 @@ def compute_oof_predictions(
         scale=True,
         regression_metric=regression_metric,
         variant_name=variant_name,
+        mae_naive_baseline=mae_naive_baseline_08,
     )
 
     if task_type == "regression":

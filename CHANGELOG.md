@@ -2,6 +2,38 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.7-close-2026-08-25]
+
+### Added
+- **MASE fold-score space closed (F4) — [RESOLVED]:** Full Option A MASE fold scoring shipped end-to-end.
+  - `_lightgbm_shared.py`: added `mae_naive_baseline: float | None = None` parameter to `train_lightgbm_cv`; fold-scoring branch computes `fold_score = MAE(y_val, yhat_val) / mae_naive_baseline` with a hard `assert mae_naive_baseline is not None and mae_naive_baseline > 0` (no silent unscaled fallback); `oof_mase = mean(fold_scores)`; `oof_rmse = oof_mase` for backward compatibility; `oof_mase: float = 0.0` added to `LightGBMRunResult`. Fixed an indentation bug in the `if task_type == "regression"` scoring block that put `if use_log1p` / `elif regression_metric == "mase"` one level too deep.
+  - `skill_08_anchor.py` (`compute_oof_predictions`): upstream `ValueError` guard extracts `eda["MAE_naive_baseline"]`, raises `ValueError` before `train_lightgbm_cv` is called when metric is `"mase"` and baseline is missing or ≤ 0; threads the validated value as `mae_naive_baseline=` into the call.
+  - `tests/test_lightgbm_mase_fold_scoring.py`: 6 tests — per-fold formula correctness (ratio invariance), `oof_mase == mean(fold_scores)`, upstream `ValueError` for missing and zero baseline, in-loop `AssertionError` for missing and zero baseline.
+
+- **Multi-target gate parity (H1) — [RESOLVED]:** `skill_11_gate.py` `_run_multi_target_gate` now enforces all four gates (variance → baseline → SHAP → human) before promotion. `_multi_target_effective_thresholds` uses the NB-based `composite_se_oof` (regression-only, no `/sqrt(K)`) from `skill_12` as the 1-SE floor on the gate margin. `shutil.copy2` side effects only execute after all four gates pass.
+  - `tests/test_skill11_gate_multi_target.py`: 5 tests covering variance-gate block, baseline-gate block (variance held passing), augmented-baseline consumption when `retraining_required=True`, full-pass path, and minimize-composite direction.
+
+- **Composite `se_oof` + regression-only scope (Fix-1/Fix-3) — [RESOLVED]:** `skill_12_metric.py` emits `per_target[name]["se_oof"] = sqrt(Var_NB)` for every target, and `metric_analysis["composite_se_oof"] = sqrt(sum(w_eff * Var_NB for regression targets only))` with no additional `/sqrt(K)`.
+  - `tests/test_skill12_composite_se_oof.py`: 5 tests — hand-computed match, no-extra-sqrt-K, classification-insensitivity, per-target emission for all targets, absent when no regression target.
+
+- **Strict A12 block policy (D1-skill_21) — [RESOLVED]:** `skill_21_pseudo_label.py` `block_composite_until_all_targets_augmented_or_none` now checks that every classification target actually augmented (not just that no regression target is present). Regression presence still blocks.
+  - `tests/test_skill21_recombination_block.py`: T1 (partial-augmentation block, no `_augmented` namespace promoted) + step-8 end-to-end (real policy flag feeds `_run_multi_target_gate`, augmented-baseline path gated by actual `skill_21` output).
+
+- **Augmented-baseline consumption (H3/D2) — [RESOLVED]:** `skill_11_gate.py` `_baseline_score` resolves to `anchor_oof_score_augmented` when `pseudo_label_result.retraining_required == True`, confirming the three-way precedence (augmented → challenged → anchor).
+
+- **`fold_score_variance` doc fix (D1) — [RESOLVED]:** SoT §4 description corrected: the primary `fold_score_variance` key is Nadeau-Bengio corrected (`Var_NB`), not raw `ddof=1`. Raw value is `fold_score_variance_sample`. Same naming applies to `per_target[*]` block.
+
+### Changed
+- **Documentation sync:** SoT version bumped to v2.7; §2 MASE lifecycle defined; §4 composite `se_oof` section added with Fix-1/Fix-3 constraints; §7 F4 status changed to RESOLVED; footer updated to `v2.7 — OPEN (F1, F2)`. `AGENTS.md` synced: F4/S2 entries marked resolved, open-gaps section updated to v2.7 status (no active code gaps).
+
+### Verification
+- 24 tests in the v2.7 relevant subset: 24 passed, 0 failed.
+
+### Open Items Carried Forward (canonical: SoT §7)
+- **F1** — pairwise-MI regression normalization not scale-invariant (Low; advisory-only).
+- **F2** — KSG estimator bivariate-Gaussian known-answer test not yet added (Low).
+- **GAP-3** — SHAP interaction effects (deferred to v3.0).
+
 ## [v2.6-close-2026-08-25]
 
 ### Added
