@@ -683,10 +683,10 @@ Stop and ask before writing code if you encounter any of these:
   (GAP-3, regression pseudo-labelling, two-mode static verification,
   drift_threshold enforce-mode) without a fresh, in-session confirmation
   of their actual status.
-  As of v2.7, there are no active code gaps — F4 is resolved, S2 is resolved.
-  All of F4, S2, S6, S7, S8, S10, S11, preflight OOF completeness, R5, C1, C4,
-  M6, DRIFT-3, C2, H1, H3/D2, D1, and the recombination policy are resolved —
-  do not treat them as live risks.
+  As of v2.8, there are no active code gaps — F4, F1, and F2 are all resolved.
+  All of F4, F1, F2, S2, S6, S7, S8, S10, S11, preflight OOF completeness, R5,
+  C1, C4, M6, DRIFT-3, C2, H1, H3/D2, D1, and the recombination policy are
+  resolved — do not treat them as live risks.
 
 These are not situations to resolve with best judgement. Surface
 them. If a gap exists in the SoT, it must be patched in the SoT
@@ -784,15 +784,16 @@ all SoT-specified eda sub-block fields with correct defaults.
 > Cross-reference: all open gaps are also tracked in `docs/source_of_truth.md` §7
 > (Known Gaps Registry) as the canonical record. AGENTS.md lists the implementation
 > constraints that apply when a gap is addressed.
-> v2.7 status: no active code gaps. F4, H1, H3/D2, D1 all resolved in v2.7.
-> F1/F2 are documented advisory limitations in SoT §7. Items 1, 3–5 are architectural
-> constraints, not code bugs. GAP-3 is deferred to v3.0.
+> v2.8 status: no active code gaps. F1, F2 resolved in v2.8; F4, H1, H3/D2, D1 resolved in v2.7.
+> Items 1, 3–5 are architectural constraints, not code bugs. GAP-3 is deferred to v3.0.
 
 1. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Requires TreeSHAP interaction values API (`shap_interaction_values`) — computationally expensive (O(n²) features). Do not implement without SoT roadmap update and explicit v3.0 milestone approval.
 2. **F4 — MASE Score-Space Residual — [RESOLVED v2.7]:** Full Option A MASE fold scoring shipped. See v2.7 section above for details.
-3. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible pseudo-label contract.
-4. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add a runtime assertion without an SoT patch defining the verification mechanism.
-5. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it will not break existing competition configs that predate this field.
+3. **F1 — Pairwise MI Scale Invariance — [RESOLVED v2.8]:** `skill_10_shap.py` `_run_pairwise_mi_audit` regression branch now divides `joint_mi` by `var(y_scaled)` instead of `var(y_raw)`. See v2.8 section above for details.
+4. **F2 — KSG Bivariate Reference Test — [RESOLVED v2.8]:** `tests/test_ksg_mi_bivariate_gaussian.py` added with 4 tests. See v2.8 section above for details.
+5. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible pseudo-label contract.
+6. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add a runtime assertion without an SoT patch defining the verification mechanism.
+7. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it will not break existing competition configs that predate this field.
 
 ---
 

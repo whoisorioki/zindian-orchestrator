@@ -1,9 +1,9 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.7
+**Version:** v2.8
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.7: MASE fold-score space closed (F4), multi-target gate parity (H1), augmented-baseline consumption (H3/D2), composite `se_oof` + regression-only scope, `fold_score_variance` doc fix (D1), strict A12 block policy (D1-skill_21))
+**Last updated:** August 2026 (v2.8: F1 KSG scale-invariance fix, F2 bivariate Gaussian reference test)
 
 ---
 
@@ -2523,26 +2523,30 @@ and are recorded here for audit trail only.
 
 ### OPEN — Active gaps
 
-**F1 — Pairwise MI Scale Invariance**
+**F1 — Pairwise MI Scale Invariance — [RESOLVED — v2.8]**
 
 ```
-Description:    The S6 pairwise MI audit function uses nearest neighbor distances to
-                estimate mutual information. This raw MI estimate is not scale-invariant
-                for continuous targets/features. Rescaling feature or target values
-                causes the MI score to drift.
-Status:         Pending normalization/standardization research (e.g., Linfoot correlation
-                coefficient or copula-based normalization).
-Severity:       Low — does not halt pipeline, but warning thresholds are scale-sensitive.
+Description:    The S6 pairwise MI audit function's regression branch computed
+                score_val = joint_mi / var(y_raw), but joint_mi was estimated
+                in y_scaled space (std-normalized, variance ≈ 1). Dividing by
+                raw var(y) reintroduced the target scale — rescaling Y by c
+                inflated var(y) by c² while joint_mi was unchanged, making
+                score_val scale-dependent.
+Status:         RESOLVED 2026-08-25 (v2.8). Fix: divide by var(y_scaled) instead
+                of var(y_raw). Confirmed by test_regression_mi_score_is_scale_invariant
+                in tests/test_ksg_mi_bivariate_gaussian.py.
 ```
 
-**F2 — KSG Validator Bivariate Reference Test**
+**F2 — KSG Validator Bivariate Reference Test — [RESOLVED — v2.8]**
 
 ```
-Description:    The custom KSG bivariate MI estimator lacks direct unit tests validating
-                its output accuracy against closed-form mathematical solutions (e.g.
-                Bivariate Gaussian).
-Status:         Pending numeric-equivalence reference test suite integration.
-Severity:       Low — estimator functions correctly, but numerical precision is unverified.
+Description:    The custom KSG bivariate MI estimator lacked direct unit tests
+                validating its output accuracy against closed-form mathematical
+                solutions (bivariate Gaussian).
+Status:         RESOLVED 2026-08-25 (v2.8). tests/test_ksg_mi_bivariate_gaussian.py
+                added with 4 tests: independent Gaussians → MI ≈ 0; convergence
+                to -0.5*ln(1-ρ²) within 20-30% at n=5000 for ρ=0.8 and ρ=0.5;
+                and scale-invariance regression guard (F1).
 ```
 
 **F4 — MASE Score-Space Residual — [RESOLVED — v2.7]**
@@ -2581,7 +2585,7 @@ Severity:       Low — interaction-based leakage is rare in standard tabular
 ```
 
 ---
-*Version: v2.7 — OPEN (F1, F2)*
+*Version: v2.8 — OPEN (GAP-3 deferred to v3.0)*
 *Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*
 *F4 note (2026-08-25): "mase" routed and fully option-A scored in v2.7 —
 fold-score space closed; no residual.*

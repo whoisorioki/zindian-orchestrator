@@ -2,6 +2,27 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.8-close-2026-08-25]
+
+### Fixed
+- **F1 — KSG pairwise MI scale invariance — [RESOLVED]:** `skill_10_shap.py` `_run_pairwise_mi_audit` regression branch was dividing `joint_mi` (estimated in `y_scaled` space, variance ≈ 1) by `var(y_raw)` (unstandardized), making the score proportional to `1/var(y_raw)`. Rescaling the target by c would shrink the score by c². Fix: divide by `var(y_scaled)` so numerator and denominator are in the same space and the ratio is scale-invariant.
+
+### Added
+- **F2 — KSG bivariate Gaussian reference test — [RESOLVED]:** `tests/test_ksg_mi_bivariate_gaussian.py` — 4 tests:
+  - Independent Gaussians (ρ=0) produce no flagged pair above a low threshold.
+  - KSG MI estimate converges to the closed-form `-0.5*ln(1-ρ²)` within 20–30% at n=5000 for ρ=0.8 and ρ=0.5.
+  - Scale-invariance regression guard: rescaling the target by 100× must not change the score (catches F1 regression).
+  - Note: the `mi_pairwise_threshold or 0.90` falsy-fallback in the production code means passing `threshold=0.0` silently falls back to 0.90; tests use `0.001` to avoid this.
+
+### Changed
+- **Documentation:** SoT version bumped to v2.8; F1 and F2 moved from OPEN to RESOLVED in §7. `AGENTS.md` open-gaps section updated (F1/F2 resolved, items renumbered, v2.8 status note).
+
+### Verification
+- 10 tests (4 new KSG + 6 existing shap_audit): 10 passed, 0 failed.
+
+### Open Items Carried Forward (canonical: SoT §7)
+- **GAP-3** — SHAP interaction effects (deferred to v3.0).
+
 ## [v2.7-close-2026-08-25]
 
 ### Added

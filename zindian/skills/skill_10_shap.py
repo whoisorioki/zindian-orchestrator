@@ -662,8 +662,15 @@ def _run_pairwise_mi_audit(
                     joint_mi = digamma(n_samples) + digamma(3) - np.mean(digamma(nx + 1)) - np.mean(digamma(ny + 1))
                     joint_mi = max(0.0, float(joint_mi))
 
-                    var_y = float(np.var(y_vals))
-                    score_val = joint_mi / var_y if var_y > 0 else 0.0
+                    # [F1 fix — v2.8] Use var of y_scaled (variance ≈ 1 after std-scaling)
+                    # instead of var(y_vals) (raw variance).
+                    # joint_mi is estimated in the scaled space, so dividing by raw var(y)
+                    # reintroduces the target scale — rescaling Y by c multiplies var_y by
+                    # c² while joint_mi is unchanged, making score_val scale-dependent.
+                    # Dividing by var(y_scaled) keeps numerator and denominator in the same
+                    # space, making the ratio scale-invariant.
+                    var_y_scaled = float(np.var(y_scaled))
+                    score_val = joint_mi / var_y_scaled if var_y_scaled > 0 else 0.0
                 else:
                     _y_encoded = y_vals
                     if _y_encoded.dtype.kind in ("U", "S", "O"):
