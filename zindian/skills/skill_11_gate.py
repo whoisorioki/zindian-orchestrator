@@ -11,6 +11,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
+import math
 import numpy as np
 
 from zindian.config import ChallengeConfig
@@ -272,6 +273,85 @@ def _write_failure_diagnosis(store: SkillStateStore, diagnosis: dict) -> None:
     )
 
 
+def _effective_multi_target_std(config: ChallengeConfig, state: dict) -> float:
+    """Weighted RMS of the per-target standard deviations over regression
+    targets only — [Fix-3] scoped exactly like the SoT `effective_target_std`:
+
+        effective_target_std = sqrt( sum(w_i * sigma_i^2) / sum(w_i) )
+    iterated over regression targets only (the 1-SE margin / variance gate are
+    regression-scale-sensitive per D0/D4). Classification targets contribute
+    nothing. Returns 0.0 when no regression target has a positive std."""
+    target_config = config.get("target_config", {}) or {}
+    targets = target_config.get("targets", []) or []
+    eda = state.get("eda", {}) or {}
+    num = 0.0
+    den = 0.0
+    for t in targets:
+        if t.get("task_type") != "regression" or not t.get("name"):
+            continue
+        weight = float(t.get("weight", 0.5) or 0.0)
+        sigma = _to_float(eda.get(f"{t['name']}_std"))
+        if sigma is None or sigma <= 0:
+            continue
+        num += weight * (sigma ** 2)
+        den += weight
+    if den <= 0:
+        return 0.0
+    return math.sqrt(num / den)
+
+
+def _multi_target_effective_thresholds(
+    config: ChallengeConfig, state: dict
+) -> tuple[float, float, str | None]:
+    """Multi-target analog of `_effective_thresholds`.
+
+    Returns (effective_variance_threshold, effective_gate_margin,
+    warning_message | None). The caller writes any non-None warning to
+    SKILL_STATE["metadata_warnings"]; this function never writes state.
+
+    Regression-bearing composite:
+      - effective_variance_threshold = variance_gate_threshold * (target_std**2)
+      - effective_gate_margin        = max(gate_margin * target_std, 1 * composite_se_oof)
+    where target_std is the regression-only weighted RMS ([Fix-3]) and
+    composite_se_oof is the NB-based composite standard error computed by
+    skill_12 ([Fix-1] — already carries NO /sqrt(K)).
+
+    Classification-only composite: raw thresholds, no SE floor (D0/D4 — bounded
+    metrics need no magnitude corridor).
+    """
+    variance_gate_threshold = float(config.get("variance_gate_threshold", 0.01) or 0.0)
+    gate_margin = float(config.get("gate_margin", 0.001) or 0.0)
+    target_config = config.get("target_config", {}) or {}
+    targets = target_config.get("targets", []) or []
+
+    regression_targets = [t for t in targets if t.get("task_type") == "regression"]
+    if not regression_targets:
+        return variance_gate_threshold, gate_margin, None
+
+    effective_target_std = _effective_multi_target_std(config, state)
+    if effective_target_std <= 0:
+        warning = (
+            "Degenerate multi-target effective_target_std in skill_11_gate: "
+            "no positive per-target std found in the EDA block. Multi-target "
+            "effective thresholds falling back to raw config values with no "
+            "composite 1-SE margin."
+        )
+        return variance_gate_threshold, gate_margin, warning
+
+    effective_variance = variance_gate_threshold * (effective_target_std ** 2)
+    effective_margin = gate_margin * effective_target_std
+
+    # [Fix-1] 1-SE promotion margin from the NB-based composite standard error.
+    metric_analysis = state.get("metric_analysis", {}) or {}
+    composite_se = _to_float(
+        metric_analysis.get("composite_se_oof") if isinstance(metric_analysis, dict) else None
+    )
+    if composite_se is not None and composite_se > 0:
+        effective_margin = max(effective_margin, 1.0 * composite_se)
+
+    return effective_variance, effective_margin, None
+
+
 def run() -> dict:
     print("\n" + "=" * 60)
     print("SKILL 11 — Branch Gate")
@@ -486,7 +566,19 @@ def run() -> dict:
 
 
 def _run_multi_target_gate(config, store, state) -> dict:
-    """Multi-target gate logic per SoT v2.2.1 A11."""
+    """Multi-target gate logic per SoT v2.2.1 A11.
+
+    [v2.7 / H1] Enforces four cumulative conditions before promotion:
+      1. variance gate  - composite_fold_score_variance < effective_variance_threshold
+      2. baseline gate  - (baseline - avg_score) > effective_gate_margin (composite
+                          distance is minimize, so lower is better; H3/D2 resolves
+                          the baseline to the _augmented anchor when retraining_required)
+      3. multi-target SHAP gate (unchanged)
+      4. human gate 2 (unchanged)
+    Any failure writes phase_3_gate_diagnosis via _write_failure_diagnosis and
+    returns BLOCKED. The anchor file-copy side effects run ONLY on the final
+    PASS path - never partially on failure.
+    """
     print("\n[TARGET] MULTI-TARGET GATE MODE\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
@@ -502,16 +594,6 @@ def _run_multi_target_gate(config, store, state) -> dict:
     human_gate_key = f"human_gate_2_{branch_name}_approved"
     human_gate_approved = bool(state.get(human_gate_key, False))
 
-    shap_results = state.get("shap_multi_target_results")
-    if shap_results is None:
-        shap_results = {}
-    all_pass = all(
-        shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
-    )
-
-    if not all_pass:
-        return {"status": "BLOCKED", "reason": "multi-target SHAP gate failed"}
-
     diagnosis = {
         "branch_name": branch_name,
         "best_variant": best_variant,
@@ -520,12 +602,108 @@ def _run_multi_target_gate(config, store, state) -> dict:
         "passed": False,
     }
 
+    # Compute the composite score using config weights.
+    weighted_distances = []
+    for t in targets:
+        target_name = t["name"]
+        task_type = t["task_type"]
+        weight = _effective_target_weight(config, state, t)
+
+        if task_type == "classification":
+            f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
+            distance = 1.0 - f1
+        else:
+            rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)
+            # Normalize by target std from eda block
+            eda_std = float(state.get("eda", {}).get(f"{target_name}_std", 0.0))
+            if eda_std <= 0.0:
+                eda_std = float(state.get("eda", {}).get("target_std", 1.0))
+            distance = rmse / eda_std if eda_std > 0 else rmse
+        weighted_distances.append(distance * weight)
+
+    total_weight = sum(_effective_target_weight(config, state, t) for t in targets)
+    avg_score = (
+        sum(weighted_distances) / total_weight
+        if total_weight > 0
+        else sum(weighted_distances)
+    )
+    diagnosis["avg_score"] = avg_score
+# -- 1. Variance gate (H1) -----------------------------------------------
+    effective_variance_threshold, effective_gate_margin, threshold_warning = (
+        _multi_target_effective_thresholds(config, state)
+    )
+    if threshold_warning is not None:
+        existing_warnings = state.get("metadata_warnings") or []
+        if not isinstance(existing_warnings, list):
+            existing_warnings = []
+        store.update(metadata_warnings=existing_warnings + [threshold_warning])
+
+    metric_analysis = state.get("metric_analysis", {}) or {}
+    composite_variance = _to_float(
+        metric_analysis.get("composite_fold_score_variance")
+        if isinstance(metric_analysis, dict)
+        else None
+    )
+    if composite_variance is None:
+        composite_variance = 0.0
+    if not (composite_variance < effective_variance_threshold):
+        diagnosis["failure_reason"] = "variance gate failed"
+        diagnosis["composite_fold_score_variance"] = composite_variance
+        diagnosis["effective_variance_threshold"] = effective_variance_threshold
+        _write_failure_diagnosis(store, diagnosis)
+        return {
+            "status": "BLOCKED",
+            "reason": "variance gate failed",
+            "diagnosis": diagnosis,
+        }
+
+    # -- 2. Baseline gate (H3/D2) --------------------------------------------
+    # composite_direction is fixed "minimize_composite_distance": a lower
+    # composite distance is better, so improvement means avg is below baseline
+    # by more than the margin. When retraining_required == True the baseline
+    # resolves to anchor_oof_score_augmented via _baseline_score.
+    baseline_score, baseline_key = _baseline_score(state, "score")
+    if baseline_score is None:
+        diagnosis["failure_reason"] = "baseline gate failed (no baseline)"
+        diagnosis["baseline_key"] = baseline_key
+        _write_failure_diagnosis(store, diagnosis)
+        return {
+            "status": "BLOCKED",
+            "reason": "baseline gate failed",
+            "diagnosis": diagnosis,
+        }
+
+    improved = (baseline_score - avg_score) > effective_gate_margin
+    if not improved:
+        diagnosis["failure_reason"] = "baseline gate failed"
+        diagnosis["baseline_key"] = baseline_key
+        diagnosis["baseline_score"] = baseline_score
+        diagnosis["effective_gate_margin"] = effective_gate_margin
+        _write_failure_diagnosis(store, diagnosis)
+        return {
+            "status": "BLOCKED",
+            "reason": "baseline gate failed",
+            "diagnosis": diagnosis,
+        }
+
+    # -- 3. Multi-target SHAP gate -------------------------------------------
+    shap_results = state.get("shap_multi_target_results")
+    if shap_results is None:
+        shap_results = {}
+    all_pass_all = all(
+        shap_results.get(t["name"], {}).get("pruning_pass", False) for t in targets
+    )
+    if not all_pass_all:
+        diagnosis["failure_reason"] = "shap gate failed"
+        _write_failure_diagnosis(store, diagnosis)
+        return {
+            "status": "BLOCKED",
+            "reason": "multi-target SHAP gate failed",
+            "diagnosis": diagnosis,
+        }
+# -- 4. Human gate 2 -----------------------------------------------------
     if not human_gate_approved:
-        # S6: Surface leakage_mi_advisory at Human Gate 2 — multi-target path.
-        # leakage_mi_advisory is a flattened union across all targets (set in
-        # skill_10's multi-target SHAP path after collecting per-target advisory
-        # lists from _compute_shap_audit). Per-target attribution is stored in
-        # shap_multi_target_results[target_name]["mi_advisory_feature_names"].
+        # S6: Surface leakage_mi_advisory at Human Gate 2.
         mi_advisory = state.get("leakage_mi_advisory") or []
         if mi_advisory:
             print(
@@ -534,7 +712,6 @@ def _run_multi_target_gate(config, store, state) -> dict:
                 f"the primary Pearson block but showed elevated mutual information:\n"
                 f"    Combined: {mi_advisory}"
             )
-            # Surface per-target attribution when available for operator context
             mt_shap = state.get("shap_multi_target_results") or {}
             for t_name, t_result in mt_shap.items():
                 t_advisory = (t_result or {}).get("mi_advisory_feature_names", [])
@@ -553,38 +730,10 @@ def _run_multi_target_gate(config, store, state) -> dict:
             "diagnosis": diagnosis,
         }
 
-    # Compute proper composite score using config weights
-    weighted_distances = []
-
-    for t in targets:
-        target_name = t["name"]
-        task_type = t["task_type"]
-        weight = _effective_target_weight(config, state, t)
-
-        if task_type == "classification":
-            f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
-            distance = 1.0 - f1
-        else:
-            rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)
-            # Normalize by target std from eda block
-            eda_std = float(state.get("eda", {}).get(f"{target_name}_std", 0.0))
-            if eda_std <= 0.0:
-                # Fallback standard deviation
-                eda_std = float(state.get("eda", {}).get("target_std", 1.0))
-            distance = rmse / eda_std if eda_std > 0 else rmse
-        weighted_distances.append(distance * weight)
-
-    total_weight = sum(_effective_target_weight(config, state, t) for t in targets)
-    avg_score = (
-        sum(weighted_distances) / total_weight
-        if total_weight > 0
-        else sum(weighted_distances)
-    )
-
     round_num = int(state.get("feature_round") or 1)
     new_branch = f"anchor-multi-v{round_num + 1}"
 
-    # Copy files of promoted variant to the new anchor branch name so downstream skills can access them
+    # -- File-copy side effects: ONLY after all four gates pass ------------
     try:
         import shutil
         from zindian.paths import resolve_competition_paths
@@ -592,7 +741,6 @@ def _run_multi_target_gate(config, store, state) -> dict:
         comp_paths = resolve_competition_paths()
         proc_dir = comp_paths.data_processed_dir
 
-        # Copy features files
         src_train = proc_dir / f"features_train_{branch_name}.csv"
         dst_train = proc_dir / f"features_train_{new_branch}.csv"
         if src_train.exists():
@@ -605,7 +753,6 @@ def _run_multi_target_gate(config, store, state) -> dict:
             shutil.copy2(src_test, dst_test)
             print(f"  [OK] Copied test features to new anchor -> {dst_test}")
 
-        # Copy target specific OOF and test probability files
         for t in targets:
             t_name = t["name"]
             src_oof = proc_dir / f"oof_{branch_name}_{t_name}.csv"
