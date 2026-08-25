@@ -508,7 +508,7 @@ Generate feature engineering hypotheses as a raw JSON array now.
         print(
             "[Scientist] Warning: model call failed. Falling back to local hypotheses file."
         )
-        fallback_path = paths.reports_dir / "domain_hypotheses.json"
+        fallback_path = paths.reports_dir / "diagnostics" / "domain_hypotheses.json"
         if not fallback_path.exists():
             raise RuntimeError(
                 "Scientist model unavailable and no fallback domain_hypotheses.json found"
@@ -595,28 +595,18 @@ Generate feature engineering hypotheses as a raw JSON array now.
     failed_path = (
         Path(failed_hypotheses_path)
         if failed_hypotheses_path
-        else (paths.reports_dir / "failed_hypotheses.json")
+        else (paths.reports_dir / "diagnostics" / "failed_hypotheses.json")
     )
     failed_ledger = load_failed_ledger(failed_path)
 
     validated, failed = validate_hypotheses(hypotheses, feature_frame, failed_ledger)
 
-    # Write legacy validated hypotheses
+    # Ensure parent directory exists
+    Path(hypothesis_path).parent.mkdir(parents=True, exist_ok=True)
     Path(hypothesis_path).write_text(json.dumps(validated, indent=2), encoding="utf-8")
     print(f"  [OK] validated_hypotheses.json written -> {hypothesis_path}")
 
-    # Write categorized validated hypotheses
-    reports_dir = getattr(paths, "reports_dir", None)
-    if reports_dir:
-        diagnostics_dir = reports_dir / "diagnostics"
-        diagnostics_dir.mkdir(parents=True, exist_ok=True)
-        hypothesis_path_cat = diagnostics_dir / "validated_hypotheses.json"
-        hypothesis_path_cat.write_text(
-            json.dumps(validated, indent=2), encoding="utf-8"
-        )
-        print(f"  [OK] validated_hypotheses.json written -> {hypothesis_path_cat}")
-
-    # Write legacy failed hypotheses ledger
+    # Write failed hypotheses ledger
     combined_failed = failed_ledger + [
         {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -624,15 +614,9 @@ Generate feature engineering hypotheses as a raw JSON array now.
         }
         for entry in failed
     ]
+    Path(failed_path).parent.mkdir(parents=True, exist_ok=True)
     save_failed_ledger(failed_path, combined_failed)
     print(f"  [OK] failed_hypotheses.json written -> {failed_path}")
-
-    # Write categorized failed hypotheses ledger
-    if reports_dir:
-        diagnostics_dir = reports_dir / "diagnostics"
-        failed_path_cat = diagnostics_dir / "failed_hypotheses.json"
-        save_failed_ledger(failed_path_cat, combined_failed)
-        print(f"  [OK] failed_hypotheses.json written -> {failed_path_cat}")
 
     state_store.update(
         scientist_last_run=json.dumps(
@@ -668,7 +652,7 @@ if __name__ == "__main__":
             "No competition directory configured. Set ZINDIAN_COMPETITION_SLUG "
             "in .env or run from within a competition directory."
         )
-    reports_dir = paths.competition_dir / "reports"
+    reports_dir = paths.competition_dir / "reports" / "diagnostics"
     run_scientist(
         hypotheses_path=str(reports_dir / "domain_hypotheses.json"),
         priorart_path=str(reports_dir / "ml_priorart.json"),

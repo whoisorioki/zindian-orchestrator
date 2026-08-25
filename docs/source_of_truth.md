@@ -1,9 +1,9 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.5
+**Version:** v2.6
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.5: Restructured docs + closed S7/S8/S10 gaps; v2.5 is now CLOSED — see §7 for open items carried into v2.6)
+**Last updated:** August 2026 (v2.6: Pairwise Pearson group proxy S6, Consolidated S11 root writes, Preflight MT-OOF, R5 telemetry.aggregate, and logging deduplication)
 
 ---
 
@@ -1383,12 +1383,13 @@ For each feature variant branch:
             Issue drop-and-regenerate directive to skill_07
 ```
 
-> **Systematic MI Leakage Audit (S6):**
+> **Systematic MI and Pairwise Leakage Audit (S6):**
 > - **Two-Tier Leak Audit:** Decoupled systematic pre-filtering MI audit runs independently on all regression features, every time, regardless of whether the SHAP dominance ratio check fires.
 >   - **Classification:** NMI >= threshold remains primary/blocking.
 >   - **Regression — Primary (blocking):** Pearson |r| >= `regression_threshold` (0.98) flags feature to `leaked_features`, blocks promotion, and triggers `skill_07` regenerate directive (checked on SHAP-dominant feature).
 >   - **Regression — Verification (advisory, non-blocking):** If `enable_mi_regression_subsample: true` in config, subsampled `mutual_info_regression` runs systematically on all feature columns. Features flagged by MI are written to `SKILL_STATE.json["leakage_mi_advisory"]` (not `leaked_features`), do NOT block `skill_11` promotion, and do NOT trigger auto-regeneration.
->   - **Surfacing:** Non-empty `leakage_mi_advisory` entries are surfaced to the operator at **Human Gate 2** for review ("Pearson clean, but MI flagged X — approve anyway?"). Threshold parameters are read from `challenge_config.json` per A5.
+>   - **Pairwise Multicollinear Leak Detection (advisory, non-blocking):** If `enable_mi_regression_subsample: true` is enabled in config, the system computes the joint mutual information score for all pairs of the top $N$ features (default $N=10$, config-overridable via `mi_pairwise_top_n`, ranked by mean absolute SHAP value). For each pair, the joint MI is computed by running `mutual_info_regression` (or `mutual_info_classif` for classification) on the 2-column feature matrix against the target. If the score exceeds the threshold `mi_pairwise_threshold` (default `0.90`), the pair is written to `SKILL_STATE.json["leakage_pairwise_mi_advisory"]`.
+>   - **Surfacing:** Non-empty `leakage_mi_advisory` and `leakage_pairwise_mi_advisory` entries are surfaced to the operator at **Human Gate 2** for review. Threshold parameters are read from `challenge_config.json` per A5.
 
 Multi-target extension:
 
@@ -2357,15 +2358,14 @@ Aggregation is performed by the orchestrator's post-phase
 hook (not by skill_15). After every phase completes, the
 orchestrator aggregates per-skill telemetry into:
     SKILL_STATE["telemetry.aggregate"] = {
-        "total_duration_seconds": 0.0,
+        "phase": phase,
+        "total_duration_sec": 0.0,
         "total_carbon_kg_estimate": null,
-        "skills_not_instrumented": []
+        "skill_count": 0,
+        "written_at": "timestamp"
     }
 
-> **[OPEN GAP — telemetry.aggregate]** `run_phase()` in `zindian/orchestrator.py`
-> does NOT currently write `telemetry.aggregate` after a phase completes.
-> Only per-skill `telemetry.{skill_name}` keys are written (L1103–1104).
-> `skill_22` does not verify this key either. Tracked in §7 Known Gaps Registry.
+[RESOLVED — v2.6] `run_phase()` in `zindian/orchestrator.py` now aggregates per-skill telemetry and writes this block to state. `skill_22` validates its presence and contents at sign-off.
 
 skill_22 verifies at sign-off:
     telemetry.aggregate present and non-null
@@ -2433,94 +2433,29 @@ and are recorded here for audit trail only.
 | S7 | Spatial CV Buffer: `skill_09` not consuming buffered splits | Implemented 2026-08-24 — `skill_09_calibration.py` L207–210 calls `load_explicit_cv_splits(state)` when explicit splits are present |
 | S8 | Fixed pseudo-label thresholding — adaptive quantiles not implemented | Implemented 2026-08-24 — class-wise quantile selection with 0.70 floor at `skill_21_pseudo_label.py` L762–788; `min_pseudo_samples` guard; `pseudo_quantile` config key drives selection |
 | S10 | No skill wrote `derived_artifact_fingerprints` | Implemented 2026-08-24 — `write_artifact_fingerprint()` called by skill_06 (L196), skill_07 (L1288, L1884), skill_08 (L497, L827); `skill_22` verifier now has data to check |
+| S6 | Multicollinear Leakage Splitting (split-leak blind spot) | Implemented 2026-08-24 — pairwise MI scan for top-10 SHAP features in `skill_10_shap.py` |
+| S11 | skill_18/20 legacy root dual-writes | Implemented 2026-08-24 — consolidated all sidecar writes to `reports/diagnostics/` only; updated all consumers and tests |
+| Preflight | Multi-target OOF completeness check not per-branch | Implemented 2026-08-24 — added per-branch OOF completeness count assertion to A7 check in `preflight_enforce.py` |
+| R5 | `telemetry.aggregate` not written | Implemented 2026-08-24 — orchestrator post-phase loop aggregation added; verification checks implemented in `skill_22` |
+| Track 2B | Orphaned `feature_policy.json` at root | Implemented 2026-08-24 — verified via workspace and competition grep that no root writes or reads remain; all feature policies are written strictly to `reports/audits/feature_policy.json`. |
 
 ---
 
-### OPEN — Active gaps requiring code changes
+### DEFERRED — Future roadmap items
 
-**S6 — Multicollinear Leakage Splitting (split-leak blind spot)**
-
-```
-SoT Contract:   Leak detection catches features whose information leaks
-                from target, including distributed leaks across correlated
-                feature pairs.
-Code Reality:   Univariate NMI/Pearson checks miss multicollinearity-split
-                leaks. A leak distributed across two correlated features
-                evades both the Pearson dominance ratio and the per-feature
-                MI check. leakage_mi_advisory is advisory-only and does not
-                block promotion.
-Remaining gap:  Split-leak detection requires pairwise or group-wise MI
-                testing, which is not implemented.
-Severity:       Medium — real competitions may have correlated engineered
-                features that each pass univariate checks individually.
-```
-
-**skill_18 / skill_20 — Legacy root dual-writes not yet consolidated**
-
-```
-SoT Contract:   All report artifacts written exclusively to categorized
-                subdirectories (reports/diagnostics/ for sidecar outputs).
-Code Reality:   skill_18_librarian.py writes literature_cache.json and
-                domain_hypotheses.json to both reports/ root AND
-                reports/diagnostics/ (legacy + categorized dual-write,
-                L493–516).
-                skill_20_scientist.py run() hardcodes root paths at L671–676
-                for domain_hypotheses.json, validated_hypotheses.json, and
-                failed_hypotheses.json, then also writes to diagnostics/.
-Remaining gap:  Remove root writes from skill_18 and skill_20; update all
-                consumers to read from reports/diagnostics/ only.
-Severity:       Low — functional, but violates A6 state hygiene boundary
-                and floods reports/ root. Tracked in reporting_logging_audit.md.
-```
-
-**Preflight — Multi-target OOF completeness check not per-branch**
-
-```
-SoT Contract:   Preflight confirms every active branch has exactly N OOF
-                records (N = len(target_config["targets"])) in ENFORCE mode.
-Code Reality:   scripts/preflight_enforce.py A7 check (L549) validates only
-                that each OOF key carries a cv_strategy_id tag. It does not
-                count OOF records per branch against len(targets). A branch
-                missing one target's OOF entirely would pass preflight.
-Remaining gap:  Add a per-branch count check: for every branch_name found
-                in OOF keys, assert count == len(targets).
-Severity:       Low-Medium — only affects multi-target competitions; a
-                missing OOF would manifest as a KeyError at skill_11/12
-                rather than a preflight failure.
-```
-
-**GAP-3 — SHAP interaction effects**
+**[DEFERRED — v3.0] GAP-3 — SHAP interaction effects**
 
 ```
 SoT Contract:   SHAP-based leakage detection captures interaction effects
                 between features.
 Code Reality:   skill_10_shap.py computes mean |SHAP| per feature only.
                 TreeSHAP interaction values (shap_interaction_values) are
-                not computed. Interaction-based leakage detection deferred.
-Status:         Deferred to v3.0 per project roadmap.
+                not computed.
+Status:         Deferred to v3.0 per project roadmap. Requires TreeSHAP v2.
 Severity:       Low — interaction-based leakage is rare in standard tabular
                 competitions.
 ```
 
-**R5 — telemetry.aggregate not written by run_phase()**
-
-```
-SoT Contract:   After every phase completes, the orchestrator's post-phase
-                hook aggregates per-skill telemetry into
-                SKILL_STATE["telemetry.aggregate"] with total_duration_seconds,
-                total_carbon_kg_estimate, and skills_not_instrumented.
-                skill_22 verifies this at sign-off.
-Code Reality:   zindian/orchestrator.py run_phase() writes only per-skill
-                telemetry.{skill_name} keys (L1103-1104). No aggregate is
-                written. skill_22_reproducibility_audit.py does not check
-                telemetry.aggregate at all.
-Remaining gap:  run_phase() needs a post-loop aggregation step that sums
-                duration_sec and carbon_kg_estimate across all telemetry.*
-                keys and writes the aggregate. skill_22 needs to verify it.
-Severity:       Low-Medium — R5 carbon reporting is incomplete at the
-                competition level (per-skill data exists, total does not).
-```
-
 ---
-*Version: v2.5 — CLOSED*
-*Next: v2.6 — open items: S6, S11 (root dual-writes), Preflight MT-OOF, R5 telemetry.aggregate, GAP-3 (deferred)*
+*Version: v2.6 — CLOSED*
+*Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*

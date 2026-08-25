@@ -573,6 +573,149 @@ def _build_pruned_feature_set(
     }
 
 
+def _run_pairwise_mi_audit(
+    frame: pd.DataFrame,
+    ranking: pd.DataFrame,
+    target: str,
+    task_type: str,
+    cfg_shap: Any,
+) -> list[dict]:
+    """S6: Pairwise Multicollinear Leak Detection (advisory, non-blocking)."""
+    if cfg_shap is None:
+        return []
+
+    enable_mi = bool(
+        cfg_shap.get("enable_mi_regression_subsample")
+        or cfg_shap.get("enable_mi_regression", False)
+    )
+    if not enable_mi:
+        return []
+
+    top_n = int(cfg_shap.get("mi_pairwise_top_n") or 10)
+    mi_threshold = float(cfg_shap.get("mi_pairwise_threshold") or 0.90)
+    mi_max_samples = int(cfg_shap.get("mi_max_samples") or 2000)
+
+    if ranking is None or ranking.empty or len(ranking) < 2:
+        return []
+
+    top_features = ranking["feature"].head(top_n).tolist()
+    flagged_pairs = []
+
+    from scipy.special import digamma
+    from sklearn.neighbors import NearestNeighbors, KDTree
+    from sklearn.preprocessing import scale
+
+    rng = np.random.default_rng(42)
+
+    for i in range(len(top_features)):
+        for j in range(i + 1, len(top_features)):
+            feat_a = top_features[i]
+            feat_b = top_features[j]
+
+            valid_mask = frame[feat_a].notna() & frame[feat_b].notna() & frame[target].notna()
+            sub_frame = frame.loc[valid_mask]
+            if len(sub_frame) == 0:
+                continue
+
+            n_samples = min(len(sub_frame), mi_max_samples)
+            if n_samples <= 3:
+                continue
+
+            sub_idx = rng.choice(len(sub_frame), size=n_samples, replace=False)
+            sampled_df = sub_frame.iloc[sub_idx]
+
+            X_pair = sampled_df[[feat_a, feat_b]].values.astype(np.float64)
+            y_vals = sampled_df[target].values
+
+            try:
+                if task_type == "regression":
+                    X_scaled = scale(X_pair, with_mean=False)
+                    y_scaled = scale(y_vals.reshape(-1, 1), with_mean=False)
+
+                    X_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(X_scaled), axis=0)) * rng.standard_normal(size=X_scaled.shape)
+                    y_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(y_scaled), axis=0)) * rng.standard_normal(size=y_scaled.shape)
+
+                    xy = np.hstack((X_scaled, y_scaled))
+
+                    nn = NearestNeighbors(metric="chebyshev", n_neighbors=3)
+                    nn.fit(xy)
+                    radius = nn.kneighbors()[0]
+                    radius = np.nextafter(radius[:, -1], 0)
+
+                    kd_x = KDTree(X_scaled, metric="chebyshev")
+                    nx = kd_x.query_radius(X_scaled, radius, count_only=True, return_distance=False)
+                    nx = np.array(nx) - 1.0
+
+                    kd_y = KDTree(y_scaled, metric="chebyshev")
+                    ny = kd_y.query_radius(y_scaled, radius, count_only=True, return_distance=False)
+                    ny = np.array(ny) - 1.0
+
+                    joint_mi = digamma(n_samples) + digamma(3) - np.mean(digamma(nx + 1)) - np.mean(digamma(ny + 1))
+                    joint_mi = max(0.0, float(joint_mi))
+
+                    var_y = float(np.var(y_vals))
+                    score_val = joint_mi / var_y if var_y > 0 else 0.0
+                else:
+                    _y_encoded = y_vals
+                    if _y_encoded.dtype.kind in ("U", "S", "O"):
+                        from sklearn.preprocessing import LabelEncoder
+                        _le = LabelEncoder()
+                        _y_encoded = _le.fit_transform(_y_encoded.astype(str))
+                    else:
+                        _y_encoded = _y_encoded.astype(np.int32)
+
+                    X_scaled = scale(X_pair, with_mean=False)
+                    X_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(X_scaled), axis=0)) * rng.standard_normal(size=X_scaled.shape)
+
+                    radius = np.empty(n_samples)
+                    label_counts = np.empty(n_samples)
+                    k_all = np.empty(n_samples)
+                    nn = NearestNeighbors()
+                    for label in np.unique(_y_encoded):
+                        mask = _y_encoded == label
+                        count = np.sum(mask)
+                        if count > 1:
+                            k = min(3, count - 1)
+                            nn.set_params(n_neighbors=k)
+                            nn.fit(X_scaled[mask])
+                            r = nn.kneighbors()[0]
+                            radius[mask] = np.nextafter(r[:, -1], 0)
+                            k_all[mask] = k
+                        label_counts[mask] = count
+
+                    mask = label_counts > 1
+                    valid_n_samples = np.sum(mask)
+                    if valid_n_samples > 3:
+                        label_counts = label_counts[mask]
+                        k_all = k_all[mask]
+                        X_scaled = X_scaled[mask]
+                        radius = radius[mask]
+
+                        kd = KDTree(X_scaled)
+                        m_all = kd.query_radius(X_scaled, radius, count_only=True, return_distance=False)
+                        m_all = np.array(m_all)
+
+                        joint_mi = digamma(valid_n_samples) + np.mean(digamma(k_all)) - np.mean(digamma(label_counts)) - np.mean(digamma(m_all))
+                        joint_mi = max(0.0, float(joint_mi))
+                    else:
+                        joint_mi = 0.0
+
+                    probs = pd.Series(_y_encoded).value_counts(normalize=True)
+                    target_entropy = float(-np.sum(probs * np.log(probs)))
+                    score_val = joint_mi / target_entropy if target_entropy > 0 else 0.0
+
+                if score_val >= mi_threshold:
+                    flagged_pairs.append({
+                        "feature_a": feat_a,
+                        "feature_b": feat_b,
+                        "mi_pair_score": score_val
+                    })
+            except Exception as e:
+                print(f"[WARN] Joint MI computation failed for pair ({feat_a}, {feat_b}): {e}")
+
+    return flagged_pairs
+
+
 def _write_outputs(
     paths: CompetitionPaths, report: dict, summary_lines: Iterable[str]
 ) -> None:
@@ -655,6 +798,7 @@ def run(
     print(f"DAG phase        : {state.get('dag_phase')}")
 
     task_type = config.get("task_type", "classification")
+    _cfg_shap = config.get("shap")
 
     if len(feature_cols) < 2:
         print("[WARN] X.shape[1] < 2: skipping SHAP ratio audit.")
@@ -709,6 +853,8 @@ def run(
             shap_audit_skipped_reason="single_feature",
             last_updated=datetime.now(timezone.utc).isoformat(),
             shap_oof_cv_strategy_id=cv_id,
+            leakage_mi_advisory=[],
+            leakage_pairwise_mi_advisory=[],
         )
         try:
             _seed_val_sf = int(seed) if seed is not None else get_seed()
@@ -759,6 +905,14 @@ def run(
     )
     ranking = full_audit["ranking"]
     pruning = _build_pruned_feature_set(feature_cols, ranking, frame)
+
+    pairwise_advisory = _run_pairwise_mi_audit(
+        frame=frame,
+        ranking=ranking,
+        target=target,
+        task_type=task_type,
+        cfg_shap=_cfg_shap,
+    )
 
     # Use the shared LightGBM CV path to test the correlation-pruning wrapper.
     full_cv = train_lightgbm_cv(
@@ -904,6 +1058,7 @@ def run(
         # prevent skill_11 promotion. Written as an empty list when no advisory flag
         # was raised (enable_mi_regression_subsample: false, or no flags found).
         leakage_mi_advisory=full_audit.get("mi_advisory_feature_names", []),
+        leakage_pairwise_mi_advisory=pairwise_advisory,
     )
     write_oof_record(
         state_store,
@@ -992,6 +1147,14 @@ def _run_multi_target_shap(
         )
         ranking = full_audit["ranking"]
         pruning = _build_pruned_feature_set(feature_cols, ranking, frame_with_target)
+
+        target_pairwise_advisory = _run_pairwise_mi_audit(
+            frame=frame_with_target,
+            ranking=ranking,
+            target=target_name,
+            task_type=target_task,
+            cfg_shap=config.get("shap"),
+        )
 
         # Use appropriate CV strategy for task type
         cv_strategy_dict = {
@@ -1082,6 +1245,7 @@ def _run_multi_target_shap(
             "mi_advisory_feature_names": full_audit.get(
                 "mi_advisory_feature_names", []
             ),
+            "mi_pairwise_advisory": target_pairwise_advisory,
         }
         all_pass = all_pass and pruning_pass
 
@@ -1202,6 +1366,26 @@ def _run_multi_target_shap(
             f"across targets: {all_advisory}. Non-blocking — surfaced at Human Gate 2."
         )
     state_store.update(leakage_mi_advisory=all_advisory)
+
+    # S6: flatten per-target pairwise MI advisory lists into a shared leakage_pairwise_mi_advisory key.
+    pairwise_advisory_by_target = {
+        t: r.get("mi_pairwise_advisory", []) for t, r in all_results.items()
+    }
+    all_pairwise_advisory = []
+    seen_pairs = set()
+    for t, pairs in pairwise_advisory_by_target.items():
+        for pair in pairs:
+            key = tuple(sorted([pair["feature_a"], pair["feature_b"]]))
+            if key not in seen_pairs:
+                seen_pairs.add(key)
+                all_pairwise_advisory.append(pair)
+    if all_pairwise_advisory:
+        print(
+            f"  [ADVISORY] Pairwise MI check flagged {len(all_pairwise_advisory)} feature pair(s) "
+            f"across targets. Non-blocking — surfaced at Human Gate 2."
+        )
+    state_store.update(leakage_pairwise_mi_advisory=all_pairwise_advisory)
+
     print(f"\n[OK] Multi-target SHAP complete. Overall pass: {all_pass}")
     return {"multi_target": True, "targets": all_results, "overall_pass": all_pass}
 

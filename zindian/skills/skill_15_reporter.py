@@ -144,8 +144,7 @@ def run(
         # -- Session-scoped startup logging -------------------------
         # Route startup events to session-scoped files, NOT history_log.jsonl
         session_dir = paths.reports_dir / "sessions"
-        session_start = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        session_log_path = session_dir / f"startup_{session_start}.jsonl"
+        session_dir.mkdir(parents=True, exist_ok=True)
 
         startup_event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -164,7 +163,40 @@ def run(
             "best_public_lb_score": None,
             "oof_to_lb_delta": None,
         }
-        _log_startup_event(session_log_path, startup_event)
+
+        # Content-hash dedup: check if latest startup log has identical content (excluding timestamp)
+        existing_logs = sorted(session_dir.glob("startup_*.jsonl"))
+        latest_log = existing_logs[-1] if existing_logs else None
+        use_existing = False
+
+        if latest_log is not None:
+            try:
+                with open(latest_log, "r", encoding="utf-8") as lf:
+                    first_line = lf.readline().strip()
+                if first_line:
+                    latest_event = json.loads(first_line)
+                    # Compare ignoring timestamp
+                    clean_latest = {k: v for k, v in latest_event.items() if k != "timestamp"}
+                    clean_new = {k: v for k, v in startup_event.items() if k != "timestamp"}
+                    if clean_latest == clean_new:
+                        use_existing = True
+                        session_log_path = latest_log
+            except Exception:
+                pass
+
+        if not use_existing:
+            session_start = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            session_log_path = session_dir / f"startup_{session_start}.jsonl"
+            _log_startup_event(session_log_path, startup_event)
+
+            # Enforce rolling 14-file window
+            all_logs = sorted(session_dir.glob("startup_*.jsonl"))
+            if len(all_logs) > 14:
+                for old_log in all_logs[:-14]:
+                    try:
+                        old_log.unlink()
+                    except Exception:
+                        pass
 
         print("=" * 60)
         print("SKILL 15 — Central Reporter (Initialization)")

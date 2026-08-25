@@ -157,11 +157,11 @@ def run_deep_research(
                 print("[deep_research] Error: sidecar skills are not loaded")
                 return
 
-            literature_cache_path = reports_dir / "literature_cache.json"
-            domain_hypotheses_path = reports_dir / "domain_hypotheses.json"
-            priorart_path = reports_dir / "ml_priorart.json"
-            validated_hypotheses_path = reports_dir / "validated_hypotheses.json"
-            failed_hypotheses_path = reports_dir / "failed_hypotheses.json"
+            literature_cache_path = reports_dir / "diagnostics" / "literature_cache.json"
+            domain_hypotheses_path = reports_dir / "diagnostics" / "domain_hypotheses.json"
+            priorart_path = reports_dir / "diagnostics" / "ml_priorart.json"
+            validated_hypotheses_path = reports_dir / "diagnostics" / "validated_hypotheses.json"
+            failed_hypotheses_path = reports_dir / "diagnostics" / "failed_hypotheses.json"
 
             print("[deep_research] Starting background Librarian (Skill 18)...")
             lib_mod.run_librarian(
@@ -200,11 +200,11 @@ def run_deep_research(
         "status": "LAUNCHED",
         "message": "Deep research sidecar launched in non-blocking background daemon thread.",
         "paths": {
-            "literature_cache": str(reports_dir / "literature_cache.json"),
-            "domain_hypotheses": str(reports_dir / "domain_hypotheses.json"),
-            "priorart": str(reports_dir / "ml_priorart.json"),
-            "validated_hypotheses": str(reports_dir / "validated_hypotheses.json"),
-            "failed_hypotheses": str(reports_dir / "failed_hypotheses.json"),
+            "literature_cache": str(reports_dir / "diagnostics" / "literature_cache.json"),
+            "domain_hypotheses": str(reports_dir / "diagnostics" / "domain_hypotheses.json"),
+            "priorart": str(reports_dir / "diagnostics" / "ml_priorart.json"),
+            "validated_hypotheses": str(reports_dir / "diagnostics" / "validated_hypotheses.json"),
+            "failed_hypotheses": str(reports_dir / "diagnostics" / "failed_hypotheses.json"),
         },
         **kwargs,
     }
@@ -1118,10 +1118,11 @@ def run_phase(
                 "message": f"Skill {skill_name} not yet implemented",
             }
 
-    # Mark phase complete in state
+    # Mark phase complete and write telemetry.aggregate in state
     try:
         from .state import SkillStateStore
         from .paths import resolve_competition_paths
+        from datetime import datetime, timezone
 
         paths = resolve_competition_paths(require_competition=False)
         if paths.state_path.exists():
@@ -1129,9 +1130,40 @@ def run_phase(
             phase_key = (
                 f"phase_{phase.lower().replace('a', 'a').replace('b', 'b')}_complete"
             )
-            store.update(**{phase_key: True})
-    except Exception:
-        pass
+
+            # Aggregate per-skill telemetry
+            total_duration_sec = 0.0
+            total_carbon_kg_estimate = None
+            skill_count = 0
+            has_carbon = False
+
+            for skill_res in results.values():
+                if isinstance(skill_res, dict):
+                    tel = skill_res.get("telemetry")
+                    if isinstance(tel, dict):
+                        skill_count += 1
+                        total_duration_sec += tel.get("duration_sec", 0.0)
+                        carb = tel.get("carbon_kg_estimate")
+                        if carb is not None:
+                            has_carbon = True
+                            if total_carbon_kg_estimate is None:
+                                total_carbon_kg_estimate = 0.0
+                            total_carbon_kg_estimate += float(carb)
+
+            telemetry_aggregate = {
+                "phase": phase,
+                "total_duration_sec": round(total_duration_sec, 2),
+                "total_carbon_kg_estimate": round(total_carbon_kg_estimate, 6) if has_carbon else None,
+                "skill_count": skill_count,
+                "written_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            store.update(**{
+                phase_key: True,
+                "telemetry.aggregate": telemetry_aggregate
+            })
+    except Exception as e:
+        print(f"[orchestrator] Warning: Failed to write state updates/telemetry: {e}")
 
     # Generate phase summary report
     try:

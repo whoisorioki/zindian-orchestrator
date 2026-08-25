@@ -2,6 +2,22 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [v2.6-close-2026-08-25]
+
+### Added
+- **Pairwise Mutual Information Leakage Audit (S6):** Implemented pairwise MI scan for top-10 SHAP features in `zindian/skills/skill_10_shap.py`. For each pair, the joint MI against the target is computed and compared against the `mi_pairwise_threshold` (default 0.90). If it exceeds the threshold, the pair is flagged in `SKILL_STATE.json["leakage_pairwise_mi_advisory"]` as an advisory alert for human review.
+- **Robust Session Log Deduplication & Retention (Track 2A):** Implemented content-hash-based session log deduplication in `zindian/skills/skill_15_reporter.py` to prevent filesystem flooding. Identical startup events (excluding timestamp) reuse the latest existing session log file. Enforced a rolling 14-file retention window to clean up older session log files under `reports/sessions/`.
+- **Preflight Multi-Target OOF Completeness Check (A7-MT):** Added per-branch OOF record completeness check in `scripts/preflight_enforce.py` to verify that every active branch has exactly $N$ OOF records, where $N$ = number of targets in `target_config.targets`.
+- **Post-Loop Telemetry Aggregation (R5):** Configured orchestrator `run_phase` in `zindian/orchestrator.py` to write `telemetry.aggregate` containing summed duration, token counts, and cost metrics post-phase; verified by `skill_22_reproducibility_audit.py` during sign-off.
+- **Unit and Integration Tests:** Developed comprehensive unit tests in `tests/test_real_findings.py`, `tests/test_shap_audit_unit.py`, and `tests/test_skill22_audit.py` to verify the pairwise MI, session log deduplication, preflight MT-OOF, and telemetry aggregation logic.
+
+### Changed
+- **Librarian and Scientist Consolidation (S11):** Removed legacy root `reports/` dual-writes from `skill_18_librarian.py` and `skill_20_scientist.py`, consolidating all sidecar outputs under `reports/diagnostics/`. All consumers, tests, and documentation updated accordingly.
+- **`AGENTS.md` and `docs/source_of_truth.md` Updates:** Bumped both documents to v2.6, marked closed gaps (S6, S11, preflight MT-OOF, R5 aggregate, Track 2B) as resolved, and verified all code citations.
+
+### Verification
+- Full test suite: 15/15 tests in `tests/test_real_findings.py` passed, and all other tests are green (totaling 338+ tests).
+
 ## [v2.5-close-2026-08-24]
 
 ### Changed — Documentation

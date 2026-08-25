@@ -546,8 +546,16 @@ def verify_section_1_assumptions(
     ok("A6 check: Atomic state write mechanism present in state.py")
 
     # A7 - The OOF contract is universal
-    oof_keys = [k for k in state if k.startswith("branch_") and k.endswith("_oof")]
-    for k in oof_keys:
+    oof_pattern = re.compile(
+        r"^branch_(?P<branch>[a-zA-Z0-9\-]+)(?:_(?P<target>[a-zA-Z0-9_]+))?_oof$"
+    )
+    oof_keys = {}
+    for k in state:
+        match = oof_pattern.match(k)
+        if match:
+            oof_keys[k] = match.groupdict()
+
+    for k, grps in oof_keys.items():
         record = state[k]
         if isinstance(record, dict):
             cv_id = record.get("cv_strategy_id")
@@ -555,7 +563,28 @@ def verify_section_1_assumptions(
                 fail(
                     f"[A7 OOF contract Violation] '{k}' is missing 'cv_strategy_id' tag in state"
                 )
-    ok("A7 check: All OOF records carry a cv_strategy_id tag")
+
+    # Completeness check (multi-target only)
+    targets = cfg.get("target_config", {}).get("targets", [])
+    if isinstance(targets, list) and len(targets) > 1:
+        active_branches = set()
+        for grps in oof_keys.values():
+            if grps["branch"]:
+                active_branches.add(grps["branch"])
+
+        n_targets = len(targets)
+        for branch_name in active_branches:
+            branch_matches = [
+                k for k, grps in oof_keys.items() if grps["branch"] == branch_name
+            ]
+            if len(branch_matches) != n_targets:
+                fail(
+                    f"[A7 OOF contract Violation] Branch '{branch_name}' has incomplete OOF records: "
+                    f"found {len(branch_matches)} target OOF records, but expected {n_targets} "
+                    f"for targets: {[t.get('name') for t in targets]}"
+                )
+
+    ok("A7 check: All OOF records carry a cv_strategy_id tag and are complete per branch")
 
     # A8 - Spatial signals are group signals
     spatial = cfg.get("spatial_signal", {})

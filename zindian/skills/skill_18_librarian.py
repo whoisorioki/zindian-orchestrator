@@ -490,39 +490,22 @@ def run_librarian(
     if cache_path is None:
         reports_dir = getattr(paths, "reports_dir", None)
         if reports_dir:
-            cache_path = str(reports_dir / "literature_cache.json")
+            cache_path = str(reports_dir / "diagnostics" / "literature_cache.json")
         else:
-            cache_path = "literature_cache.json"
+            cache_path = "diagnostics/literature_cache.json"
 
-    # Write legacy literature cache
+    # Ensure parent directory exists
+    Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
     Path(cache_path).write_text(json.dumps(cache, indent=2))
     print(f"  [OK] literature_cache.json written -> {cache_path}")
 
-    # Write categorized literature cache
-    reports_dir = getattr(paths, "reports_dir", None)
-    if reports_dir:
-        diagnostics_dir = reports_dir / "diagnostics"
-        diagnostics_dir.mkdir(parents=True, exist_ok=True)
-        cache_path_cat = diagnostics_dir / "literature_cache.json"
-        cache_path_cat.write_text(json.dumps(cache, indent=2))
-        print(f"  [OK] literature_cache.json written -> {cache_path_cat}")
-
-    # Write legacy domain hypotheses
+    # Write domain hypotheses alongside the cache (in the same directory)
     domain_hypotheses_path = Path(cache_path).with_name("domain_hypotheses.json")
     domain_hypotheses = _build_domain_hypotheses(entries)
     domain_hypotheses_path.write_text(
         json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
     )
     print(f"  [OK] domain_hypotheses.json written -> {domain_hypotheses_path}")
-
-    # Write categorized domain hypotheses
-    if reports_dir:
-        diagnostics_dir = reports_dir / "diagnostics"
-        domain_hypotheses_path_cat = diagnostics_dir / "domain_hypotheses.json"
-        domain_hypotheses_path_cat.write_text(
-            json.dumps(domain_hypotheses, indent=2), encoding="utf-8"
-        )
-        print(f"  [OK] domain_hypotheses.json written -> {domain_hypotheses_path_cat}")
 
     return cache
 
@@ -545,5 +528,5 @@ if __name__ == "__main__":
     paths = resolve_competition_paths(require_competition=True)
     run_librarian(
         config_path=str(paths.config_path),
-        cache_path=str(paths.reports_dir / "literature_cache.json"),
+        cache_path=str(paths.reports_dir / "diagnostics" / "literature_cache.json"),
     )

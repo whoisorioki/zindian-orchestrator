@@ -5,7 +5,7 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document is aligned with SoT version **v2.5**.
+version-specific claim below. This document is aligned with SoT version **v2.6**.
 **Last updated:** August 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
@@ -538,12 +538,10 @@ decision logic (not a human reading a report) need this value?" If no, it goes t
 writing five large per-band/per-feature dicts directly into `SKILL_STATE.json["eda"]`.
 Fixed in v2.3. If you find another skill doing this, treat it as the same class of bug.
 
-**[OPEN GAP] skill_18 / skill_20 report path violation:** both skills still write
-legacy root copies of their artifacts (`reports/literature_cache.json`,
-`reports/domain_hypotheses.json`, `reports/validated_hypotheses.json`,
-`reports/failed_hypotheses.json`) alongside the correct categorized writes under
-`reports/diagnostics/`. Tracked in SoT §7 and `reporting_logging_audit.md` Track 2.
-Do not add new readers on the root paths — read only from `reports/diagnostics/`.
+**[RESOLVED — v2.6] skill_18 / skill_20 report path violation:** both skills have
+been refactored to write sidecar literature and hypothesis files strictly to
+`reports/diagnostics/` (not to the root `reports/`). Tracked in SoT §7 and
+`reporting_logging_audit.md` Track 2.
 
 **Reader/writer path rule:** every consumer must read the same categorized path the
 writer used. Do not reintroduce root-level duplicate reads (e.g. reading
@@ -620,11 +618,9 @@ At minimum, the preflight script is expected to validate:
 matches multi-target keys like `branch_anchor_total_goals_oof` since
 they end in `_oof`. The tag presence check works.
 
-**[OPEN GAP] OOF completeness count:** the A7 check does NOT verify
-that every active branch has exactly N OOF records (N = number of
-targets). A branch missing one target's OOF entirely passes preflight.
-This is tracked in SoT §7. Do not work around it by reading missing
-keys — surface the gap first.
+**[RESOLVED — v2.6] OOF completeness count:** the A7 check in `preflight_enforce.py`
+now verifies that every active branch has exactly N OOF records (N = number of
+targets). A branch missing one target's OOF entirely will fail the preflight check.
 
 If you extend `preflight_enforce.py`, new checks must follow the same
 fail-hard / warn-only distinction already in use.
@@ -713,7 +709,14 @@ before it is resolved in code.
 
 ---
 
-## v2.3, v2.4 & v2.5 Refactor — Completed Items
+## v2.3, v2.4, v2.5 & v2.6 Refactor — Completed Items
+
+**v2.6 Gap Closures & Deduplication (August 2026):**
+- ✅ **S6 (Pairwise MI Advisory):** Pairwise leak scan on top-10 SHAP features using mutual information (advisory only) in `skill_10_shap.py`.
+- ✅ **S11 (skill_18/20 Root Dual-Writes):** Removed all legacy root `reports/` writes from librarian/scientist, and redirected all readers/tests to `reports/diagnostics/`.
+- ✅ **Preflight OOF Completeness Check:** Added per-branch OOF completeness assertion (exactly $N$ OOF records per branch, $N$ = target count) to A7 in `preflight_enforce.py`.
+- ✅ **R5 (telemetry.aggregate):** Orchestrator `run_phase` now writes `telemetry.aggregate` post-phase; verified by `skill_22` reproducibility auditor.
+- ✅ **Session Log Deduplication:** Startup events are content-hashed and identical sessions are skipped/merged, with a rolling 14-file retention window enforced on `reports/sessions/`.
 
 **v2.5 Gap Closures (August 2026) — verified by code inspection:**
 - ✅ **S5 (Multi-target recombination policy):** Both `freeze_unaugmented_targets_at_original` and `block_composite_until_all_targets_augmented_or_none` enforced at `skill_21_pseudo_label.py` L567 and L1034–1132.
@@ -778,14 +781,10 @@ all SoT-specified eda sub-block fields with correct defaults.
 > (Known Gaps Registry) as the canonical record. AGENTS.md lists the implementation
 > constraints that apply when a gap is addressed.
 
-1. **S6 — Multicollinear leakage (split-leak blind spot):** Univariate NMI/Pearson misses leaks distributed across correlated feature pairs. Requires pairwise/group-wise MI testing. No SoT patch yet.
-2. **S11 — skill_18 / skill_20 root dual-writes:** Both skills still write legacy root copies alongside `reports/diagnostics/`. `skill_18` L498 writes to `reports_dir/literature_cache.json` before L507 writes to `diagnostics/`. `skill_20` `run()` L671–676 passes root paths to `run_scientist()`. Remove root writes and update all consumers together in one atomic change. See `reporting_logging_audit.md` Track 2.
-3. **Preflight — Multi-target OOF completeness not per-branch:** A7 check validates tag presence only, not N-per-branch count. Requires adding: for each branch, assert `count(branch_*_oof keys) == len(target_config["targets"])`.
-4. **R5 — `telemetry.aggregate` not written:** `run_phase()` writes only per-skill `telemetry.{skill_name}` keys (L1103–1104); no aggregate is written. `skill_22` does not verify it. Add a post-loop aggregation step to `run_phase()` and a matching check in `skill_22`. Do not modify `skill_22` alone — add the writer first.
-5. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
-6. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
-7. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
-8. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
+1. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
+2. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
+3. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
+4. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
 
 ---
 

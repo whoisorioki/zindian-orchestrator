@@ -234,6 +234,55 @@ def _audit_derived_artifact_fingerprints(
     return (len(issues) == 0, issues)
 
 
+def _check_telemetry_aggregate(
+    state: dict[str, Any], config: dict[str, Any]
+) -> tuple[bool, list[str]]:
+    """Verify telemetry.aggregate and carbon tracking compliance (v2.6 R5)."""
+    issues = []
+
+    # 1. telemetry.aggregate present and non-null
+    telemetry_agg = state.get("telemetry.aggregate")
+    if not telemetry_agg:
+        issues.append("telemetry.aggregate is missing or null in SKILL_STATE")
+        return (False, issues)
+
+    if not isinstance(telemetry_agg, dict):
+        issues.append("telemetry.aggregate is not a dictionary")
+        return (False, issues)
+
+    # Check expected keys in aggregate
+    required_keys = {"phase", "total_duration_sec", "total_carbon_kg_estimate", "skill_count", "written_at"}
+    missing_keys = required_keys - set(telemetry_agg.keys())
+    if missing_keys:
+        issues.append(f"telemetry.aggregate is missing keys: {sorted(missing_keys)}")
+
+    # 2. total_carbon_kg_estimate or explicit not_instrumented with reason
+    total_carbon = telemetry_agg.get("total_carbon_kg_estimate")
+    if total_carbon is None:
+        telemetry_keys = [k for k in state if k.startswith("telemetry.") and k != "telemetry.aggregate"]
+        not_instrumented_found = False
+        for tk in telemetry_keys:
+            tel = state[tk]
+            if isinstance(tel, dict) and tel.get("tracker_method") == "not_instrumented":
+                if tel.get("reason"):
+                    not_instrumented_found = True
+                    break
+        if not not_instrumented_found:
+            issues.append(
+                "total_carbon_kg_estimate is null, but no skill telemetry contains "
+                "'tracker_method' == 'not_instrumented' with a valid 'reason'"
+            )
+
+    # 3. config["infrastructure"] block present
+    infra = config.get("infrastructure")
+    if infra is None:
+        issues.append("config['infrastructure'] block is missing in challenge_config")
+    elif not isinstance(infra, dict):
+        issues.append("config['infrastructure'] block is not a dictionary")
+
+    return (len(issues) == 0, issues)
+
+
 def audit_pipeline(slug: str | None = None) -> bool:
     print("=" * 70)
     print("ZINDIAN ORCHESTRATOR: FINAL REPRODUCIBILITY AUDIT")
@@ -309,6 +358,14 @@ def audit_pipeline(slug: str | None = None) -> bool:
         except json.JSONDecodeError as exc:
             print(f"  ERROR: SKILL_STATE.json is not valid JSON: {exc}")
             return False
+
+        cfg = {}
+        cfg_path = comp_dir / "challenge_config.json"
+        if cfg_path.exists():
+            try:
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         recorded_branch = state.get("current_git_branch", "Unknown")
         recorded_phase = state.get("dag_phase", "Unknown")
         print(f"  - Serialized Git Branch: {recorded_branch}")
@@ -330,17 +387,10 @@ def audit_pipeline(slug: str | None = None) -> bool:
         override = state.get("cv_strategy_override") or {}
         if isinstance(override, dict) and override.get("active"):
             active_id = f"override:{override.get('override_strategy', 'unknown')}"
-        if not active_id:
-            # Try to load the challenge_config.json.
-            cfg_path = comp_dir / "challenge_config.json"
-            if cfg_path.exists():
-                try:
-                    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                    cv_strategy = cfg.get("cv_strategy") or {}
-                    if isinstance(cv_strategy, dict) and cv_strategy.get("type"):
-                        active_id = f"config:{cv_strategy.get('type', 'unknown')}"
-                except json.JSONDecodeError:
-                    pass
+        if not active_id and cfg:
+            cv_strategy = cfg.get("cv_strategy") or {}
+            if isinstance(cv_strategy, dict) and cv_strategy.get("type"):
+                active_id = f"config:{cv_strategy.get('type', 'unknown')}"
         if not active_id:
             active_id = "unknown"
         oof_ok, oof_issues = _audit_oof_strategy_tags(state, active_id)
@@ -371,6 +421,20 @@ def audit_pipeline(slug: str | None = None) -> bool:
         else:
             print(
                 "  OK: Derived artifact fingerprints verified within IEEE-754 tolerance limits."
+            )
+
+        # -- Check 5: Telemetry aggregate and carbon tracking audit (v2.6 R5) ---
+        print(
+            "\n[Check 5] Auditing telemetry.aggregate and carbon tracking compliance"
+        )
+        tel_ok, tel_issues = _check_telemetry_aggregate(state, cfg)
+        if tel_issues:
+            for issue in tel_issues:
+                print(f"  ERROR: {issue}")
+            errors_found += len(tel_issues)
+        else:
+            print(
+                "  OK: telemetry.aggregate and carbon tracking verified successfully."
             )
 
     print("\n" + "=" * 70)
