@@ -134,13 +134,39 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                     else base_weight
                 )
                 target_effective_weights[str(t_name)] = effective_weight
+                # [v2.7] Per-target standard error — NB-based, all targets (L2).
+                # matches the top-level convention se_oof = sqrt(Var_NB) with no /K.
                 per_target_analysis[str(t_name)] = {
                     "fold_scores": [float(value) for value in scores_arr.tolist()],
                     "fold_score_variance": variance_nb,
                     "fold_score_variance_sample": variance_sample,
                     "weight": base_weight,
                     "effective_weight": effective_weight,
+                    "se_oof": float(np.sqrt(variance_nb)) if variance_nb > 0 else 0.0,
                 }
+
+            # [v2.7] Composite standard error for the promotion margin (Fix-1 + Fix-3):
+            #   - regression targets ONLY (matches effective_target_std / D0-D4 scope)
+            #   - sqrt( sum(w_eff * per-target NB variance) ) with NO extra /sqrt(K):
+            #     each per-target variance is already NB-corrected, so dividing by the
+            #     fold count again is the A.1 double-scaling error.
+            # Uses the SAME effective weights as the composite distance computation.
+            regression_targets = [
+                t for t in targets
+                if t.get("task_type") == "regression" and t.get("name")
+            ]
+            if regression_targets and per_target_analysis:
+                composite_se_oof = float(
+                    np.sqrt(
+                        sum(
+                            target_effective_weights.get(str(rt["name"]), 0.0)
+                            * per_target_analysis[str(rt["name"])]["fold_score_variance"]
+                            for rt in regression_targets
+                            if rt["name"] in per_target_analysis
+                        )
+                    )
+                )
+                metric_analysis["composite_se_oof"] = composite_se_oof
 
             for i in range(n_splits):
                 weighted_sum = 0.0
