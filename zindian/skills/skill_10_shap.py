@@ -387,7 +387,7 @@ def _compute_shap_audit(
 
                 _nmi_thresh = float(_cfg_shap.get("leak_nmi_threshold") or 0.90)
                 mi_max_samples = int(_cfg_shap.get("mi_max_samples") or 2000)
-                rng = np.random.default_rng(42)
+                rng = np.random.default_rng(seed)
 
                 for feat in feature_cols:
                     valid_mask = frame[feat].notna() & frame[target].notna()
@@ -400,7 +400,7 @@ def _compute_shap_audit(
                         y_sub = y_mi.iloc[sub_idx]
                         mi_reg = float(
                             mutual_info_regression(
-                                x_sub, y_sub.values, random_state=42
+                                x_sub, y_sub.values, random_state=seed
                             )[0]
                         )
                         var_y = float(np.var(y_sub.values))
@@ -455,7 +455,7 @@ def _compute_shap_audit(
                     threshold_val = _pearson_thresh
                 else:
                     mi_score = float(
-                        mutual_info_classif(x_mi, y_mi.values, random_state=42)[0]
+                        mutual_info_classif(x_mi, y_mi.values, random_state=seed)[0]
                     )
                     probs = y_mi.value_counts(normalize=True)
                     target_entropy = float(-np.sum(probs * np.log(probs)))
@@ -612,7 +612,7 @@ def _run_pairwise_mi_audit(
         seed_val = get_seed()
     else:
         seed_val = seed
-    seed_val = int(seed_val if seed_val is not None else 42)
+    seed_val = int(seed_val)
 
     rng = np.random.default_rng(seed_val)
 

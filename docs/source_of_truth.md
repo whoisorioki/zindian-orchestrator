@@ -2408,7 +2408,7 @@ requires explicit hardware_type = "gpu" in config.
 
 This section documents every confirmed discrepancy between the SoT
 contract and the current codebase. Items are tracked by severity.
-Last verified: August 2026.
+Last verified: August 2026 (v2.6 audit — S2 pinpointed to skill_08_anchor.py L521–535).
 
 ---
 
@@ -2422,7 +2422,7 @@ and are recorded here for audit trail only.
 | C1 | Bootstrap `dag_phase` prevented config writes | `"phase_1_integrity_locked"` added to `allowed_write_phases` in skill_02 (L867) and skill_05 (L610); bootstrap sets this phase at L119 |
 | GAP-4 | `skill_04_eda` did not write `temporal_index_confirmed` / `group_structure_confirmed` | Resolved v2.3 — both lean booleans now derived from BAND_MM pattern, datetime/monotonicity dtype inference, and <5% cardinality ratio |
 | S1/S9 | Bessel's correction underestimation + absolute promotion margins | Implemented 2026-08-03 — `skill_12_metric` L167–182 computes NB-corrected `fold_score_variance_nb` + `se_oof`; `skill_11_gate` L134 applies `max(margin, 1.0 * se_oof)` |
-| S2 (partial) | MAPE zero-target bias + MASE baseline | Implemented 2026-08-03 — secondary diagnostic MASE implemented; primary-metric MASE routing remains open |
+| S2 | MAPE zero-target bias + MASE baseline & routing | Implemented 2026-08-25 — Secondary diagnostic MASE implemented; primary-metric routing key mapped in `skill_08_anchor.py` `metric_map`. Score-space correction tracked separately as F4 residual. |
 | S3 | Non-uniform metric scaling / composite weighting | Implemented 2026-08-03 — Inverse-variance weighting in `skill_12_metric` L88–149 and `skill_11_gate` L188–236 |
 | S4 | Correlation-based pruning used raw predictions not residuals | Implemented 2026-08-03 — `_prune_collinear()` in `oracle_fusion_core.py` accepts `y_true` and computes error residuals; call site at L687 passes `y_true` |
 | S5 | Multi-target pseudo-label recombination policy not enforced | Implemented 2026-08-03 — Both policies (`freeze_unaugmented_targets_at_original`, `block_composite_until_all_targets_augmented_or_none`) enforced at `skill_21_pseudo_label.py` L567 and L1034–1132 |
@@ -2435,29 +2435,56 @@ and are recorded here for audit trail only.
 | S7 | Spatial CV Buffer: `skill_09` not consuming buffered splits | Implemented 2026-08-24 — `skill_09_calibration.py` L207–210 calls `load_explicit_cv_splits(state)` when explicit splits are present |
 | S8 | Fixed pseudo-label thresholding — adaptive quantiles not implemented | Implemented 2026-08-24 — class-wise quantile selection with 0.70 floor at `skill_21_pseudo_label.py` L762–788; `min_pseudo_samples` guard; `pseudo_quantile` config key drives selection |
 | S10 | No skill wrote `derived_artifact_fingerprints` | Implemented 2026-08-24 — `write_artifact_fingerprint()` called by skill_06 (L196), skill_07 (L1288, L1884), skill_08 (L497, L827); `skill_22` verifier now has data to check |
-| S6 | Multicollinear Leakage Splitting (split-leak blind spot) | Implemented 2026-08-24 — pairwise MI scan for top-10 SHAP features in `skill_10_shap.py` |
-| S11 | skill_18/20 legacy root dual-writes | Implemented 2026-08-24 — consolidated all sidecar writes to `reports/diagnostics/` only; updated all consumers and tests |
-| Preflight | Multi-target OOF completeness check not per-branch | Implemented 2026-08-24 — added per-branch OOF completeness count assertion to A7 check in `preflight_enforce.py` |
-| R5 | `telemetry.aggregate` not written | Implemented 2026-08-24 — orchestrator post-phase loop aggregation added; verification checks implemented in `skill_22` |
-| Track 2B | Orphaned `feature_policy.json` at root | Implemented 2026-08-24 — verified via workspace and competition grep that no root writes or reads remain; all feature policies are written strictly to `reports/audits/feature_policy.json`. |
+| S6 | Multicollinear Leakage Systematic Pairwise MI scan | Implemented 2026-08-24 — pairwise MI scan for top-10 SHAP features in `skill_10_shap.py`. |
+| S11 | skill_18/20 legacy root dual-writes | Implemented 2026-08-24 — consolidated all sidecar writes to `reports/diagnostics/` only; updated all consumers and tests. |
+| Preflight | Multi-target OOF completeness check not per-branch | Implemented 2026-08-24 — added per-branch OOF completeness count assertion to A7 check in `preflight_enforce.py`. |
+| R5 | `telemetry.aggregate` not written | Implemented 2026-08-24 — orchestrator post-phase loop aggregation added; verification checks implemented in `skill_22`. |
+| Track 2B | Orphaned `feature_policy.json` at root | Implemented 2026-08-24 — verified via workspace and competition grep that no root writes or reads remain. |
+| F3 | Hardcoded seeds in skill_10_shap.py | Resolved 2026-08-25 — Replaced hardcoded seed=42 with config-driven random_seed parameter. |
+| F4 (partial) | MASE Routing in target lifecycle | Routing key landed 2026-08-25 — `"mase"` mapped in `skill_08_anchor.py` `metric_map`, preventing silent `oof_f1` fallback. Fold-score space remains RMSE (no naive-baseline scaling in `_lightgbm_shared.py`); residual tracked in OPEN section as F4. |
 
 ---
 
 ### OPEN — Active gaps
 
-**S2 (partial) — Primary-Metric MASE Routing**
+**F1 — Pairwise MI Scale Invariance**
 
 ```
-SoT Contract:   MASE is handled as a primary optimization metric. If a competition
-                configures "mase" as the primary metric, the model training and
-                gating logic evaluates candidates using MASE.
-Code Reality:   MASE is only computed as a secondary diagnostic metric in the state
-                OOF records. If a competition configures "mase" as the primary
-                metric, the model evaluation maps "mase" to the default RMSE score
-                (yielding 0.0 for regression tasks or evaluating RMSE instead of
-                scale-invariant MASE).
-Status:         Pending implementation of scale-invariant MASE routing.
-Severity:       Medium — prevents using MASE as the primary optimization metric.
+Description:    The S6 pairwise MI audit function uses nearest neighbor distances to
+                estimate mutual information. This raw MI estimate is not scale-invariant
+                for continuous targets/features. Rescaling feature or target values
+                causes the MI score to drift.
+Status:         Pending normalization/standardization research (e.g., Linfoot correlation
+                coefficient or copula-based normalization).
+Severity:       Low — does not halt pipeline, but warning thresholds are scale-sensitive.
+```
+
+**F2 — KSG Validator Bivariate Reference Test**
+
+```
+Description:    The custom KSG bivariate MI estimator lacks direct unit tests validating
+                its output accuracy against closed-form mathematical solutions (e.g.
+                Bivariate Gaussian).
+Status:         Pending numeric-equivalence reference test suite integration.
+Severity:       Low — estimator functions correctly, but numerical precision is unverified.
+```
+
+**F4 (partial) — MASE Score-Space Residual**
+
+```
+Description:    Primary-metric routing exists ("mase" key in skill_08_anchor.py
+                metric_map), but oof_logloss resolves to oof_rmse (skill_08 L223) and
+                _lightgbm_shared.py computes plain RMSE fold scores — there is no
+                branch dividing by MAE_naive_baseline when config metric is "mase".
+                Meanwhile skill_11_gate SCALE_INVARIANT_METRICS treats mase thresholds
+                as scale-invariant. A competition configuring metric: "mase" would
+                therefore compare RMSE-space scores against MASE-calibrated
+                thresholds — a unit-space mismatch, not a correct MASE evaluation.
+Status:         Pending SoT §2 Regression Target Transformation Lifecycle definition
+                of a "mase" case, plus a naive-baseline-scaled fold-scoring branch in
+                _lightgbm_shared.py. Do not implement without that contract first.
+Severity:       Medium — silently wrong gating scale if mase is ever configured;
+                latent only (no active competition currently uses metric: "mase").
 ```
 
 ---
@@ -2467,7 +2494,7 @@ Severity:       Medium — prevents using MASE as the primary optimization metri
 **[DEFERRED — v3.0] GAP-3 — SHAP interaction effects**
 
 ```
-SoT Contract:   SHAP-based leakage detection captures interaction effects
+Description:    SHAP-based leakage detection captures interaction effects
                 between features.
 Code Reality:   skill_10_shap.py computes mean |SHAP| per feature only.
                 TreeSHAP interaction values (shap_interaction_values) are
@@ -2478,5 +2505,7 @@ Severity:       Low — interaction-based leakage is rare in standard tabular
 ```
 
 ---
-*Version: v2.6 — CLOSED*
+*Version: v2.6 — OPEN (F1, F2, F4-residual)*
 *Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*
+*S2/F4 note (2026-08-25): "mase" routing key mapped in skill_08_anchor.py metric_map;
+fold-score space correction (naive-baseline scaling) remains open as F4 (partial).*

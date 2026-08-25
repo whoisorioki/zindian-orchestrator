@@ -680,9 +680,13 @@ Stop and ask before writing code if you encounter any of these:
 - You find code using direct bracket access on `cv_strategy_override`,
   `pseudo_label_result`, or `anchor_challenge`.
 - You encounter any of the open gaps flagged throughout this document
-  (S6, S7, S8, S10, skill_18/20 root writes, preflight OOF completeness,
-  GAP-3) without a fresh, in-session confirmation of their actual status.
-  C1, C4, M6, DRIFT-3, C2, and the recombination policy are resolved —
+  (GAP-3, regression pseudo-labelling, two-mode static verification,
+  drift_threshold enforce-mode) without a fresh, in-session confirmation
+  of their actual status.
+  S2 primary MASE routing is the only active code gap as of v2.6 —
+  do not implement it without an SoT patch first.
+  All of S6, S7, S8, S10, S11, preflight OOF completeness, R5, C1, C4,
+  M6, DRIFT-3, C2, and the recombination policy are resolved —
   do not treat them as live risks.
 
 These are not situations to resolve with best judgement. Surface
@@ -717,6 +721,7 @@ before it is resolved in code.
 - ✅ **Preflight OOF Completeness Check:** Added per-branch OOF completeness assertion (exactly $N$ OOF records per branch, $N$ = target count) to A7 in `preflight_enforce.py`.
 - ✅ **R5 (telemetry.aggregate):** Orchestrator `run_phase` now writes `telemetry.aggregate` post-phase; verified by `skill_22` reproducibility auditor.
 - ✅ **Session Log Deduplication:** Startup events are content-hashed and identical sessions are skipped/merged, with a rolling 14-file retention window enforced on `reports/sessions/`.
+- ⚠️ **F4/S2 (MASE Score-Space Residual):** Routing key landed — `skill_08_anchor.py` `metric_map` now maps `"mase"` (no more silent `oof_f1` fallback). But fold scores remain RMSE-space (`oof_logloss = oof_rmse` at L223; no naive-baseline branch in `_lightgbm_shared.py`) while `skill_11_gate` treats `mase` thresholds as scale-invariant. Do not implement fold-score scaling without an SoT §2 lifecycle definition first. Tracked as F4 (partial) in SoT §7.
 
 **v2.5 Gap Closures (August 2026) — verified by code inspection:**
 - ✅ **S5 (Multi-target recombination policy):** Both `freeze_unaugmented_targets_at_original` and `block_composite_until_all_targets_augmented_or_none` enforced at `skill_21_pseudo_label.py` L567 and L1034–1132.
@@ -732,7 +737,7 @@ before it is resolved in code.
 
 **v2.4 Statistical Migration (August 2026):**
 - ✅ **S1 & S9 (Nadeau-Bengio + 1-SE):** Shipped corrected fold variance `Var_NB` and 1-SE promotion margins in `skill_11`/`skill_12`.
-- ⚠️ **S2 (MASE Metric):** Shipped MASE naive baseline reporting and error handling in `skill_12` (secondary diagnostic only); primary-metric MASE routing remains an open gap.
+- ⚠️ **S2 (MASE Metric):** Shipped MASE naive baseline reporting and error handling in `skill_12` (secondary diagnostic only); primary-metric MASE routing in `skill_08_anchor.py` `metric_map` remains open — tracked in §"Open Known Gaps" and SoT §7.
 - ✅ **S3 (Inverse-Variance Weighting):** Shipped dynamic target weighting `w_k_eff = w_k / (sigma_k_NB^2 + epsilon)` for multi-target composite scores.
 - ✅ **S4 (Residual Diversity):** Shipped Kuncheva residual vector correlation in `skill_13` model fusion collinearity pruning.
 - ✅ **S6 (Two-Tier Leak Audit):** Shipped Pearson primary/blocking + advisory subsampled MI audit in `skill_10`.
@@ -780,12 +785,15 @@ all SoT-specified eda sub-block fields with correct defaults.
 > Cross-reference: all open gaps are also tracked in `docs/source_of_truth.md` §7
 > (Known Gaps Registry) as the canonical record. AGENTS.md lists the implementation
 > constraints that apply when a gap is addressed.
+> v2.6 status: F4 (MASE score-space residual) is the only active code gap;
+> F1/F2 are documented advisory limitations in SoT §7. Items 2–4 are architectural
+> constraints, not code bugs. GAP-3 is deferred to v3.0.
 
-1. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Do not implement without SoT roadmap update.
-2. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible contract.
-3. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add runtime assertion without SoT patch defining the verification mechanism.
-4. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it won't break existing competition configs that predate this field.
-5. **S2 (partial) — Primary-Metric MASE Routing:** MASE is only implemented as a secondary diagnostic metric. Primary MASE routing in training and gating remains an open gap.
+1. **GAP-3 (SHAP interaction effects):** Deferred to v3.0. Requires TreeSHAP interaction values API (`shap_interaction_values`) — computationally expensive (O(n²) features). Do not implement without SoT roadmap update and explicit v3.0 milestone approval.
+2. **F4 (partial) — MASE Score-Space Residual:** `skill_08_anchor.py` `metric_map` now routes `"mase"` (applied 2026-08-25), but fold scores are still plain RMSE (`oof_logloss = oof_rmse` at L223; `_lightgbm_shared.py` has no naive-baseline branch) while `SCALE_INVARIANT_METRICS` treats `mase` as scale-invariant. Do not implement the scaled scoring without an SoT §2 Regression Target Transformation Lifecycle definition for `mase`.
+3. **Regression pseudo-labelling:** `skill_21` Guard Condition 1 explicitly blocks regression. Out of scope until SoT defines a regression-compatible pseudo-label contract.
+4. **Two-mode contract static verification:** No preflight check confirms `skill_07` respected fold discipline. Do not add a runtime assertion without an SoT patch defining the verification mechanism.
+5. **`drift_threshold` ENFORCE-mode hard-fail:** Currently warn-only. Do not upgrade to hard-fail without confirming it will not break existing competition configs that predate this field.
 
 ---
 

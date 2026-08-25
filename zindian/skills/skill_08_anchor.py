@@ -531,7 +531,9 @@ def run(
         "logloss": oof_logloss,
         "log_loss": oof_logloss,
         "rmsle": oof_logloss if task_type == "regression" else oof_f1,
+        "mase": oof_logloss if task_type == "regression" else oof_f1,
     }
+    # S2 - implemented 2026-08-25
     anchor_oof_score = metric_map.get(metric_name, oof_f1)
 
     secondary_metrics = None

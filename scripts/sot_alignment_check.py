@@ -37,6 +37,8 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
             ("zindian/state.py", "zero_fraction", True),
             ("zindian/state.py", "mase", True),
             ("zindian/skills/skill_08_anchor.py", "mae_naive_baseline", True),
+            ("zindian/skills/skill_08_anchor.py", '"mase":', True),
+            ("zindian/skills/skill_08_anchor.py", "# S2 - implemented 2026-08-25", True),
         ],
     },
     "3": {
