@@ -38,6 +38,8 @@ def _minimal_train_test(n: int = 60, seed: int = 0):
 
 def _run_mase_cv(baseline, *, n_splits: int = 3, n: int = 60):
     """Call train_lightgbm_cv with regression_metric='mase'."""
+    from sklearn.model_selection import KFold
+
     train, test = _minimal_train_test(n=n)
     return train_lightgbm_cv(
         train=train,
@@ -48,6 +50,11 @@ def _run_mase_cv(baseline, *, n_splits: int = 3, n: int = 60):
         random_seed=0,
         regression_metric="mase",
         mae_naive_baseline=baseline,
+        # Hermetic CV geometry: an explicit splitter keeps these unit tests
+        # independent of ambient competition-config discovery (which differs
+        # between dev machines and CI and can otherwise select a stratified
+        # splitter that rejects continuous targets).
+        cv=KFold(n_splits=n_splits, shuffle=True, random_state=0),
     )
 
 
