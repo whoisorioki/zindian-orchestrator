@@ -340,7 +340,7 @@ an evaluation matrix determined by `config["metric"]`:
    * RMSLE is computed in original space:
      `sqrt( (1/N) * sum( (ln(y_i + 1) - ln(y_hat_i + 1))^2 ) )`
    * RMSE (root_mean_squared_error) and MAE (mean_absolute_error) are computed in original space with standard scikit-learn functions, operating on the domain-clipped predictions.
-   * MASE (`"mase"`) — **[v2.7] F4 closed** — uses Option A with a single
+   * MASE (`"mase"`) uses Option A with a single
      **global** `MAE_naive_baseline` as denominator (the naive/persistence
      baseline of the training series, computed once in `skill_04` and
      stored as `eda["MAE_naive_baseline"]`); each fold is scored on
@@ -414,7 +414,7 @@ effective_variance_threshold = (
 
 Dividing by the sum of regression weights (rather than treating them as summing to 1.0) removes the suppression artifact when classification targets are present. Verified against single regression target at weight 0.60 (reduces to `target_std` unmodified) and two regression targets at 0.30/0.30 (produces proper weighted RMS independent of classification weight).
 
-#### Composite `se_oof` for the 1-SE promotion margin (multi-target only) — **[v2.7]**
+#### Composite `se_oof` for the 1-SE promotion margin (multi-target only)
 
 The multi-target gate folds a regression-bearing composite standard error into
 the promotion margin exactly as the single-target gate folds the NB-based
@@ -1519,9 +1519,8 @@ population variance (ddof=0) underestimates by a factor of
 `variance_gate_threshold: 0.01` boundary.
 
 The primary `fold_score_variance` written here is the **Nadeau-Bengio corrected**
-value (`fold_score_variance_nb = raw_sample_variance(ddof=1) * (1/K + n_val/n_train)`)
-— **[v2.7] D1** rectifies an earlier paragraph that called this key the "raw
-value": code (`skill_12_metric.py`) has always written `fold_score_variance =
+value (`fold_score_variance_nb = raw_sample_variance(ddof=1) * (1/K + n_val/n_train)`).
+Code (`skill_12_metric.py`) has always written `fold_score_variance =
 fold_score_variance_nb`, and `skill_11` consumes it on that basis. The raw
 unbiased sample variance (`ddof=1`) is reported separately as
 `fold_score_variance_sample`. The same naming carries into the multi-target
@@ -1538,7 +1537,7 @@ aggregated with ddof=1. **Documented asymmetry:** the composite is the **raw**
 ddof=1 sample variance of the composite fold scores (never NB-corrected) —
 it is an aggregate diagnostic, while the per-target and single-target
 variances are NB-corrected because they feed the 1-SE promotion margin and
-inverse-variance weighting. (See the "[v2.7] composite `se_oof`" section for
+inverse-variance weighting. (See the "Composite `se_oof`" section for
 the NB-grounded composite standard error used in the gate margin.)
 
 For multi-target competitions, the variance threshold uses:
@@ -1722,7 +1721,7 @@ Guard conditions — ALL must be true before running:
    (default: fixed absolute thresholds conf_pos >= 0.85, conf_neg <= 0.15 from CONF_POS_DEFAULT and CONF_NEG_DEFAULT in skill_21_pseudo_label.py)
 ```
 
-> **[IMPLEMENTED — v2.5] S8:** Hybrid Adaptive Pseudo-labeling.
+> **S8:** Hybrid Adaptive Pseudo-labeling.
 > - **Mechanism:** Class-wise quantile selection with a 0.70 floor (`p1 >= 0.70` / `p0 >= 0.70` gates in `skill_21_pseudo_label.py` L779–780). Top `pseudo_quantile` fraction per class selected; defaults to top 20% when config key absent.
 > - **Preconditions & Guards:** Guard condition GC6 still uses `CONF_POS_DEFAULT = 0.85` to gate whether the skill runs at all; quantile selection applies inside the iteration loop once guards pass. `min_pseudo_samples` guard at L782.
 > - **Ranking & Multi-target:** Deterministic `method='first'` tie-breaking. Scoped independently per classification target in multi-target competitions.
@@ -2354,7 +2353,7 @@ or submitted.
 >   - **Tier 1 (<= 1e-6 relative delta):** Bit/float identical pass.
 >   - **Tier 2 (1e-6 to 1e-5 relative delta):** Soft-warning issued; requires explicit operator sign-off at Human Gate 5.
 >   - **Tier 3 (> 1e-5 relative delta):** Hard-halt — non-reproducible artifact rejected.
-> - **[IMPLEMENTED — v2.5] S10:** `write_artifact_fingerprint()` (defined in `zindian/state.py` L347) is now called by `skill_06_preprocessing.py` (L196), `skill_07_features.py` (L1288, L1884), `skill_08_anchor.py` (L497, L827), and `skill_21_pseudo_label.py`. `skill_22_reproducibility_audit.py` `_audit_derived_artifact_fingerprints()` (L206) reads the populated dict and applies the 3-tier tolerance bands. R6 is closed.
+> - **S10:** `write_artifact_fingerprint()` (defined in `zindian/state.py` L347) is now called by `skill_06_preprocessing.py` (L196), `skill_07_features.py` (L1288, L1884), `skill_08_anchor.py` (L497, L827), and `skill_21_pseudo_label.py`. `skill_22_reproducibility_audit.py` `_audit_derived_artifact_fingerprints()` (L206) reads the populated dict and applies the 3-tier tolerance bands. R6 is closed.
 
 **R3 — No custom packages.**
 
@@ -2425,7 +2424,7 @@ during Phase 1 mutable window):
   "carbon_intensity_gco2_per_kwh": 494.0
 }
 
-[RESOLVED — v2.5] config["infrastructure"] is written by skill_02
+config["infrastructure"] is written by skill_02
 at L838–849 within the allowed_write_phases window. The C1 bootstrap
 phase string issue is resolved — "phase_1_integrity_locked" is in
 skill_02's allowed_write_phases (L859–870). The fallback path
@@ -2443,7 +2442,7 @@ orchestrator aggregates per-skill telemetry into:
         "written_at": "timestamp"
     }
 
-[RESOLVED — v2.6] `run_phase()` in `zindian/orchestrator.py` now aggregates per-skill telemetry and writes this block to state. `skill_22` validates its presence and contents at sign-off.
+`run_phase()` in `zindian/orchestrator.py` aggregates per-skill telemetry and writes this block to state. `skill_22` validates its presence and contents at sign-off.
 
 skill_22 verifies at sign-off:
     telemetry.aggregate present and non-null
@@ -2521,9 +2520,9 @@ and are recorded here for audit trail only.
 
 ---
 
-### OPEN — Active gaps
+### RESOLVED — Closed gaps
 
-**F1 — Pairwise MI Scale Invariance — [RESOLVED — v2.8]**
+**F1 — Pairwise MI Scale Invariance**
 
 ```
 Description:    The S6 pairwise MI audit function's regression branch computed
@@ -2537,7 +2536,7 @@ Status:         RESOLVED 2026-08-25 (v2.8). Fix: divide by var(y_scaled) instead
                 in tests/test_ksg_mi_bivariate_gaussian.py.
 ```
 
-**F2 — KSG Validator Bivariate Reference Test — [RESOLVED — v2.8]**
+**F2 — KSG Validator Bivariate Reference Test**
 
 ```
 Description:    The custom KSG bivariate MI estimator lacked direct unit tests
@@ -2549,7 +2548,7 @@ Status:         RESOLVED 2026-08-25 (v2.8). tests/test_ksg_mi_bivariate_gaussian
                 and scale-invariance regression guard (F1).
 ```
 
-**F4 — MASE Score-Space Residual — [RESOLVED — v2.7]**
+**F4 — MASE Score-Space Residual**
 
 ```
 Description:    Primary-metric routing existed ("mase" key in skill_08_anchor.py
@@ -2571,7 +2570,7 @@ Status:         RESOLVED 2026-08-25 (v2.7). Full Option A MASE folding shipped:
 
 ### DEFERRED — Future roadmap items
 
-**[DEFERRED — v3.0] GAP-3 — SHAP interaction effects**
+**GAP-3 — SHAP interaction effects**
 
 ```
 Description:    SHAP-based leakage detection captures interaction effects
@@ -2587,5 +2586,3 @@ Severity:       Low — interaction-based leakage is rare in standard tabular
 ---
 *Version: v2.8 — OPEN (GAP-3 deferred to v3.0)*
 *Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*
-*F4 note (2026-08-25): "mase" routed and fully option-A scored in v2.7 —
-fold-score space closed; no residual.*

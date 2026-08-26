@@ -5,7 +5,7 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document is aligned with SoT version **v2.6**.
+version-specific claim below. This document is aligned with SoT version **v2.8**.
 **Last updated:** August 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground

@@ -1,6 +1,6 @@
 # Zindian Orchestrator - Complete Overview
 
-**Version:** 2.6
+**Version:** 2.8
 **Last Updated:** August 2026
 **Status:** Production Ready
 
@@ -10,7 +10,14 @@
 
 1. [Documentation Landscape](#documentation-landscape)
 2. [Non-Technical Overview](#non-technical-overview)
-3. [Technical Reference](#technical-reference)
+   - [What is Zindian Orchestrator?](#what-is-zindian-orchestrator)
+   - [Core Philosophy: The Three Lenses](#core-philosophy-the-three-lenses)
+   - [The Journey: 4 Main Phases](#the-journey-4-main-phases)
+   - [Key Safety Features](#key-safety-features)
+   - [Special Features](#special-features)
+3. [Conceptual Analogy: Is This Reinforcement Learning?](#conceptual-analogy-is-this-reinforcement-learning)
+4. [Success Metrics](#success-metrics)
+5. [Technical Reference](#technical-reference)
 
 ---
 
@@ -32,7 +39,7 @@
 
 ## Non-Technical Overview
 
-## What is Zindian Orchestrator?
+### What is Zindian Orchestrator?
 
 Zindian Orchestrator is a structured execution framework for running tabular machine learning competitions on the Zindi platform. It automates and governs the entire lifecycle of a competition entry—from raw data ingestion, feature engineering, and cross-validation, to data leakage auditing, model ensembling, and submission management.
 
@@ -50,7 +57,7 @@ The Orchestrator provides a unified, command-line interface (CLI) driven system 
 
 ---
 
-## Core Philosophy: The "Three Lenses"
+### Core Philosophy: The Three Lenses
 
 Every decision is evaluated through three simultaneous perspectives:
 
@@ -63,7 +70,7 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ---
 
-## The Journey: 4 Main Phases
+### The Journey: 4 Main Phases
 
 ### Phase 1: Understanding the Competition [SEARCH]
 **What happens:** Reads competition rules, examines data structure, locks configuration
@@ -122,9 +129,9 @@ Every decision is evaluated through three simultaneous perspectives:
 
 ---
 
-## Key Safety Features
+### Key Safety Features
 
-### 1. Human Gates (5 Checkpoints) [GATE]
+#### 1. Human Gates (5 Checkpoints)
 
 The system **stops and waits for human approval** at 5 critical points:
 
@@ -140,7 +147,7 @@ The system **stops and waits for human approval** at 5 critical points:
 
 ---
 
-### 2. Reproducibility Contract
+#### 2. Reproducibility Contract
 
 Everything must be repeatable. Run twice with same data = identical results.
 
@@ -155,7 +162,7 @@ Everything must be repeatable. Run twice with same data = identical results.
 
 ---
 
-### 3. No "Black Box" AutoML
+#### 3. No AutoML
 
 The system doesn't use automated ML tools that make unexplainable decisions.
 
@@ -173,9 +180,9 @@ The system doesn't use automated ML tools that make unexplainable decisions.
 
 ---
 
-## Special Features
+### Special Features
 
-### Carbon Tracking (R5) [CARBON]
+#### Carbon Tracking (R5)
 
 Measures and reports environmental impact (CO2 emissions) of model training.
 
@@ -190,7 +197,7 @@ Measures and reports environmental impact (CO2 emissions) of model training.
 
 ---
 
-### Pseudo-Labeling (Skill 21) [LABEL]
+#### Pseudo-Labeling (Skill 21)
 
 For classification: uses confident predictions on test data to expand training set.
 
@@ -206,7 +213,7 @@ For classification: uses confident predictions on test data to expand training s
 
 ---
 
-### Multi-Target Support [TARGET]
+#### Multi-Target Support
 
 Handles competitions predicting multiple targets simultaneously.
 
@@ -221,7 +228,7 @@ Handles competitions predicting multiple targets simultaneously.
 
 ---
 
-## What Makes This Valuable?
+### What Makes This Valuable?
 
 -  **Consistency:** Same rigorous process every time
 -  **Safety:** Multiple checkpoints prevent costly mistakes
@@ -230,7 +237,7 @@ Handles competitions predicting multiple targets simultaneously.
 
 ---
 
-## What It's NOT
+### What It's NOT
 
 -  **Not magic AI** - Doesn't solve everything automatically
 -  **Not autonomous** - Requires human approval/intervention at key points
@@ -293,7 +300,7 @@ For detailed technical specifications, refer to the following documents:
 
 | Document | Content |
 |---|---|
-| [Source of Truth v2.6](source_of_truth.md) | Architecture contracts, phase specs, OOF schemas, gate logic formulas, known gaps |
+| [Source of Truth v2.8](source_of_truth.md) | Architecture contracts, phase specs, OOF schemas, gate logic formulas, known gaps |
 | [AGENTS.md](../AGENTS.md) | Safe state access patterns, implementation conventions, known live risks |
 | [Quick Start Guide](quick_start.md) | CLI bootstrap walkthrough, full skill matrix, competition setup |
 | [CLI Integration Guide](cli_integration_guide.md) | All 21 CLI commands reference |
@@ -304,7 +311,7 @@ For detailed technical specifications, refer to the following documents:
 
 ---
 
-**Document Version:** 1.3
-**Orchestrator Version:** 2.5
+**Document Version:** 1.5
+**Orchestrator Version:** 2.8
 **Last Updated:** August 2026
-**Scope:** Non-technical overview and navigation hub. See [source_of_truth.md](source_of_truth.md) v2.6 for architecture details.
+**Scope:** Non-technical overview and navigation hub. See [source_of_truth.md](source_of_truth.md) v2.8 for architecture details.
