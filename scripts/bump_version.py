@@ -44,7 +44,7 @@ BANNER_RULES = [
     ("README.md",
      r"(\]\(docs/source_of_truth\.md\) )v\d+\.\d+",
      "\\g<1>v{v}"),
-    # "for the full v2.4 feature specifications" -> drop the stale number
+    # "for the full v2.4 feature specifications" -> drop the stale number (pattern may not exist)
     ("README.md",
      r"(for the full )v\d+\.\d+( feature specifications)",
      "\\g<1>\\g<2>"),
@@ -55,8 +55,8 @@ BANNER_RULES = [
      r"(Authoritative architectural spec \()v\d+\.\d+(\))",
      "\\g<1>v{v}\\g<2>"),
     ("README.md",
-     r"(\*\*Status:\*\* )v\d+\.\d+( Production Ready)",
-     "\\g<1>v{v}\\g<2>"),
+     r"(\*\*Status:\*\* )v\d+\.\d+",
+     "\\g<1>v{v}"),
     # --- docs/orchestrator_overview.md -------------------------------------
     ("docs/orchestrator_overview.md",
      r"(\*\*Version:\*\* )\d+\.\d+",

@@ -1,4 +1,4 @@
-# Zindian Orchestrator Documentation Structure Map (v2.6)
+# Zindian Orchestrator Documentation Structure Map (v2.8)
 
 This document provides a consolidated, unified map of the structure, cross-document overlaps, and ownership details for all nine files in the Zindian Orchestrator documentation suite. This map helps developers navigate the documentation and maintain structure during the v2.5 lean restructure.
 
@@ -6,7 +6,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 
 ## 1. Document Structure Map
 
-### source_of_truth.md (v2.6) — Architecture Authority
+### source_of_truth.md (v2.8) — Architecture Authority
 | Section | Subsections | Information Category |
 |---|---|---|
 | **Header** | Version, Status, Scope, Last updated | Metadata |
@@ -76,7 +76,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **What to Do When Unsure** | 8 stop-and-ask triggers | Escalation rules |
 | **Environment and Package Rules** | 5 package discipline rules + pip-compile diff warning | Dependency management |
 | **v2.3, v2.4 & v2.5 Refactor — Completed Items** | v2.5 gap closures (S5, C4, M6, DRIFT-3, C2, preflight path, S7/skill_12, S7-skill09, S8, S10) + v2.4 S1–S10 ✅ + v2.3 DRIFT/GAP ✅ + test coverage | Completed work log — v2.5 CLOSED |
-| **Open Known Gaps** | 8 numbered gaps (S6, S11-root-writes, preflight MT-OOF, R5-telemetry-aggregate, GAP-3, regression pseudo-label, two-mode static verify, drift threshold) | Outstanding work for v2.6 |
+| **Open Known Gaps** | 8 numbered gaps (S6, S11-root-writes, preflight MT-OOF, R5-telemetry-aggregate, GAP-3, regression pseudo-label, two-mode static verify, drift threshold) | Outstanding work for v2.8 |
 | **Footer** | SoT pairing note, maintainer | Metadata |
 
 ---

@@ -191,4 +191,4 @@ Writer consolidation is complete for skill_03/04/10/15/17/21/22 (Part 4). Remain
 ---
 
 *Consolidated from the original investigative report + direct code verification.
-Verified against SoT v2.6. Gap registry last updated August 2026. Maintained by [whoisorioki](https://github.com/whoisorioki).*
+Verified against SoT v2.8. Gap registry last updated August 2026. Maintained by [whoisorioki](https://github.com/whoisorioki).*
