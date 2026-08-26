@@ -59,6 +59,7 @@ zindi_*
 *.swo
 *~
 .gemini/
+specs/
 
 ## Debug Artifacts & Session Logs
 opencode_output.txt
