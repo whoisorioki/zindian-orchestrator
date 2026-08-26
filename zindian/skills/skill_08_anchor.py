@@ -198,10 +198,10 @@ def compute_oof_predictions(
         else:
             split_iter = list(splitter.split(X_dummy, y))
 
-    # Resolve regression metric for target transformation lifecycle (SoT v2.2)
+    # Resolve regression metric for target transformation lifecycle (SoT)
     regression_metric = config.get("metric") if task_type == "regression" else None
 
-    # [v2.7 / F4] Upstream MASE guard — single point of failure before training.
+    # Upstream MASE guard (F4) — single point of failure before training.
     # _lightgbm_shared.py asserts this value is present inside the fold loop;
     # raising here gives a clearer error message and skips all setup work.
     eda_block_08 = (state or {}).get("eda", {}) or {}
@@ -209,7 +209,9 @@ def compute_oof_predictions(
     if regression_metric == "mase":
         _raw_baseline = eda_block_08.get("MAE_naive_baseline")
         try:
-            _baseline_float = float(_raw_baseline) if _raw_baseline is not None else None
+            _baseline_float = (
+                float(_raw_baseline) if _raw_baseline is not None else None
+            )
         except (TypeError, ValueError):
             _baseline_float = None
         if _baseline_float is None or _baseline_float <= 0:
@@ -537,7 +539,7 @@ def run(
 
     task_type = str(config.get("task_type", "classification")).lower()
     metric_name = str(config.get("metric", "f1")).lower()
-    # SoT v2.2 metric_map: covers all canonical metric name variants
+    # SoT metric_map: covers all canonical metric name variants
     # including the explicit root_mean_squared_error and mean_absolute_error
     # strings defined in the Regression Target Transformation Lifecycle.
     metric_map = {
@@ -696,7 +698,7 @@ To submit when ready (via orchestrator flow):
 def _run_multi_target(
     paths, config, state_store, state, n_splits, random_seed, submit, variant_name
 ) -> dict:
-    """Multi-target training loop per SoT v2.2.1 A11."""
+    """Multi-target training loop per SoT A11."""
     print("\n[TARGET] MULTI-TARGET MODE DETECTED\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])
@@ -924,7 +926,7 @@ def _run_multi_target(
     # test_probs_anchor-baseline_<target>.csv from data/processed/ and produces
     # the final submission CSV with competition-specific column formatting.
 
-    # Compute weighted composite distance score (lower is better) per SoT v2.2.1 A11
+    # Compute weighted composite distance score (lower is better) per SoT A11
     # distance = 1.0 - f1 for classification; rmse / target_std for regression
     weighted_distances = []
     class_details = []

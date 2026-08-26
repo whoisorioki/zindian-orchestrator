@@ -44,7 +44,7 @@ class LightGBMRunResult:
     threshold: float
     fold_scores: list[float]
     oof_rmse: float = 0.0  # regression metric (rmsle/rmse/mae/mase; backward-compat)
-    oof_mase: float = 0.0  # mase fold-scoring path (Option A, v2.7)
+    oof_mase: float = 0.0  # mase fold-scoring path (Option A)
     fold_sizes: list[tuple[int, int]] | None = None
 
 
@@ -66,8 +66,8 @@ def train_lightgbm_cv(
         Callable[
             [pd.DataFrame, pd.DataFrame, list, np.ndarray, np.ndarray | None],
             tuple[np.ndarray, np.ndarray],
-        ] |
-        None
+        ]
+        | None
     ) = None,
     regression_metric: str | None = None,
     variant_name: str | None = None,
@@ -76,7 +76,7 @@ def train_lightgbm_cv(
     """Train a LightGBM CV model and return metrics.
     Supports both classification and regression based on challenge_config.task_type.
     When task_type == "regression", uses regression_metric to apply the correct
-    target transformation and prediction inverse-mapping per the SoT v2.2
+    target transformation and prediction inverse-mapping per the SoT
     Regression Target Transformation Lifecycle:
         "rmsle"                -> log1p(y) train, expm1(clip(raw, 0)) preds
         "root_mean_squared_error" / "mean_absolute_error" -> identity scale,
@@ -150,7 +150,7 @@ def train_lightgbm_cv(
 
     if task_type == "regression":
         y = np.asarray(train[target_col].values, dtype=np.float64)
-        # Resolve target transformation based on regression metric (SoT v2.2)
+        # Resolve target transformation based on regression metric (SoT)
         metric = str(regression_metric or "").lower()
         use_log1p = metric == "rmsle"
     else:
@@ -291,7 +291,7 @@ def train_lightgbm_cv(
                 X_test = scaler.transform(X_test)
             X = X_full
 
-        # Target transformation per SoT v2.2 Regression Target Transformation Lifecycle:
+        # Target transformation per SoT Regression Target Transformation Lifecycle:
         #   poisson -> raw counts (log-link applied internally by LightGBM)
         #   rmsle  -> log1p(y)  ;  RMSE/MAE -> identity
         if _variant_objective == "poisson":
@@ -339,7 +339,7 @@ def train_lightgbm_cv(
             val_pred_flat = val_pred_raw
             test_pred_flat = test_pred_raw
 
-        # Prediction inverse-mapping per SoT v2.2:
+        # Prediction inverse-mapping per SoT:
         #   poisson -> clip(raw, 0) only (already in count space)
         #   rmsle  -> clip(raw, 0) then expm1
         #   RMSE/MAE -> clip(raw, domain_bounds)
@@ -390,21 +390,17 @@ def train_lightgbm_cv(
                 fold_scores.append(fold_rmsle)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: rmsle={fold_rmsle:.6f}")
             elif regression_metric == "mase":
-                # F4/Option A (v2.7): per-fold MAE scaled by the single global
+                # F4/Option A: per-fold MAE scaled by the single global
                 # MAE_naive_baseline threaded from skill_08 (eda["MAE_naive_baseline"]).
                 # Hard assertion — not a soft fallback. A missing/<=0 baseline is a
                 # programming error already caught upstream in skill_08's ValueError
                 # guard; any caller that bypasses that guard must fail loudly rather
                 # than emit a plausible-but-wrong unscaled score.
-                assert (
-                    mae_naive_baseline is not None and mae_naive_baseline > 0
-                ), (
+                assert mae_naive_baseline is not None and mae_naive_baseline > 0, (
                     "mase requires a valid MAE_naive_baseline; this should have "
                     "been caught upstream by skill_08_anchor's ValueError guard"
                 )
-                fold_mae = float(
-                    mean_absolute_error(y[val_idx], oof_probs[val_idx])
-                )
+                fold_mae = float(mean_absolute_error(y[val_idx], oof_probs[val_idx]))
                 fold_score = fold_mae / float(mae_naive_baseline)
                 fold_scores.append(fold_score)
                 print(f"  Fold {fold_idx + 1}/{n_splits}: mase={fold_score:.6f}")
@@ -432,14 +428,15 @@ def train_lightgbm_cv(
             print(f"  Fold {fold_idx + 1}/{n_splits}: score={fold_auc:.6f}")
 
     if task_type == "regression":
-        # Score computation per SoT v2.2 Regression Target Transformation Lifecycle:
+        # Score computation per SoT Regression Target Transformation Lifecycle:
         #   rmsle -> RMSLE in original space: sqrt(mean((log(y+1) - log(yhat+1))^2))
         #   RMSE/MAE -> standard RMSE in original space (computed on back-transformed predictions)
+        oof_mase = 0.0  # default; set to mean(fold_scores) on the mase path below
         if use_log1p:
             rmsle_val = np.sqrt(np.mean((np.log1p(y) - np.log1p(oof_probs)) ** 2))
             oof_rmse = float(rmsle_val)
         elif regression_metric == "mase":
-            # F4/Option A (v2.7): oof_mase = mean of the per-fold MASE scores.
+            # F4/Option A: oof_mase = mean of the per-fold MASE scores.
             # oof_rmse mirrors the value for backward compatibility (skill_08
             # maps oof_logloss = oof_rmse, so the gate consumes the right scale).
             oof_mase = float(np.mean(fold_scores)) if fold_scores else 0.0

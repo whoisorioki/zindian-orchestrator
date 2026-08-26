@@ -30,71 +30,65 @@ VERSION_FILE = ROOT / "VERSION"
 #             replacement template using \\g<n> backreferences and "{v}")
 BANNER_RULES = [
     # --- docs/source_of_truth.md (human-readable canonical header) --------
-    ("docs/source_of_truth.md",
-     r"(\*\*Version:\*\* )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    ("docs/source_of_truth.md", r"(\*\*Version:\*\* )v\d+\.\d+", "\\g<1>v{v}"),
     # --- AGENTS.md ---------------------------------------------------------
-    ("AGENTS.md",
-     r"(aligned with SoT version \*\*v)\d+\.\d+",
-     "\\g<1>{v}"),
+    ("AGENTS.md", r"(aligned with SoT version \*\*v)\d+\.\d+", "\\g<1>{v}"),
     # --- README.md ---------------------------------------------------------
-    ("README.md",
-     r"(`docs/source_of_truth\.md` )v\d+\.\d+",
-     "\\g<1>v{v}"),
-    ("README.md",
-     r"(\]\(docs/source_of_truth\.md\) )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    ("README.md", r"(`docs/source_of_truth\.md` )v\d+\.\d+", "\\g<1>v{v}"),
+    ("README.md", r"(\]\(docs/source_of_truth\.md\) )v\d+\.\d+", "\\g<1>v{v}"),
     # "for the full v2.4 feature specifications" -> drop the stale number (pattern may not exist)
-    ("README.md",
-     r"(for the full )v\d+\.\d+( feature specifications)",
-     "\\g<1>\\g<2>"),
-    ("README.md",
-     r"(Authoritative specification )v\d+\.\d+",
-     "\\g<1>v{v}"),
-    ("README.md",
-     r"(Authoritative architectural spec \()v\d+\.\d+(\))",
-     "\\g<1>v{v}\\g<2>"),
-    ("README.md",
-     r"(\*\*Status:\*\* )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    ("README.md", r"(for the full )v\d+\.\d+( feature specifications)", "\\g<1>\\g<2>"),
+    ("README.md", r"(Authoritative specification )v\d+\.\d+", "\\g<1>v{v}"),
+    (
+        "README.md",
+        r"(Authoritative architectural spec \()v\d+\.\d+(\))",
+        "\\g<1>v{v}\\g<2>",
+    ),
+    ("README.md", r"(\*\*Status:\*\* )v\d+\.\d+", "\\g<1>v{v}"),
     # --- docs/orchestrator_overview.md -------------------------------------
-    ("docs/orchestrator_overview.md",
-     r"(\*\*Version:\*\* )\d+\.\d+",
-     "\\g<1>{v}"),
-    ("docs/orchestrator_overview.md",
-     r"(\[Source of Truth )v\d+\.\d+(\]\(source_of_truth\.md\))",
-     "\\g<1>v{v}\\g<2>"),
-    ("docs/orchestrator_overview.md",
-     r"(\(source_of_truth\.md\) )v\d+\.\d+( for architecture details)",
-     "\\g<1>v{v}\\g<2>"),
+    ("docs/orchestrator_overview.md", r"(\*\*Version:\*\* )\d+\.\d+", "\\g<1>{v}"),
+    (
+        "docs/orchestrator_overview.md",
+        r"(\[Source of Truth )v\d+\.\d+(\]\(source_of_truth\.md\))",
+        "\\g<1>v{v}\\g<2>",
+    ),
+    (
+        "docs/orchestrator_overview.md",
+        r"(\(source_of_truth\.md\) )v\d+\.\d+( for architecture details)",
+        "\\g<1>v{v}\\g<2>",
+    ),
     # --- docs/quick_start.md ------------------------------------------------
-    ("docs/quick_start.md",
-     r"(\*\*Source of Truth )v\d+\.\d+(\*\*)",
-     "\\g<1>v{v}\\g<2>"),
-    ("docs/quick_start.md",
-     r"(\(SoT )v\d+\.\d+(\) compliance)",
-     "\\g<1>v{v}\\g<2>"),
-    ("docs/quick_start.md",
-     r"(\*\*Source of Truth Version:\*\* )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    (
+        "docs/quick_start.md",
+        r"(\*\*Source of Truth )v\d+\.\d+(\*\*)",
+        "\\g<1>v{v}\\g<2>",
+    ),
+    ("docs/quick_start.md", r"(\(SoT )v\d+\.\d+(\) compliance)", "\\g<1>v{v}\\g<2>"),
+    (
+        "docs/quick_start.md",
+        r"(\*\*Source of Truth Version:\*\* )v\d+\.\d+",
+        "\\g<1>v{v}",
+    ),
     # --- docs/ledger_architecture.md ----------------------------------------
-    ("docs/ledger_architecture.md",
-     r"(\*\*Version:\*\* )\d+\.\d+",
-     "\\g<1>{v}"),
+    ("docs/ledger_architecture.md", r"(\*\*Version:\*\* )\d+\.\d+", "\\g<1>{v}"),
     # --- docs/reporting_logging_audit.md ------------------------------------
-    ("docs/reporting_logging_audit.md",
-     r"(Verified against SoT )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    (
+        "docs/reporting_logging_audit.md",
+        r"(Verified against SoT )v\d+\.\d+",
+        "\\g<1>v{v}",
+    ),
     # --- docs/document_map.md ------------------------------------------------
-    ("docs/document_map.md",
-     r"(Documentation Structure Map \()v\d+\.\d+(\))",
-     "\\g<1>v{v}\\g<2>"),
-    ("docs/document_map.md",
-     r"(### source_of_truth\.md \()v\d+\.\d+(\))",
-     "\\g<1>v{v}\\g<2>"),
-    ("docs/document_map.md",
-     r"(Outstanding work for )v\d+\.\d+",
-     "\\g<1>v{v}"),
+    (
+        "docs/document_map.md",
+        r"(Documentation Structure Map \()v\d+\.\d+(\))",
+        "\\g<1>v{v}\\g<2>",
+    ),
+    (
+        "docs/document_map.md",
+        r"(### source_of_truth\.md \()v\d+\.\d+(\))",
+        "\\g<1>v{v}\\g<2>",
+    ),
+    ("docs/document_map.md", r"(Outstanding work for )v\d+\.\d+", "\\g<1>v{v}"),
 ]
 
 
@@ -112,8 +106,10 @@ def propagate(new_version: str) -> int:
         replacement = repl_template.replace("{v}", new_version)
         new_content, n = re.subn(pattern, replacement, content)
         if n == 0:
-            print(f"[WARN] {rel_path}: pattern matched nothing — "
-                  f"banner may have drifted from its known shape: {pattern}")
+            print(
+                f"[WARN] {rel_path}: pattern matched nothing — "
+                f"banner may have drifted from its known shape: {pattern}"
+            )
             missing.append(rel_path)
             continue
         if new_content != content:
@@ -127,7 +123,9 @@ def propagate(new_version: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "version", nargs="?", default=None,
+        "version",
+        nargs="?",
+        default=None,
         help="New version (e.g. 2.7). Omit to re-propagate the VERSION file.",
     )
     args = parser.parse_args()

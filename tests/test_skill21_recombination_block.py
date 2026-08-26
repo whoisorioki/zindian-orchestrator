@@ -1,11 +1,11 @@
-"""[v2.7 / T1] Integration test: strict A12 block policy in skill_21.
+"""T1 integration test: strict A12 block policy in skill_21.
 
 Drives _run_multi_target_pseudo_label with a monkeypatched per-target `run`
 so that one classification target reports augmentation failure. The strict
 block policy must:
   - return retraining_required == False, and
   - NOT promote the _augmented namespace (no update key ends in _oof_augmented).
-This is Step 7 of the v2.7 flow; Step 8 re-runs gate tests through this policy.
+This is Step 7 of the flow; Step 8 re-runs gate tests through this policy.
 """
 
 from unittest.mock import MagicMock
@@ -36,8 +36,11 @@ def _make_config(names):
     return {
         "target_config": {
             "targets": [
-                {"name": name, "task_type": "classification",
-                 "weight": 1.0 / len(names)}
+                {
+                    "name": name,
+                    "task_type": "classification",
+                    "weight": 1.0 / len(names),
+                }
                 for name in names
             ],
             "pseudo_label_recombination_policy": (
@@ -56,7 +59,7 @@ def _drive(monkeypatch, names, fail_first):
 
     store = MagicMock()
     paths = MagicMock()
-    state = {}
+    state: dict = {}
     result = _run_multi_target_pseudo_label(
         paths, _make_config(names), store, state, dry_run=False
     )
@@ -83,9 +86,9 @@ def test_block_policy_blocks_partial_classification_augmentation(monkeypatch):
     # The _augmented namespace must NOT be promoted.
     for kw in all_kwargs:
         for key in kw:
-            assert not key.endswith("_oof_augmented"), (
-                f"augmented key must not be promoted: {key}"
-            )
+            assert not key.endswith(
+                "_oof_augmented"
+            ), f"augmented key must not be promoted: {key}"
 
 
 def test_block_policy_allows_when_all_classification_targets_augment(monkeypatch):
@@ -144,7 +147,7 @@ def test_end_to_end_real_policy_flag_gates_augmented_baseline(monkeypatch):
             "targetB": {"pruning_pass": True},
         },
         "human_gate_2_variant-a_approved": True,
-        "anchor_oof_score": 0.05,           # unfavourable original anchor
+        "anchor_oof_score": 0.05,  # unfavourable original anchor
         "anchor_oof_score_augmented": 0.20,  # favourable augmented baseline
         "eda": {},
         "metric_analysis": {"composite_fold_score_variance": 0.001},
@@ -161,9 +164,7 @@ def test_end_to_end_real_policy_flag_gates_augmented_baseline(monkeypatch):
     # gated by skill_21's output.
     control_state = dict(gate_state)
     control_state["pseudo_label_result"] = {"ran": True, "retraining_required": False}
-    control_result = _run_multi_target_gate(
-        gate_config, MagicMock(), control_state
-    )
+    control_result = _run_multi_target_gate(gate_config, MagicMock(), control_state)
     assert control_result["status"] == "BLOCKED"
     assert control_result["reason"] == "baseline gate failed"
     assert control_result["diagnosis"]["baseline_key"] == "anchor_oof_score"

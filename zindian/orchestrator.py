@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional, cast
 
 from .paths import resolve_competition_paths
@@ -12,7 +13,7 @@ import types
 import zindian.skills as skills_pkg
 
 # Phase definitions (names correspond to module prefixes `skill_XX`)
-# SoT v2.2.1 specifies 6 sub-phases: 1, 2A, 2B, 3A, 3B, 4
+# SoT specifies 6 sub-phases: 1, 2A, 2B, 3A, 3B, 4
 # skill_03 is split: policy_writer() runs in Phase 1, policy_gate() runs first in Phase 2A
 PHASE_1_SKILLS = [
     "skill_01",
@@ -45,7 +46,6 @@ def _get_utc_now() -> Any:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc)
-
 
 
 def _discover_skills() -> Dict[str, tuple[str, Optional[types.ModuleType]]]:
@@ -157,11 +157,19 @@ def run_deep_research(
                 print("[deep_research] Error: sidecar skills are not loaded")
                 return
 
-            literature_cache_path = reports_dir / "diagnostics" / "literature_cache.json"
-            domain_hypotheses_path = reports_dir / "diagnostics" / "domain_hypotheses.json"
+            literature_cache_path = (
+                reports_dir / "diagnostics" / "literature_cache.json"
+            )
+            domain_hypotheses_path = (
+                reports_dir / "diagnostics" / "domain_hypotheses.json"
+            )
             priorart_path = reports_dir / "diagnostics" / "ml_priorart.json"
-            validated_hypotheses_path = reports_dir / "diagnostics" / "validated_hypotheses.json"
-            failed_hypotheses_path = reports_dir / "diagnostics" / "failed_hypotheses.json"
+            validated_hypotheses_path = (
+                reports_dir / "diagnostics" / "validated_hypotheses.json"
+            )
+            failed_hypotheses_path = (
+                reports_dir / "diagnostics" / "failed_hypotheses.json"
+            )
 
             print("[deep_research] Starting background Librarian (Skill 18)...")
             lib_mod.run_librarian(
@@ -200,11 +208,19 @@ def run_deep_research(
         "status": "LAUNCHED",
         "message": "Deep research sidecar launched in non-blocking background daemon thread.",
         "paths": {
-            "literature_cache": str(reports_dir / "diagnostics" / "literature_cache.json"),
-            "domain_hypotheses": str(reports_dir / "diagnostics" / "domain_hypotheses.json"),
+            "literature_cache": str(
+                reports_dir / "diagnostics" / "literature_cache.json"
+            ),
+            "domain_hypotheses": str(
+                reports_dir / "diagnostics" / "domain_hypotheses.json"
+            ),
             "priorart": str(reports_dir / "diagnostics" / "ml_priorart.json"),
-            "validated_hypotheses": str(reports_dir / "diagnostics" / "validated_hypotheses.json"),
-            "failed_hypotheses": str(reports_dir / "diagnostics" / "failed_hypotheses.json"),
+            "validated_hypotheses": str(
+                reports_dir / "diagnostics" / "validated_hypotheses.json"
+            ),
+            "failed_hypotheses": str(
+                reports_dir / "diagnostics" / "failed_hypotheses.json"
+            ),
         },
         **kwargs,
     }
@@ -1134,7 +1150,7 @@ def run_phase(
 
             # Aggregate per-skill telemetry
             total_duration_sec = 0.0
-            total_carbon_kg_estimate = None
+            carbon_kg_estimate_total = 0.0
             skill_count = 0
             has_carbon = False
 
@@ -1147,22 +1163,21 @@ def run_phase(
                         carb = tel.get("carbon_kg_estimate")
                         if carb is not None:
                             has_carbon = True
-                            if total_carbon_kg_estimate is None:
-                                total_carbon_kg_estimate = 0.0
-                            total_carbon_kg_estimate += float(carb)
+                            carbon_kg_estimate_total += float(carb)
 
             telemetry_aggregate = {
                 "phase": phase,
                 "total_duration_sec": round(total_duration_sec, 2),
-                "total_carbon_kg_estimate": round(total_carbon_kg_estimate, 6) if has_carbon else None,
+                "total_carbon_kg_estimate": (
+                    round(carbon_kg_estimate_total, 6) if has_carbon else None
+                ),
                 "skill_count": skill_count,
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            store.update(**{
-                phase_key: True,
-                "telemetry.aggregate": telemetry_aggregate
-            })
+            store.update(
+                **{phase_key: True, "telemetry.aggregate": telemetry_aggregate}
+            )
     except Exception as e:
         print(f"[orchestrator] Warning: Failed to write state updates/telemetry: {e}")
 
@@ -1189,11 +1204,19 @@ def run_phase(
     # Deduplicate and persist latest log directory
     try:
         import json
+
         _phase = phase.lower().strip()
-        json_filename = "phase_1_summary.json" if _phase == "1" else f"{_phase}_summary.json"
+        json_filename = (
+            "phase_1_summary.json" if _phase == "1" else f"{_phase}_summary.json"
+        )
+        assert paths is not None, "competition paths unavailable"
         summary_path = paths.reports_dir / "summaries" / json_filename
 
-        if _current_run_dir is not None and _current_run_dir.exists() and summary_path.exists():
+        if (
+            _current_run_dir is not None
+            and _current_run_dir.exists()
+            and summary_path.exists()
+        ):
             import shutil
 
             # Save a copy of the phase summary inside our active run log dir as summary.json
@@ -1229,9 +1252,14 @@ def run_phase(
                 return d
 
             def are_summaries_similar(new_sum: dict, old_sum: dict) -> bool:
-                return _clean_dict_for_comparison(new_sum) == _clean_dict_for_comparison(old_sum)
+                return _clean_dict_for_comparison(
+                    new_sum
+                ) == _clean_dict_for_comparison(old_sum)
 
-            latest_dir = paths.competition_dir / "logs" / f"run_latest_phase{phase}"
+            assert paths is not None, "competition paths unavailable"
+            competition_dir = paths.competition_dir
+            assert competition_dir is not None
+            latest_dir = competition_dir / "logs" / f"run_latest_phase{phase}"
             latest_summary_path = latest_dir / "summary.json"
 
             is_similar = False
@@ -1252,7 +1280,9 @@ def run_phase(
                         shutil.copy2(item, latest_dir / item.name)
                 # Remove active_dir to prevent clutter
                 shutil.rmtree(_current_run_dir)
-                print(f"  [Orchestrator] Summary is similar. Logs merged into: {latest_dir}")
+                print(
+                    f"  [Orchestrator] Summary is similar. Logs merged into: {latest_dir}"
+                )
             else:
                 # If they are different and latest_dir exists, archive latest_dir
                 if latest_dir.exists():
@@ -1263,16 +1293,25 @@ def run_phase(
                                 old_data = json.load(f)
                             raw_ts = old_data.get("timestamp", "")
                             if raw_ts:
-                                archive_ts = "".join(c for c in raw_ts.split(".")[0] if c.isalnum())
+                                archive_ts = "".join(
+                                    c for c in raw_ts.split(".")[0] if c.isalnum()
+                                )
                         except Exception:
                             pass
                     if archive_ts == "unknown":
                         from datetime import datetime as dt, timezone as tz
 
                         mtime = latest_dir.stat().st_mtime
-                        archive_ts = dt.fromtimestamp(mtime, tz.utc).strftime("%Y%m%dT%H%M%S")
+                        archive_ts = dt.fromtimestamp(mtime, tz.utc).strftime(
+                            "%Y%m%dT%H%M%S"
+                        )
 
-                    archive_dir = paths.competition_dir / "logs" / f"run_{archive_ts}_phase{phase}"
+                    assert paths is not None, "competition paths unavailable"
+                    archive_base_dir = paths.competition_dir
+                    assert archive_base_dir is not None
+                    archive_dir = (
+                        archive_base_dir / "logs" / f"run_{archive_ts}_phase{phase}"
+                    )
                     # Ensure archive_dir does not clash
                     idx = 1
                     base_archive_dir = archive_dir

@@ -38,7 +38,11 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
             ("zindian/state.py", "mase", True),
             ("zindian/skills/skill_08_anchor.py", "mae_naive_baseline", True),
             ("zindian/skills/skill_08_anchor.py", '"mase":', True),
-            ("zindian/skills/skill_08_anchor.py", "# S2 - implemented 2026-08-25", True),
+            (
+                "zindian/skills/skill_08_anchor.py",
+                "# S2 - implemented 2026-08-25",
+                True,
+            ),
         ],
     },
     "3": {
@@ -111,26 +115,62 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
     "11": {
         "name": "S11 — skill_18/20 root write consolidation",
         "checks": [
-            ("zindian/skills/skill_18_librarian.py", "paths.reports_dir / \"literature_cache.json\"", False),
-            ("zindian/skills/skill_20_scientist.py", "paths.reports_dir / \"validated_hypotheses.json\"", False),
-            ("zindian/skills/skill_18_librarian.py", "# S11 - implemented 2026-08-24", True),
-            ("zindian/skills/skill_20_scientist.py", "# S11 - implemented 2026-08-24", True),
+            (
+                "zindian/skills/skill_18_librarian.py",
+                'paths.reports_dir / "literature_cache.json"',
+                False,
+            ),
+            (
+                "zindian/skills/skill_20_scientist.py",
+                'paths.reports_dir / "validated_hypotheses.json"',
+                False,
+            ),
+            (
+                "zindian/skills/skill_18_librarian.py",
+                "# S11 - implemented 2026-08-24",
+                True,
+            ),
+            (
+                "zindian/skills/skill_20_scientist.py",
+                "# S11 - implemented 2026-08-24",
+                True,
+            ),
         ],
     },
     "Preflight": {
         "name": "Preflight — Multi-target OOF completeness check",
         "checks": [
-            ("scripts/preflight_enforce.py", "targets = cfg.get(\"target_config\", {}).get(\"targets\", [])", True),
-            ("scripts/preflight_enforce.py", "# Preflight MT-OOF - implemented 2026-08-24", True),
+            (
+                "scripts/preflight_enforce.py",
+                'targets = cfg.get("target_config", {}).get("targets", [])',
+                True,
+            ),
+            (
+                "scripts/preflight_enforce.py",
+                "# Preflight MT-OOF - implemented 2026-08-24",
+                True,
+            ),
         ],
     },
     "R5": {
         "name": "R5 — telemetry.aggregate write & verification",
         "checks": [
-            ("zindian/orchestrator.py", "\"telemetry.aggregate\": telemetry_aggregate", True),
-            ("zindian/skills/skill_22_reproducibility_audit.py", "telemetry_agg = state.get(\"telemetry.aggregate\")", True),
+            (
+                "zindian/orchestrator.py",
+                '"telemetry.aggregate": telemetry_aggregate',
+                True,
+            ),
+            (
+                "zindian/skills/skill_22_reproducibility_audit.py",
+                'telemetry_agg = state.get("telemetry.aggregate")',
+                True,
+            ),
             ("zindian/orchestrator.py", "# R5 - implemented 2026-08-24", True),
-            ("zindian/skills/skill_22_reproducibility_audit.py", "# R5 - implemented 2026-08-24", True),
+            (
+                "zindian/skills/skill_22_reproducibility_audit.py",
+                "# R5 - implemented 2026-08-24",
+                True,
+            ),
         ],
     },
 }
@@ -167,7 +207,7 @@ def parse_sot_statuses(sot_content: str) -> dict:
         if "partial" in row_match.group(0).lower():
             continue
         line_text = f"{row_match.group(2).strip()} - {row_match.group(3).strip()}"
-        
+
         # Extract all S-numbers if present
         s_nums = re.findall(r"S(\d+)", id_cell)
         if s_nums:
@@ -220,10 +260,14 @@ def run_code_check(file_rel_path: str, pattern: str, must_exist: bool) -> bool:
 def check_claim_code_coupling(sot_statuses: dict) -> list[str]:
     """Scans all Python files for claim-code coupling comments and verifies SoT matches them."""
     errors = []
-    coupling_pattern = re.compile(r"#\s*(S\d+|Preflight|R\d+)\s*-\s*implemented\s*([\d-]+)")
+    coupling_pattern = re.compile(
+        r"#\s*(S\d+|Preflight|R\d+)\s*-\s*implemented\s*([\d-]+)"
+    )
 
     # Scan both zindian/ and scripts/ directories for Python files
-    py_files = list(WORKSPACE_DIR.glob("zindian/**/*.py")) + list(WORKSPACE_DIR.glob("scripts/**/*.py"))
+    py_files = list(WORKSPACE_DIR.glob("zindian/**/*.py")) + list(
+        WORKSPACE_DIR.glob("scripts/**/*.py")
+    )
     for py_file in py_files:
         if ".venv" in py_file.parts or "tests" in py_file.parts:
             continue
@@ -232,7 +276,7 @@ def check_claim_code_coupling(sot_statuses: dict) -> list[str]:
             for match in coupling_pattern.finditer(content):
                 id_tag = match.group(1)
                 date_str = match.group(2)
-                
+
                 if id_tag.startswith("S"):
                     sot_key = id_tag[1:]
                 else:
@@ -277,8 +321,7 @@ DOC_VERSION_CHECKS = [
     ("docs/quick_start.md", r"\*\*Source of Truth Version:\*\* v(\d+\.\d+)"),
     ("docs/ledger_architecture.md", r"\*\*Version:\*\* (\d+\.\d+)"),
     ("docs/reporting_logging_audit.md", r"Verified against SoT v(\d+\.\d+)"),
-    ("docs/document_map.md",
-     r"Documentation Structure Map \(v(\d+\.\d+)\)"),
+    ("docs/document_map.md", r"Documentation Structure Map \(v(\d+\.\d+)\)"),
 ]
 
 
@@ -408,11 +451,15 @@ def main():
             for err in version_errors:
                 print(f"[MISALIGNED] {err}")
                 misaligned_count += 1
-            print(f"  Canonical version: v{expected_version} "
-                  f"(fix with: python scripts/bump_version.py)")
+            print(
+                f"  Canonical version: v{expected_version} "
+                f"(fix with: python scripts/bump_version.py)"
+            )
         else:
-            print(f"[ALIGN]      All doc banners declare v{expected_version} "
-                  f"(matches VERSION).")
+            print(
+                f"[ALIGN]      All doc banners declare v{expected_version} "
+                f"(matches VERSION)."
+            )
 
     # Print Summary
     print("=" * 80)

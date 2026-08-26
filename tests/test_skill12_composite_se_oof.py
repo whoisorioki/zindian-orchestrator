@@ -1,4 +1,4 @@
-"""Unit tests for the [v2.7] composite `se_oof` in skill_12.
+"""Unit tests for the composite `se_oof` in skill_12.
 
 Covers the two hard rules locked in the SoT:
   - Fix-1: composite_se_oof = sqrt( sum(w_eff * per-target NB variance) ) over
@@ -27,10 +27,18 @@ def _make_config():
     return {
         "target_config": {
             "targets": [
-                {"name": "goals", "task_type": "regression",
-                 "metric": "rmse", "weight": 0.6},
-                {"name": "label", "task_type": "classification",
-                 "metric": "f1", "weight": 0.4},
+                {
+                    "name": "goals",
+                    "task_type": "regression",
+                    "metric": "rmse",
+                    "weight": 0.6,
+                },
+                {
+                    "name": "label",
+                    "task_type": "classification",
+                    "metric": "f1",
+                    "weight": 0.4,
+                },
             ]
         },
         "metric": "composite",
@@ -56,19 +64,18 @@ def test_composite_se_oof_matches_hand_computed():
 def test_composite_se_oof_has_no_extra_sqrt_K():
     ma = run(_make_config(), _make_state(REG_FOLDS, CLS_FOLDS))["metric_analysis"]
     buggy = float(
-        np.sqrt(0.6 * _nb_variance(REG_FOLDS, len(REG_FOLDS)))
-        / np.sqrt(len(REG_FOLDS))
+        np.sqrt(0.6 * _nb_variance(REG_FOLDS, len(REG_FOLDS))) / np.sqrt(len(REG_FOLDS))
     )
     assert ma["composite_se_oof"] != pytest.approx(buggy, rel=1e-9)
 
 
 def test_composite_se_oof_insensitive_to_classification_variance():
-    base = run(_make_config(), _make_state(REG_FOLDS, CLS_FOLDS))[
+    base = run(_make_config(), _make_state(REG_FOLDS, CLS_FOLDS))["metric_analysis"][
+        "composite_se_oof"
+    ]
+    shifted = run(_make_config(), _make_state(REG_FOLDS, [0.5, 0.9, 0.1, 0.99, 0.7]))[
         "metric_analysis"
     ]["composite_se_oof"]
-    shifted = run(
-        _make_config(), _make_state(REG_FOLDS, [0.5, 0.9, 0.1, 0.99, 0.7])
-    )["metric_analysis"]["composite_se_oof"]
     assert shifted == pytest.approx(base, rel=1e-9)
 
 
@@ -86,10 +93,18 @@ def test_no_composite_se_oof_without_regression_target():
     config = {
         "target_config": {
             "targets": [
-                {"name": "label_a", "task_type": "classification",
-                 "metric": "f1", "weight": 0.5},
-                {"name": "label_b", "task_type": "classification",
-                 "metric": "f1", "weight": 0.5},
+                {
+                    "name": "label_a",
+                    "task_type": "classification",
+                    "metric": "f1",
+                    "weight": 0.5,
+                },
+                {
+                    "name": "label_b",
+                    "task_type": "classification",
+                    "metric": "f1",
+                    "weight": 0.5,
+                },
             ]
         },
         "metric": "composite",

@@ -84,7 +84,7 @@ def _effective_thresholds(
         # Classification: bounded metrics — no scale correction needed.
         return variance_gate_threshold, gate_margin, None
 
-    # SoT v2.2 Generalised Regression: explicit routing for each metric family
+    # SoT Generalised Regression: explicit routing for each metric family
     SCALE_INVARIANT_METRICS = frozenset({"rmsle", "mase"})
     SCALE_SENSITIVE_METRICS = frozenset(
         {
@@ -131,7 +131,7 @@ def _effective_thresholds(
         effective_variance = variance_gate_threshold * (target_std**2)
         effective_margin = gate_margin * target_std
 
-        # v2.4 1-SE Promotion Margin (S9): effective_margin = max(effective_margin, 1 * SE_oof)
+        # 1-SE Promotion Margin (S9): effective_margin = max(effective_margin, 1 * SE_oof)
         metric_analysis = state.get("metric_analysis", {}) or {}
         se_oof = float(metric_analysis.get("se_oof") or 0.0)
         if se_oof > 0.0:
@@ -293,7 +293,7 @@ def _effective_multi_target_std(config: ChallengeConfig, state: dict) -> float:
         sigma = _to_float(eda.get(f"{t['name']}_std"))
         if sigma is None or sigma <= 0:
             continue
-        num += weight * (sigma ** 2)
+        num += weight * (sigma**2)
         den += weight
     if den <= 0:
         return 0.0
@@ -338,13 +338,15 @@ def _multi_target_effective_thresholds(
         )
         return variance_gate_threshold, gate_margin, warning
 
-    effective_variance = variance_gate_threshold * (effective_target_std ** 2)
+    effective_variance = variance_gate_threshold * (effective_target_std**2)
     effective_margin = gate_margin * effective_target_std
 
     # [Fix-1] 1-SE promotion margin from the NB-based composite standard error.
     metric_analysis = state.get("metric_analysis", {}) or {}
     composite_se = _to_float(
-        metric_analysis.get("composite_se_oof") if isinstance(metric_analysis, dict) else None
+        metric_analysis.get("composite_se_oof")
+        if isinstance(metric_analysis, dict)
+        else None
     )
     if composite_se is not None and composite_se > 0:
         effective_margin = max(effective_margin, 1.0 * composite_se)
@@ -566,9 +568,9 @@ def run() -> dict:
 
 
 def _run_multi_target_gate(config, store, state) -> dict:
-    """Multi-target gate logic per SoT v2.2.1 A11.
+    """Multi-target gate logic per SoT A11.
 
-    [v2.7 / H1] Enforces four cumulative conditions before promotion:
+    Enforces four cumulative conditions before promotion:
       1. variance gate  - composite_fold_score_variance < effective_variance_threshold
       2. baseline gate  - (baseline - avg_score) > effective_gate_margin (composite
                           distance is minimize, so lower is better; H3/D2 resolves
@@ -628,7 +630,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
         else sum(weighted_distances)
     )
     diagnosis["avg_score"] = avg_score
-# -- 1. Variance gate (H1) -----------------------------------------------
+    # -- 1. Variance gate (H1) -----------------------------------------------
     effective_variance_threshold, effective_gate_margin, threshold_warning = (
         _multi_target_effective_thresholds(config, state)
     )
@@ -661,7 +663,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
     # composite_direction is fixed "minimize_composite_distance": a lower
     # composite distance is better, so improvement means avg is below baseline
     # by more than the margin. When retraining_required == True the baseline
-        # resolves to anchor_oof_score_augmented via _baseline_score.
+    # resolves to anchor_oof_score_augmented via _baseline_score.
     baseline_score, baseline_key = _baseline_score(state, "score")
     diagnosis["baseline_key"] = baseline_key
     if baseline_score is not None:
@@ -703,7 +705,7 @@ def _run_multi_target_gate(config, store, state) -> dict:
             "reason": "multi-target SHAP gate failed",
             "diagnosis": diagnosis,
         }
-# -- 4. Human gate 2 -----------------------------------------------------
+    # -- 4. Human gate 2 -----------------------------------------------------
     if not human_gate_approved:
         # S6: Surface leakage_mi_advisory at Human Gate 2.
         mi_advisory = state.get("leakage_mi_advisory") or []

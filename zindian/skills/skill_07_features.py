@@ -1142,7 +1142,7 @@ def _run_multi_target_variant(
     test_feat,
     feature_cols=None,
 ):
-    """Train variant across multiple targets per SoT v2.2.1 A11."""
+    """Train variant across multiple targets per SoT A11."""
     from zindian.state import write_oof_record, SkillStateStore
 
     target_config = config.get("target_config", {})
@@ -1339,7 +1339,7 @@ def _run_multi_target_variant(
         else 0
     )
 
-    # Compute weighted composite distance score (lower is better) per SoT v2.2.1 A11
+    # Compute weighted composite distance score (lower is better) per SoT A11
     # distance = 1.0 - f1 for classification; rmse / target_std for regression
     weighted_distances = []
     for t in targets:

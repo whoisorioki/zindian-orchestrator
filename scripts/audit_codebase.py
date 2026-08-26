@@ -222,7 +222,7 @@ def audit_skill_entry_points() -> list[dict]:
 
 
 def audit_v22_specific() -> list[dict]:
-    """Verify v2.2 changes are correctly reflected across the codebase."""
+    """Verify SoT changes are correctly reflected across the codebase."""
     results = []
 
     # _lightgbm_shared.py

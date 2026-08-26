@@ -1,4 +1,4 @@
-"""[v2.7 / F4] MASE fold-scoring tests (step 11).
+"""F4 MASE fold-scoring tests (step 11).
 
 Tests three things:
 
@@ -12,6 +12,7 @@ inverted here per the pre-merge fix: the code path is a hard ValueError in
 skill_08_anchor (upstream guard) + a hard assertion in _lightgbm_shared (in-loop
 guard). Both are tested.
 """
+
 import math
 import numpy as np
 import pandas as pd
@@ -24,9 +25,12 @@ from zindian.skills._lightgbm_shared import train_lightgbm_cv
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _minimal_train_test(n: int = 60, seed: int = 0):
     rng = np.random.default_rng(seed)
-    df = pd.DataFrame({"feat": rng.standard_normal(n), "target": rng.standard_normal(n)})
+    df = pd.DataFrame(
+        {"feat": rng.standard_normal(n), "target": rng.standard_normal(n)}
+    )
     train = df.iloc[: n * 3 // 4].copy()
     test = df.iloc[n * 3 // 4 :].copy()
     return train, test
@@ -50,6 +54,7 @@ def _run_mase_cv(baseline, *, n_splits: int = 3, n: int = 60):
 # ---------------------------------------------------------------------------
 # Test 1 — per-fold correctness: each fold MASE == MAE / baseline
 # ---------------------------------------------------------------------------
+
 
 def test_mase_fold_score_equals_mae_over_baseline():
     """Each fold score must be MAE(y_val, yhat_val) / MAE_naive_baseline.
@@ -75,17 +80,20 @@ def test_mase_fold_score_equals_mae_over_baseline():
 
     # Doubling the baseline should halve every fold score
     for fa, fb in zip(result_a.fold_scores, result_b.fold_scores):
-        assert math.isclose(fa / fb, 2.0, rel_tol=1e-6), (
-            f"Expected fold_score ratio 2.0, got {fa/fb:.6f}"
-        )
+        assert math.isclose(
+            fa / fb, 2.0, rel_tol=1e-6
+        ), f"Expected fold_score ratio 2.0, got {fa/fb:.6f}"
 
     # oof_mase == mean(fold_scores)
-    assert math.isclose(result_a.oof_mase, float(np.mean(result_a.fold_scores)), rel_tol=1e-9)
+    assert math.isclose(
+        result_a.oof_mase, float(np.mean(result_a.fold_scores)), rel_tol=1e-9
+    )
 
 
 # ---------------------------------------------------------------------------
 # Test 2 — aggregation: oof_mase == mean(fold_scores), oof_rmse alias correct
 # ---------------------------------------------------------------------------
+
 
 def test_oof_mase_equals_mean_of_fold_scores():
     """oof_mase must equal the arithmetic mean of per-fold MASE scores,
@@ -102,9 +110,11 @@ def test_oof_mase_equals_mean_of_fold_scores():
 # Test 3 — upstream guard: missing/invalid baseline raises BEFORE training
 # ---------------------------------------------------------------------------
 
+
 def _make_mase_config_mock():
     """Return a config-like object that reports task_type=regression, metric=mase."""
     from unittest.mock import MagicMock
+
     fake_config = MagicMock()
     cfg_values = {
         "task_type": "regression",
@@ -121,7 +131,9 @@ def _make_mase_config_mock():
 
 def _make_dummy_frames(n: int = 30):
     rng = np.random.default_rng(1)
-    df = pd.DataFrame({"feat": rng.standard_normal(n), "target": rng.standard_normal(n)})
+    df = pd.DataFrame(
+        {"feat": rng.standard_normal(n), "target": rng.standard_normal(n)}
+    )
     return df.iloc[:24].copy(), df.iloc[24:].copy()
 
 
@@ -164,6 +176,7 @@ def test_zero_baseline_raises_in_skill08():
 # ---------------------------------------------------------------------------
 # Test 4 — in-loop hard assertion: bypassing skill_08 raises loudly
 # ---------------------------------------------------------------------------
+
 
 def test_in_loop_assertion_fires_when_baseline_missing():
     """If a caller bypasses skill_08_anchor and calls train_lightgbm_cv with

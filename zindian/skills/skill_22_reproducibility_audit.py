@@ -206,7 +206,7 @@ def _audit_oof_strategy_tags(
 def _audit_derived_artifact_fingerprints(
     comp_dir: Path, state: dict[str, Any]
 ) -> tuple[bool, list[str]]:
-    """3-tier tolerance verification for derived artifacts (v2.4 S10).
+    """3-tier tolerance verification for derived artifacts (S10).
 
     # S10 - implemented 2026-08-24
 
@@ -238,7 +238,7 @@ def _audit_derived_artifact_fingerprints(
 def _check_telemetry_aggregate(
     state: dict[str, Any], config: dict[str, Any]
 ) -> tuple[bool, list[str]]:
-    """Verify telemetry.aggregate and carbon tracking compliance (v2.6 R5)."""
+    """Verify telemetry.aggregate and carbon tracking compliance (R5)."""
     issues = []
 
     # 1. telemetry.aggregate present and non-null
@@ -252,7 +252,13 @@ def _check_telemetry_aggregate(
         return (False, issues)
 
     # Check expected keys in aggregate
-    required_keys = {"phase", "total_duration_sec", "total_carbon_kg_estimate", "skill_count", "written_at"}
+    required_keys = {
+        "phase",
+        "total_duration_sec",
+        "total_carbon_kg_estimate",
+        "skill_count",
+        "written_at",
+    }
     missing_keys = required_keys - set(telemetry_agg.keys())
     if missing_keys:
         issues.append(f"telemetry.aggregate is missing keys: {sorted(missing_keys)}")
@@ -260,11 +266,18 @@ def _check_telemetry_aggregate(
     # 2. total_carbon_kg_estimate or explicit not_instrumented with reason
     total_carbon = telemetry_agg.get("total_carbon_kg_estimate")
     if total_carbon is None:
-        telemetry_keys = [k for k in state if k.startswith("telemetry.") and k != "telemetry.aggregate"]
+        telemetry_keys = [
+            k
+            for k in state
+            if k.startswith("telemetry.") and k != "telemetry.aggregate"
+        ]
         not_instrumented_found = False
         for tk in telemetry_keys:
             tel = state[tk]
-            if isinstance(tel, dict) and tel.get("tracker_method") == "not_instrumented":
+            if (
+                isinstance(tel, dict)
+                and tel.get("tracker_method") == "not_instrumented"
+            ):
                 if tel.get("reason"):
                     not_instrumented_found = True
                     break
@@ -410,7 +423,7 @@ def audit_pipeline(slug: str | None = None) -> bool:
                 f"active strategy '{active_id}'"
             )
 
-        # -- Check 4: Derived artifact tolerance audit (v2.4 S10) ---------------
+        # -- Check 4: Derived artifact tolerance audit (S10) ---------------
         print(
             "\n[Check 4] Auditing derived artifact fingerprints (tolerance-based 3-tier bands)"
         )
@@ -424,10 +437,8 @@ def audit_pipeline(slug: str | None = None) -> bool:
                 "  OK: Derived artifact fingerprints verified within IEEE-754 tolerance limits."
             )
 
-        # -- Check 5: Telemetry aggregate and carbon tracking audit (v2.6 R5) ---
-        print(
-            "\n[Check 5] Auditing telemetry.aggregate and carbon tracking compliance"
-        )
+        # -- Check 5: Telemetry aggregate and carbon tracking audit (R5) ---
+        print("\n[Check 5] Auditing telemetry.aggregate and carbon tracking compliance")
         tel_ok, tel_issues = _check_telemetry_aggregate(state, cfg)
         if tel_issues:
             for issue in tel_issues:

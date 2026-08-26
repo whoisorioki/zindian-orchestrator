@@ -1,4 +1,4 @@
-"""Zindian Orchestrator v2.0 core package."""
+"""Zindian Orchestrator core package."""
 
 __all__ = ["__version__"]
 

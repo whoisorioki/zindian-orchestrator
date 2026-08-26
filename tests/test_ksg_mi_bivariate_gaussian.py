@@ -1,4 +1,4 @@
-"""[F2 — v2.8] KSG bivariate MI estimator — closed-form reference test.
+"""F2 KSG bivariate MI estimator — closed-form reference test.
 
 For a bivariate Gaussian with Pearson correlation ρ, the true mutual information is:
     I(X; Y) = -0.5 * ln(1 - ρ²)
@@ -29,6 +29,7 @@ from zindian.skills.skill_10_shap import _run_pairwise_mi_audit
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _bivariate_gaussian(rho: float, n: int, seed: int = 0) -> pd.DataFrame:
     """Sample (X, Y) from a bivariate standard normal with correlation rho."""
     rng = np.random.default_rng(seed)
@@ -39,7 +40,7 @@ def _bivariate_gaussian(rho: float, n: int, seed: int = 0) -> pd.DataFrame:
 
 def _gaussian_mi_true(rho: float) -> float:
     """True MI for bivariate Gaussian: -0.5 * ln(1 - rho^2)."""
-    return -0.5 * math.log(1.0 - rho ** 2)
+    return -0.5 * math.log(1.0 - rho**2)
 
 
 def _cfg_shap(threshold: float = 0.05, max_samples: int = 5000) -> dict:
@@ -71,16 +72,19 @@ def _run(df: pd.DataFrame, target: str, **cfg_kwargs) -> list[dict]:
 # Test 1: independent Gaussians → MI ≈ 0, no pair flagged
 # ---------------------------------------------------------------------------
 
+
 def test_independent_gaussians_not_flagged():
     """Independent features (ρ=0) have I(X;Y)=0. The pair must not be flagged
     at threshold=0.05 (well above the near-zero estimated MI)."""
     rng = np.random.default_rng(1)
     n = 2000
-    df = pd.DataFrame({
-        "feat_x": rng.standard_normal(n),
-        "feat_y": rng.standard_normal(n),
-        "target": rng.standard_normal(n),
-    })
+    df = pd.DataFrame(
+        {
+            "feat_x": rng.standard_normal(n),
+            "feat_y": rng.standard_normal(n),
+            "target": rng.standard_normal(n),
+        }
+    )
     flagged = _run(df, "target", threshold=0.05)
     # The pair (feat_x, feat_y) should not be flagged since features are
     # independent of each other AND of the target.
@@ -91,10 +95,14 @@ def test_independent_gaussians_not_flagged():
 # Test 2: known MI against Gaussian closed form (F2)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("rho,tol_rel", [
-    (0.8,  0.20),   # I_true ≈ 0.511 nats — moderate correlation, expect ≤20% error
-    (0.5,  0.30),   # I_true ≈ 0.144 nats — weaker, KSG has higher relative bias
-])
+
+@pytest.mark.parametrize(
+    "rho,tol_rel",
+    [
+        (0.8, 0.20),  # I_true ≈ 0.511 nats — moderate correlation, expect ≤20% error
+        (0.5, 0.30),  # I_true ≈ 0.144 nats — weaker, KSG has higher relative bias
+    ],
+)
 def test_ksg_converges_to_gaussian_closed_form(rho, tol_rel):
     """KSG estimator must agree with -0.5*ln(1-ρ²) within tol_rel at n=5000.
 
@@ -117,12 +125,18 @@ def test_ksg_converges_to_gaussian_closed_form(rho, tol_rel):
     feat_y = rng.standard_normal(n)  # independent noise feature
 
     df = pd.DataFrame({"feat_x": feat_x, "feat_y": feat_y, "target": target_vals})
-    ranking = pd.DataFrame({"feature": ["feat_x", "feat_y"], "mean_abs_shap": [1.0, 0.5]})
+    ranking = pd.DataFrame(
+        {"feature": ["feat_x", "feat_y"], "mean_abs_shap": [1.0, 0.5]}
+    )
     cfg = _cfg_shap(threshold=0.001, max_samples=5000)
 
     flagged = _run_pairwise_mi_audit(
-        frame=df, ranking=ranking, target="target",
-        task_type="regression", cfg_shap=cfg, seed=42,
+        frame=df,
+        ranking=ranking,
+        target="target",
+        task_type="regression",
+        cfg_shap=cfg,
+        seed=42,
     )
     assert len(flagged) >= 1, "Expected at least one pair flagged (threshold=0.001)"
     best = max(flagged, key=lambda p: p["mi_pair_score"])
@@ -139,6 +153,7 @@ def test_ksg_converges_to_gaussian_closed_form(rho, tol_rel):
 # Test 3: scale invariance (F1 regression guard)
 # ---------------------------------------------------------------------------
 
+
 def test_regression_mi_score_is_scale_invariant():
     """Rescaling the target by a constant must not change the MI score.
 
@@ -152,11 +167,13 @@ def test_regression_mi_score_is_scale_invariant():
     x = rng.standard_normal(n)
     target = x + 0.3 * rng.standard_normal(n)  # moderate correlation
 
-    df_base = pd.DataFrame({"feat_x": x, "feat_y": rng.standard_normal(n), "target": target})
+    df_base = pd.DataFrame(
+        {"feat_x": x, "feat_y": rng.standard_normal(n), "target": target}
+    )
     df_scaled = df_base.copy()
-    df_scaled["target"] = df_scaled["target"] * 100.0   # scale target by 100
+    df_scaled["target"] = df_scaled["target"] * 100.0  # scale target by 100
 
-    score_base   = _run(df_base,   "target", threshold=0.001)[0]["mi_pair_score"]
+    score_base = _run(df_base, "target", threshold=0.001)[0]["mi_pair_score"]
     score_scaled = _run(df_scaled, "target", threshold=0.001)[0]["mi_pair_score"]
 
     # Before the fix, ratio would be ~10000 (100²). After fix, should be ≈ 1.0.

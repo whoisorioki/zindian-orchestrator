@@ -250,24 +250,19 @@ def test_pairwise_mi_audit_classification():
     n = 200
     feat1 = rng.choice([0, 1], size=n)
     feat2 = rng.choice([0, 1], size=n)
-    target = feat1 ^ feat2 # XOR
+    target = feat1 ^ feat2  # XOR
 
-    df = pd.DataFrame({
-        "feat1": feat1.astype(float),
-        "feat2": feat2.astype(float),
-        "target": target
-    })
+    df = pd.DataFrame(
+        {"feat1": feat1.astype(float), "feat2": feat2.astype(float), "target": target}
+    )
 
-    ranking = pd.DataFrame({
-        "feature": ["feat1", "feat2"],
-        "mean_abs_shap": [0.5, 0.5]
-    })
+    ranking = pd.DataFrame({"feature": ["feat1", "feat2"], "mean_abs_shap": [0.5, 0.5]})
 
     cfg_shap = {
         "enable_mi_regression_subsample": True,
         "mi_pairwise_top_n": 5,
         "mi_pairwise_threshold": 0.85,
-        "mi_max_samples": 500
+        "mi_max_samples": 500,
     }
 
     flagged = shap_mod._run_pairwise_mi_audit(
@@ -275,7 +270,7 @@ def test_pairwise_mi_audit_classification():
         ranking=ranking,
         target="target",
         task_type="classification",
-        cfg_shap=cfg_shap
+        cfg_shap=cfg_shap,
     )
 
     assert len(flagged) == 1
@@ -291,22 +286,15 @@ def test_pairwise_mi_audit_regression():
     feat2 = rng.normal(0, 1, size=n)
     target = feat1 + feat2
 
-    df = pd.DataFrame({
-        "feat1": feat1,
-        "feat2": feat2,
-        "target": target
-    })
+    df = pd.DataFrame({"feat1": feat1, "feat2": feat2, "target": target})
 
-    ranking = pd.DataFrame({
-        "feature": ["feat1", "feat2"],
-        "mean_abs_shap": [0.5, 0.5]
-    })
+    ranking = pd.DataFrame({"feature": ["feat1", "feat2"], "mean_abs_shap": [0.5, 0.5]})
 
     cfg_shap = {
         "enable_mi_regression_subsample": True,
         "mi_pairwise_top_n": 5,
         "mi_pairwise_threshold": 0.85,
-        "mi_max_samples": 500
+        "mi_max_samples": 500,
     }
 
     flagged = shap_mod._run_pairwise_mi_audit(
@@ -314,11 +302,10 @@ def test_pairwise_mi_audit_regression():
         ranking=ranking,
         target="target",
         task_type="regression",
-        cfg_shap=cfg_shap
+        cfg_shap=cfg_shap,
     )
 
     assert len(flagged) == 1
     assert flagged[0]["feature_a"] == "feat1"
     assert flagged[0]["feature_b"] == "feat2"
     assert flagged[0]["mi_pair_score"] > 0.85
-

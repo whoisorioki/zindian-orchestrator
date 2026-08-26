@@ -1,4 +1,4 @@
-"""Verify SoT v2.5 contract logic pathways exist in the modified files.
+"""Verify SoT contract logic pathways exist in the modified files.
 Uses whitespace-tolerant regex patterns to handle black auto-formatting."""
 
 import re

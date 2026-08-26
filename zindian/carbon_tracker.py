@@ -1,5 +1,5 @@
 """
-R5 Carbon Tracking — v2.3 Feature
+R5 Carbon Tracking
 
 Estimates carbon footprint for skill execution using:
 - Primary: CodeCarbon (optional dependency)

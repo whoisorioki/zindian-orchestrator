@@ -609,6 +609,7 @@ def _run_pairwise_mi_audit(
 
     if seed is None:
         from zindian.config import get_seed
+
         seed_val = get_seed()
     else:
         seed_val = seed
@@ -621,7 +622,9 @@ def _run_pairwise_mi_audit(
             feat_a = top_features[i]
             feat_b = top_features[j]
 
-            valid_mask = frame[feat_a].notna() & frame[feat_b].notna() & frame[target].notna()
+            valid_mask = (
+                frame[feat_a].notna() & frame[feat_b].notna() & frame[target].notna()
+            )
             sub_frame = frame.loc[valid_mask]
             if len(sub_frame) == 0:
                 continue
@@ -641,8 +644,16 @@ def _run_pairwise_mi_audit(
                     X_scaled = scale(X_pair, with_mean=False)
                     y_scaled = scale(y_vals.reshape(-1, 1), with_mean=False)
 
-                    X_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(X_scaled), axis=0)) * rng.standard_normal(size=X_scaled.shape)
-                    y_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(y_scaled), axis=0)) * rng.standard_normal(size=y_scaled.shape)
+                    X_scaled += (
+                        1e-10
+                        * np.maximum(1, np.mean(np.abs(X_scaled), axis=0))
+                        * rng.standard_normal(size=X_scaled.shape)
+                    )
+                    y_scaled += (
+                        1e-10
+                        * np.maximum(1, np.mean(np.abs(y_scaled), axis=0))
+                        * rng.standard_normal(size=y_scaled.shape)
+                    )
 
                     xy = np.hstack((X_scaled, y_scaled))
 
@@ -652,17 +663,26 @@ def _run_pairwise_mi_audit(
                     radius = np.nextafter(radius[:, -1], 0)
 
                     kd_x = KDTree(X_scaled, metric="chebyshev")
-                    nx = kd_x.query_radius(X_scaled, radius, count_only=True, return_distance=False)
+                    nx = kd_x.query_radius(
+                        X_scaled, radius, count_only=True, return_distance=False
+                    )
                     nx = np.array(nx) - 1.0
 
                     kd_y = KDTree(y_scaled, metric="chebyshev")
-                    ny = kd_y.query_radius(y_scaled, radius, count_only=True, return_distance=False)
+                    ny = kd_y.query_radius(
+                        y_scaled, radius, count_only=True, return_distance=False
+                    )
                     ny = np.array(ny) - 1.0
 
-                    joint_mi = digamma(n_samples) + digamma(3) - np.mean(digamma(nx + 1)) - np.mean(digamma(ny + 1))
+                    joint_mi = (
+                        digamma(n_samples)
+                        + digamma(3)
+                        - np.mean(digamma(nx + 1))
+                        - np.mean(digamma(ny + 1))
+                    )
                     joint_mi = max(0.0, float(joint_mi))
 
-                    # [F1 fix — v2.8] Use var of y_scaled (variance ≈ 1 after std-scaling)
+                    # F1 fix: use var of y_scaled (variance ≈ 1 after std-scaling)
                     # instead of var(y_vals) (raw variance).
                     # joint_mi is estimated in the scaled space, so dividing by raw var(y)
                     # reintroduces the target scale — rescaling Y by c multiplies var_y by
@@ -675,14 +695,20 @@ def _run_pairwise_mi_audit(
                     _y_encoded = y_vals
                     if _y_encoded.dtype.kind in ("U", "S", "O"):
                         from sklearn.preprocessing import LabelEncoder
+
                         _le = LabelEncoder()
                         _y_encoded = _le.fit_transform(_y_encoded.astype(str))
                     else:
                         _y_encoded = _y_encoded.astype(np.int32)
 
                     X_scaled = scale(X_pair, with_mean=False)
-                    X_scaled += 1e-10 * np.maximum(1, np.mean(np.abs(X_scaled), axis=0)) * rng.standard_normal(size=X_scaled.shape)
+                    X_scaled += (
+                        1e-10
+                        * np.maximum(1, np.mean(np.abs(X_scaled), axis=0))
+                        * rng.standard_normal(size=X_scaled.shape)
+                    )
 
+                    assert _y_encoded is not None
                     radius = np.empty(n_samples)
                     label_counts = np.empty(n_samples)
                     k_all = np.empty(n_samples)
@@ -708,10 +734,17 @@ def _run_pairwise_mi_audit(
                         radius = radius[mask]
 
                         kd = KDTree(X_scaled)
-                        m_all = kd.query_radius(X_scaled, radius, count_only=True, return_distance=False)
+                        m_all = kd.query_radius(
+                            X_scaled, radius, count_only=True, return_distance=False
+                        )
                         m_all = np.array(m_all)
 
-                        joint_mi = digamma(valid_n_samples) + np.mean(digamma(k_all)) - np.mean(digamma(label_counts)) - np.mean(digamma(m_all))
+                        joint_mi = (
+                            digamma(valid_n_samples)
+                            + np.mean(digamma(k_all))
+                            - np.mean(digamma(label_counts))
+                            - np.mean(digamma(m_all))
+                        )
                         joint_mi = max(0.0, float(joint_mi))
                     else:
                         joint_mi = 0.0
@@ -721,13 +754,17 @@ def _run_pairwise_mi_audit(
                     score_val = joint_mi / target_entropy if target_entropy > 0 else 0.0
 
                 if score_val >= mi_threshold:
-                    flagged_pairs.append({
-                        "feature_a": feat_a,
-                        "feature_b": feat_b,
-                        "mi_pair_score": score_val
-                    })
+                    flagged_pairs.append(
+                        {
+                            "feature_a": feat_a,
+                            "feature_b": feat_b,
+                            "mi_pair_score": score_val,
+                        }
+                    )
             except Exception as e:
-                print(f"[WARN] Joint MI computation failed for pair ({feat_a}, {feat_b}): {e}")
+                print(
+                    f"[WARN] Joint MI computation failed for pair ({feat_a}, {feat_b}): {e}"
+                )
 
     return flagged_pairs
 
@@ -1105,7 +1142,7 @@ def run(
 def _run_multi_target_shap(
     paths, config, state, n_splits, seed, variant_name: str | None = None
 ) -> dict:
-    """Multi-target SHAP analysis per SoT v2.2.1 A11."""
+    """Multi-target SHAP analysis per SoT A11."""
     print("\n[TARGET] MULTI-TARGET SHAP MODE\n")
     target_config = config.get("target_config", {})
     targets = target_config.get("targets", [])

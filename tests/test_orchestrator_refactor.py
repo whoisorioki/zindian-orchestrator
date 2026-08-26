@@ -1,6 +1,6 @@
 """Integration Test Suite for Orchestrator Refactor
 
-Validates that Prompts 1-5 implementation aligns with SoT v2.2.1 and preserves
+Validates that Prompts 1-5 implementation aligns with the SoT and preserves
 single-target baseline functionality.
 
 Test Coverage:
@@ -216,7 +216,7 @@ class TestSingleTargetBaseline:
 
 
 class TestPhaseArchitectureAlignment:
-    """Validate orchestrator phase definitions match SoT v2.2.1"""
+    """Validate orchestrator phase definitions match the SoT"""
 
     def test_phase_1_includes_all_required_skills(self):
         """Phase 1 must include skill_01, 02, 03.policy_writer, 04, 05, 15"""

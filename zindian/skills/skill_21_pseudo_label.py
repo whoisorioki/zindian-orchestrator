@@ -773,8 +773,12 @@ def run(
             n_samples = len(p1)
             k = int(np.ceil(p_val * n_samples))
 
-            rank1 = pd.Series(p1).rank(method="first", ascending=False).values
-            rank0 = pd.Series(p0).rank(method="first", ascending=False).values
+            rank1 = np.asarray(
+                pd.Series(p1).rank(method="first", ascending=False).values
+            )
+            rank0 = np.asarray(
+                pd.Series(p0).rank(method="first", ascending=False).values
+            )
 
             pos_mask = (rank1 <= k) & (p1 >= 0.70)
             neg_mask = (rank0 <= k) & (p0 >= 0.70)
@@ -1076,7 +1080,7 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
     targets = target_config.get("targets", [])
 
     # A12 applies when there are multiple targets AND at least one is
-    # classification (SoT A12 mandatory-field rule). [v2.7] Widened from the
+    # classification (SoT A12 mandatory-field rule). Widened from the
     # previous mixed-only gate, which left the strict block policy unreachable
     # for all-classification multi-target competitions.
     if len(targets) > 1:
@@ -1181,7 +1185,7 @@ def _run_multi_target_pseudo_label(paths, config, store, state, dry_run) -> dict
                         )
 
     elif policy == "block_composite_until_all_targets_augmented_or_none":
-        # [v2.7 / D1-skill_21] Strict A12 block: verify EVERY classification target
+        # Strict A12 block (D1-skill_21): verify EVERY classification target
         # actually augmented (not just check regression-target presence). Regression
         # pseudo-labelling is out of scope, so any regression target also blocks.
         all_augmented = all(

@@ -196,7 +196,7 @@ def _prune_collinear(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Drop lower-scoring candidate for any pair with correlation > 0.95.
 
-    When y_true is provided (v2.4 S4), computes correlation on error residuals:
+    When y_true is provided (S4), computes correlation on error residuals:
         e_a = pred_a - y_true, e_b = pred_b - y_true
     """
     working = list(candidates)
@@ -685,7 +685,7 @@ def _run_single_target_fusion(
         print(f"  {v['name']:<36} {v['score']:>12.6f}")
 
     # S4 - implemented 2026-08-03
-    # Activated v2.4 error-residual correlation pruning (S4) on 2026-08-03
+    # Activated error-residual correlation pruning (S4) on 2026-08-03
     # to evaluate error residuals instead of raw predictions.
     pruned_variants, dropped_pairs = _prune_collinear(
         all_variants, task_type=task_type, direction=direction, y_true=y_true

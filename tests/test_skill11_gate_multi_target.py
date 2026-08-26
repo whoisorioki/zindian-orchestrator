@@ -1,4 +1,4 @@
-"""[v2.7 / H1] multi-target gate enforcement tests. Direct _run_multi_target_gate
+"""H1 multi-target gate enforcement tests. Direct _run_multi_target_gate
 calls with a MagicMock store. Confirms states that previously passed the bypass
 logic are now blocked by the variance gate alone and the baseline gate alone,
 and that retraining consumes anchor_oof_score_augmented."""
@@ -17,10 +17,18 @@ def _make_config():
         "use_inverse_variance_weighting": False,
         "target_config": {
             "targets": [
-                {"name": "goals", "task_type": "regression",
-                 "metric": "rmse", "weight": 0.6},
-                {"name": "label", "task_type": "classification",
-                 "metric": "f1", "weight": 0.4},
+                {
+                    "name": "goals",
+                    "task_type": "regression",
+                    "metric": "rmse",
+                    "weight": 0.6,
+                },
+                {
+                    "name": "label",
+                    "task_type": "classification",
+                    "metric": "f1",
+                    "weight": 0.4,
+                },
             ]
         },
     }
@@ -63,8 +71,10 @@ def test_variance_gate_blocks_state_that_would_formerly_pass():
     # composite variance 0.1 >= effective_threshold 0.0625 -> BLOCK
     config = _make_config()
     state = _make_state(
-        metric_analysis={"composite_fold_score_variance": 0.10,
-                         "composite_se_oof": None},
+        metric_analysis={
+            "composite_fold_score_variance": 0.10,
+            "composite_se_oof": None,
+        },
     )
     result, store = _run(config, state)
     assert result["status"] == "BLOCKED"
@@ -80,8 +90,10 @@ def test_baseline_gate_blocks_with_variance_held_open():
     config = _make_config()
     state = _make_state(
         anchor_oof_score=0.20,  # == avg -> no improvement
-        metric_analysis={"composite_fold_score_variance": 0.001,
-                         "composite_se_oof": 0.0},
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": 0.0,
+        },
     )
     result, _ = _run(config, state)
     assert result["status"] == "BLOCKED"
@@ -92,10 +104,12 @@ def test_augmented_baseline_is_consumed_when_retraining():
     config = _make_config()
     state = _make_state(
         pseudo_label_result={"retraining_required": True},
-        anchor_oof_score=0.25,            # favourable: 0.25-0.2 = 0.05
+        anchor_oof_score=0.25,  # favourable: 0.25-0.2 = 0.05
         anchor_oof_score_augmented=0.20,  # == avg -> baseline gate fails
-        metric_analysis={"composite_fold_score_variance": 0.001,
-                         "composite_se_oof": None},
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": None,
+        },
     )
     result, _ = _run(config, state)
     assert result["status"] == "BLOCKED"
@@ -107,8 +121,10 @@ def test_gate_passes_when_all_conditions_met():
     config = _make_config()
     state = _make_state(
         anchor_oof_score=0.25,  # baseline - avg = 0.05 > margin
-        metric_analysis={"composite_fold_score_variance": 0.001,
-                         "composite_se_oof": 0.0},
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": 0.0,
+        },
     )
     result, store = _run(config, state)
     assert result["status"] == "PASS"
@@ -122,13 +138,17 @@ def test_composite_direction_is_minimize_lower_is_better():
     config = _make_config()
     fail_state = _make_state(
         anchor_oof_score=0.20,  # == avg, equal -> fail
-        metric_analysis={"composite_fold_score_variance": 0.001,
-                         "composite_se_oof": 0.0},
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": 0.0,
+        },
     )
     assert _run(config, fail_state)[0]["status"] == "BLOCKED"
     pass_state = _make_state(
         anchor_oof_score=0.30,  # 0.1 improvement -> pass
-        metric_analysis={"composite_fold_score_variance": 0.001,
-                         "composite_se_oof": 0.0},
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": 0.0,
+        },
     )
     assert _run(config, pass_state)[0]["status"] == "PASS"

@@ -176,8 +176,12 @@ def run(
                 if first_line:
                     latest_event = json.loads(first_line)
                     # Compare ignoring timestamp
-                    clean_latest = {k: v for k, v in latest_event.items() if k != "timestamp"}
-                    clean_new = {k: v for k, v in startup_event.items() if k != "timestamp"}
+                    clean_latest = {
+                        k: v for k, v in latest_event.items() if k != "timestamp"
+                    }
+                    clean_new = {
+                        k: v for k, v in startup_event.items() if k != "timestamp"
+                    }
                     if clean_latest == clean_new:
                         use_existing = True
                         session_log_path = latest_log

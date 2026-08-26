@@ -404,8 +404,8 @@ def test_pseudo_label_quantile_logic():
     assert k == 2
 
     # Deterministic method='first' tie-breaking
-    rank1 = pd.Series(p1).rank(method="first", ascending=False).values
-    rank0 = pd.Series(p0).rank(method="first", ascending=False).values
+    rank1 = np.asarray(pd.Series(p1).rank(method="first", ascending=False).values)
+    rank0 = np.asarray(pd.Series(p0).rank(method="first", ascending=False).values)
 
     # Floor at 0.70
     pos_mask = (rank1 <= k) & (p1 >= 0.70)
@@ -431,6 +431,8 @@ def test_pseudo_label_quantile_logic():
     assert total_selected == 4
 
     min_samples = 5
+    pos_mask_guarded = np.zeros_like(pos_mask, dtype=bool)
+    neg_mask_guarded = np.zeros_like(neg_mask, dtype=bool)
     if total_selected < min_samples:
         pos_mask_guarded = np.zeros_like(pos_mask, dtype=bool)
         neg_mask_guarded = np.zeros_like(neg_mask, dtype=bool)
@@ -441,7 +443,6 @@ def test_pseudo_label_quantile_logic():
 
 def test_log_directory_deduplication(tmp_path, monkeypatch):
     import json
-    from pathlib import Path
     from datetime import datetime, timezone
     from zindian.paths import CompetitionPaths
     from unittest.mock import MagicMock
@@ -489,7 +490,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
         "cv_strategy": {"type": "StratifiedKFold"},
         "slug": "test-slug",
     }.get(key, default)
-    monkeypatch.setattr("zindian.config.ChallengeConfig.load", lambda *args, **kwargs: mock_config)
+    monkeypatch.setattr(
+        "zindian.config.ChallengeConfig.load", lambda *args, **kwargs: mock_config
+    )
 
     # Mock SkillStateStore read/update
     mock_store = MagicMock()
@@ -497,8 +500,13 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     monkeypatch.setattr("zindian.state.SkillStateStore", lambda path: mock_store)
 
     # Mock skill_15 reporter functions called at the end of run_phase
-    monkeypatch.setattr("zindian.skills.skill_15_reporter.run_phase_summary", lambda phase: None)
-    monkeypatch.setattr("zindian.skills.skill_15_reporter._write_json_summary", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "zindian.skills.skill_15_reporter.run_phase_summary", lambda phase: None
+    )
+    monkeypatch.setattr(
+        "zindian.skills.skill_15_reporter._write_json_summary",
+        lambda *args, **kwargs: None,
+    )
 
     # 3. Simulate first run:
     # Set up a new run log dir matching datetime (20260824T000000)
@@ -530,7 +538,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     current_time[0] = datetime(2026, 8, 24, 1, 0, 0, tzinfo=timezone.utc)
     run_2_dir = logs_dir / "run_20260824T010000_phase1"
     run_2_dir.mkdir(parents=True, exist_ok=True)
-    (run_2_dir / "session.log").write_text("Run 2 logs (identical config)", encoding="utf-8")
+    (run_2_dir / "session.log").write_text(
+        "Run 2 logs (identical config)", encoding="utf-8"
+    )
 
     # Update summary with new timestamp but identical core fields
     summary_2 = {
@@ -546,7 +556,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     # Since summary_2 is similar to summary_1 (ignoring timestamp), run_latest_phase1 should be updated with new logs,
     # and run_2_dir should be removed. No archives should be created because they are similar.
     assert latest_dir.exists()
-    assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 2 logs (identical config)"
+    assert (latest_dir / "session.log").read_text(
+        encoding="utf-8"
+    ) == "Run 2 logs (identical config)"
     assert not run_2_dir.exists()
 
     # Check that no timestamped run folder exists (only latest_dir)
@@ -557,7 +569,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     current_time[0] = datetime(2026, 8, 24, 2, 0, 0, tzinfo=timezone.utc)
     run_3_dir = logs_dir / "run_20260824T020000_phase1"
     run_3_dir.mkdir(parents=True, exist_ok=True)
-    (run_3_dir / "session.log").write_text("Run 3 logs (different config)", encoding="utf-8")
+    (run_3_dir / "session.log").write_text(
+        "Run 3 logs (different config)", encoding="utf-8"
+    )
 
     summary_3 = {
         "timestamp": "2026-08-24T02:00:00Z",
@@ -572,12 +586,16 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     # Since summary_3 is different, the previous latest_dir (Run 2) should be archived to run_20260824T010000_phase1,
     # and run_3_dir should be promoted to latest_dir.
     assert latest_dir.exists()
-    assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 3 logs (different config)"
+    assert (latest_dir / "session.log").read_text(
+        encoding="utf-8"
+    ) == "Run 3 logs (different config)"
     assert not run_3_dir.exists()
 
     archived_dir = logs_dir / "run_20260824T010000Z_phase1"
     assert archived_dir.exists()
-    assert (archived_dir / "session.log").read_text(encoding="utf-8") == "Run 2 logs (identical config)"
+    assert (archived_dir / "session.log").read_text(
+        encoding="utf-8"
+    ) == "Run 2 logs (identical config)"
 
 
 def test_s11_no_root_writes(tmp_path, monkeypatch):
@@ -601,19 +619,23 @@ def test_s11_no_root_writes(tmp_path, monkeypatch):
 
     # Write dummy features_train.csv
     features_df = pd.DataFrame({"some_feature": [1.0, 2.0], "target": [0.0, 1.0]})
-    features_df.to_csv(mock_paths.data_processed_dir / "features_train.csv", index=False)
+    features_df.to_csv(
+        mock_paths.data_processed_dir / "features_train.csv", index=False
+    )
 
     # Write dummy ml_priorart.json and mock client call in Scientist
     (mock_paths.reports_dir / "diagnostics").mkdir(parents=True, exist_ok=True)
-    (mock_paths.reports_dir / "diagnostics" / "ml_priorart.json").write_text("{}", encoding="utf-8")
+    (mock_paths.reports_dir / "diagnostics" / "ml_priorart.json").write_text(
+        "{}", encoding="utf-8"
+    )
 
     monkeypatch.setattr(
         "zindian.skills.skill_18_librarian.resolve_competition_paths",
-        lambda *args, **kwargs: mock_paths
+        lambda *args, **kwargs: mock_paths,
     )
     monkeypatch.setattr(
         "zindian.skills.skill_20_scientist.resolve_competition_paths",
-        lambda *args, **kwargs: mock_paths
+        lambda *args, **kwargs: mock_paths,
     )
 
     # Mock ChallengeConfig
@@ -622,12 +644,16 @@ def test_s11_no_root_writes(tmp_path, monkeypatch):
             return {
                 "name": "Test Comp",
                 "domain": "geospatial",
-                "slug": "test-comp"
+                "slug": "test-comp",
             }.get(key, default)
-    monkeypatch.setattr("zindian.config.ChallengeConfig.load", lambda *args, **kwargs: DummyConfig())
+
+    monkeypatch.setattr(
+        "zindian.config.ChallengeConfig.load", lambda *args, **kwargs: DummyConfig()
+    )
 
     # Call run_librarian
     from zindian.skills.skill_18_librarian import run_librarian
+
     run_librarian(cache_path=None)
 
     # Check that literature_cache.json and domain_hypotheses.json are in diagnostics, but not in root
@@ -638,22 +664,30 @@ def test_s11_no_root_writes(tmp_path, monkeypatch):
 
     # For Scientist, mock validate_hypotheses
     from zindian.skills.skill_20_scientist import run_scientist
+
     monkeypatch.setattr(
-        "zindian.skills.skill_20_scientist.validate_hypotheses",
-        lambda *args: ([], [])
+        "zindian.skills.skill_20_scientist.validate_hypotheses", lambda *args: ([], [])
     )
 
     run_scientist(
-        hypotheses_path=str(mock_paths.reports_dir / "diagnostics" / "domain_hypotheses.json"),
+        hypotheses_path=str(
+            mock_paths.reports_dir / "diagnostics" / "domain_hypotheses.json"
+        ),
         priorart_path=str(mock_paths.reports_dir / "diagnostics" / "ml_priorart.json"),
-        hypothesis_path=str(mock_paths.reports_dir / "diagnostics" / "validated_hypotheses.json"),
-        failed_hypotheses_path=str(mock_paths.reports_dir / "diagnostics" / "failed_hypotheses.json"),
+        hypothesis_path=str(
+            mock_paths.reports_dir / "diagnostics" / "validated_hypotheses.json"
+        ),
+        failed_hypotheses_path=str(
+            mock_paths.reports_dir / "diagnostics" / "failed_hypotheses.json"
+        ),
     )
 
     # Check that validated_hypotheses.json and failed_hypotheses.json are in diagnostics, but not in root
     assert not (mock_paths.reports_dir / "validated_hypotheses.json").exists()
     assert not (mock_paths.reports_dir / "failed_hypotheses.json").exists()
-    assert (mock_paths.reports_dir / "diagnostics" / "validated_hypotheses.json").exists()
+    assert (
+        mock_paths.reports_dir / "diagnostics" / "validated_hypotheses.json"
+    ).exists()
     assert (mock_paths.reports_dir / "diagnostics" / "failed_hypotheses.json").exists()
 
 
@@ -668,14 +702,18 @@ def test_preflight_mt_oof_completeness(tmp_path, monkeypatch):
     comp_path.mkdir()
     (comp_path / "data" / "raw").mkdir(parents=True, exist_ok=True)
     # Write a dummy Train.csv so A4 check passes
-    (comp_path / "data" / "raw" / "Train.csv").write_text("some_col,target\n1,0", encoding="utf-8")
+    (comp_path / "data" / "raw" / "Train.csv").write_text(
+        "some_col,target\n1,0", encoding="utf-8"
+    )
 
     # Create mock zindian/state.py so A6 check passes
     (tmp_path / "zindian").mkdir(parents=True, exist_ok=True)
     (tmp_path / "zindian" / "state.py").write_text("os.replace", encoding="utf-8")
 
     # Create mock requirements.txt so A10 check passes
-    (tmp_path / "requirements.txt").write_text("autogenerated by pip-compile", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text(
+        "autogenerated by pip-compile", encoding="utf-8"
+    )
 
     # Dummy skills dir
     skills_dir = tmp_path / "skills"
@@ -688,12 +726,7 @@ def test_preflight_mt_oof_completeness(tmp_path, monkeypatch):
         "submission_budget": 20,
         "automl_permitted": False,
         "cv_strategy": {"type": "StratifiedKFold"},
-        "target_config": {
-            "targets": [
-                {"name": "target_1"},
-                {"name": "target_2"}
-            ]
-        }
+        "target_config": {"targets": [{"name": "target_1"}, {"name": "target_2"}]},
     }
 
     # 2. Case where branch 'anchor-baseline' has both OOF keys -> should pass
@@ -707,7 +740,7 @@ def test_preflight_mt_oof_completeness(tmp_path, monkeypatch):
         cfg=cfg,
         state=state_pass,
         skills_dir=skills_dir,
-        root=tmp_path
+        root=tmp_path,
     )
 
     # 3. Case where branch 'anchor-baseline' is missing target_2_oof -> should fail with PreflightError
@@ -720,7 +753,7 @@ def test_preflight_mt_oof_completeness(tmp_path, monkeypatch):
             cfg=cfg,
             state=state_fail,
             skills_dir=skills_dir,
-            root=tmp_path
+            root=tmp_path,
         )
 
 
@@ -756,7 +789,12 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
 
     # Mock paths
     class MockPaths:
-        pass
+        competition_dir: Path
+        state_path: Path
+        config_path: Path
+        root: Path
+        reports_dir: Path
+
     MockPaths.competition_dir = comp_dir
     MockPaths.state_path = state_path
     MockPaths.config_path = config_path
@@ -765,12 +803,15 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "zindian.skills.skill_15_reporter.resolve_competition_paths",
-        lambda *args, **kwargs: MockPaths
+        lambda *args, **kwargs: MockPaths,
     )
-    
+
     import datetime as dt_module
+
     class MockDatetimeClass:
-        _curr_time = dt_module.datetime(2026, 8, 24, 12, 0, 0, tzinfo=dt_module.timezone.utc)
+        _curr_time = dt_module.datetime(
+            2026, 8, 24, 12, 0, 0, tzinfo=dt_module.timezone.utc
+        )
         timezone = dt_module.timezone
 
         @classmethod
@@ -779,32 +820,40 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
             return cls._curr_time
 
     monkeypatch.setattr("zindian.skills.skill_15_reporter.datetime", MockDatetimeClass)
-    
+
     # Mock ChallengeConfig
     class MockConfig:
         @classmethod
         def load(cls, path=None):
             return cls()
+
         def get(self, key, default=None):
             return cfg_data.get(key, default)
+
         @property
         def slug(self):
             return cfg_data["slug"]
+
         @property
         def metric(self):
             return cfg_data["metric"]
+
         @property
         def metric_direction(self):
             return cfg_data["metric_direction"]
+
         @property
         def domain(self):
             return cfg_data["domain"]
+
         @property
         def daily_limit(self):
             return cfg_data["daily_limit"]
+
         @property
         def use_probabilities(self):
             return cfg_data["use_probabilities"]
+
         @property
         def automl_permitted(self):
             return cfg_data["automl_permitted"]
@@ -815,24 +864,24 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
     res1 = run(
         ledger_path=str(reports_dir / "experiments.db"),
         state_path=str(state_path),
-        config_path=str(config_path)
+        config_path=str(config_path),
     )
     assert res1["status"] == "GO"
-    
+
     sessions_dir = reports_dir / "sessions"
     assert sessions_dir.exists()
     logs_1 = sorted(sessions_dir.glob("startup_*.jsonl"))
     assert len(logs_1) == 1
     log_file_1 = logs_1[0]
-    
+
     # Second run with identical state: should reuse existing log file
     res2 = run(
         ledger_path=str(reports_dir / "experiments.db"),
         state_path=str(state_path),
-        config_path=str(config_path)
+        config_path=str(config_path),
     )
     assert res2["status"] == "GO"
-    
+
     logs_2 = sorted(sessions_dir.glob("startup_*.jsonl"))
     assert len(logs_2) == 1
     assert logs_2[0] == log_file_1
@@ -840,14 +889,14 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
     # Third run: change state -> should write a new file
     state_data["dag_phase"] = "phase_2a_complete"
     state_path.write_text(json.dumps(state_data), encoding="utf-8")
-    
+
     res3 = run(
         ledger_path=str(reports_dir / "experiments.db"),
         state_path=str(state_path),
-        config_path=str(config_path)
+        config_path=str(config_path),
     )
     assert res3["status"] == "GO"
-    
+
     logs_3 = sorted(sessions_dir.glob("startup_*.jsonl"))
     assert len(logs_3) == 2
 
@@ -859,12 +908,9 @@ def test_session_log_deduplication(tmp_path, monkeypatch):
         run(
             ledger_path=str(reports_dir / "experiments.db"),
             state_path=str(state_path),
-            config_path=str(config_path)
+            config_path=str(config_path),
         )
-    
+
     # Rolling window should keep only 14 files
     logs_after = sorted(sessions_dir.glob("startup_*.jsonl"))
     assert len(logs_after) == 14
-
-
-

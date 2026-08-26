@@ -693,7 +693,7 @@ def run():
     except Exception:
         target_skew = 0.0
 
-    # ── MAE naive baseline for temporal regression (SoT v2.4 S2) ───────────
+    # ── MAE naive baseline for temporal regression (SoT S2) ───────────
     mae_naive = 0.0
     task_type = str(cfg.get("task_type", "classification"))
     if (

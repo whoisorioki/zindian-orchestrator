@@ -3,7 +3,7 @@
 
 Checks (SoT Section 3 ENFORCE mode):
 - requirements.in and requirements.txt present
-- challenge_config.json contains all required SoT v2.5 schema fields
+- challenge_config.json contains all required SoT schema fields
 - SKILL_STATE.json contains all required human gate keys (using flat boolean format)
 - OOF cv_strategy_id tagging validation (via AST parsing)
 - Cross-skill import static scan (via AST parsing)
@@ -78,7 +78,7 @@ VALID_METRIC_DIRECTIONS = {"maximize", "minimize"}
 
 
 def check_config_completeness(cfg: dict) -> None:
-    """Validate challenge_config.json fields per SoT v2.5 schema."""
+    """Validate challenge_config.json fields per SoT schema."""
     # Check top-level keys
     missing_keys = REQUIRED_CONFIG_KEYS - set(cfg.keys())
     if missing_keys:
@@ -585,7 +585,9 @@ def verify_section_1_assumptions(
                     f"for targets: {[t.get('name') for t in targets]}"
                 )
 
-    ok("A7 check: All OOF records carry a cv_strategy_id tag and are complete per branch")
+    ok(
+        "A7 check: All OOF records carry a cv_strategy_id tag and are complete per branch"
+    )
 
     # A8 - Spatial signals are group signals
     spatial = cfg.get("spatial_signal", {})

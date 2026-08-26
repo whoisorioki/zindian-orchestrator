@@ -45,14 +45,14 @@ def test_check_telemetry_aggregate():
             "total_duration_sec": 4.5,
             "total_carbon_kg_estimate": 0.00012,
             "skill_count": 2,
-            "written_at": "2026-08-24T12:00:00Z"
+            "written_at": "2026-08-24T12:00:00Z",
         }
     }
     cfg_ok = {
         "infrastructure": {
             "tdp_watts": 15.0,
             "pue": 1.0,
-            "carbon_intensity_gco2_per_kwh": 494.0
+            "carbon_intensity_gco2_per_kwh": 494.0,
         }
     }
     ok, issues = _check_telemetry_aggregate(state_ok, cfg_ok)
@@ -66,12 +66,12 @@ def test_check_telemetry_aggregate():
             "total_duration_sec": 4.5,
             "total_carbon_kg_estimate": None,
             "skill_count": 2,
-            "written_at": "2026-08-24T12:00:00Z"
+            "written_at": "2026-08-24T12:00:00Z",
         },
         "telemetry.skill_01": {
             "tracker_method": "not_instrumented",
-            "reason": "CodeCarbon and ML formulas failed"
-        }
+            "reason": "CodeCarbon and ML formulas failed",
+        },
     }
     ok, issues = _check_telemetry_aggregate(state_not_instrumented, cfg_ok)
     assert ok
@@ -84,7 +84,7 @@ def test_check_telemetry_aggregate():
             "total_duration_sec": 4.5,
             "total_carbon_kg_estimate": None,
             "skill_count": 2,
-            "written_at": "2026-08-24T12:00:00Z"
+            "written_at": "2026-08-24T12:00:00Z",
         }
     }
     ok, issues = _check_telemetry_aggregate(state_fail_no_reason, cfg_ok)
@@ -108,6 +108,7 @@ def test_telemetry_aggregate_written(tmp_path, monkeypatch):
 
     # Write skeleton state
     from zindian.state import skill_state_skeleton
+
     state_data = skill_state_skeleton()
     state_path.write_text(json.dumps(state_data), encoding="utf-8")
 
@@ -121,8 +122,7 @@ def test_telemetry_aggregate_written(tmp_path, monkeypatch):
 
     # Mock resolve_competition_paths
     monkeypatch.setattr(
-        "zindian.paths.resolve_competition_paths",
-        lambda *args, **kwargs: MockPaths
+        "zindian.paths.resolve_competition_paths", lambda *args, **kwargs: MockPaths
     )
 
     # Mock ChallengeConfig
@@ -130,13 +130,16 @@ def test_telemetry_aggregate_written(tmp_path, monkeypatch):
         _data = {
             "slug": "test-comp",
             "phase_skill_map": {"1": []},
-            "infrastructure": {}
+            "infrastructure": {},
         }
+
         @classmethod
         def load(cls):
             return cls()
+
         def get(self, key, default=None):
             return self._data.get(key, default)
+
     monkeypatch.setattr("zindian.config.ChallengeConfig", MockConfig)
 
     # Ensure deduplication / summaries do not crash due to missing _current_run_dir

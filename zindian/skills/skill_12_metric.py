@@ -134,7 +134,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                     else base_weight
                 )
                 target_effective_weights[str(t_name)] = effective_weight
-                # [v2.7] Per-target standard error — NB-based, all targets (L2).
+                # Per-target standard error — NB-based, all targets (L2).
                 # matches the top-level convention se_oof = sqrt(Var_NB) with no /K.
                 per_target_analysis[str(t_name)] = {
                     "fold_scores": [float(value) for value in scores_arr.tolist()],
@@ -145,14 +145,15 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                     "se_oof": float(np.sqrt(variance_nb)) if variance_nb > 0 else 0.0,
                 }
 
-            # [v2.7] Composite standard error for the promotion margin (Fix-1 + Fix-3):
+            # Composite standard error for the promotion margin (Fix-1 + Fix-3):
             #   - regression targets ONLY (matches effective_target_std / D0-D4 scope)
             #   - sqrt( sum(w_eff * per-target NB variance) ) with NO extra /sqrt(K):
             #     each per-target variance is already NB-corrected, so dividing by the
             #     fold count again is the A.1 double-scaling error.
             # Uses the SAME effective weights as the composite distance computation.
             regression_targets = [
-                t for t in targets
+                t
+                for t in targets
                 if t.get("task_type") == "regression" and t.get("name")
             ]
             if regression_targets and per_target_analysis:
@@ -160,7 +161,9 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
                     np.sqrt(
                         sum(
                             target_effective_weights.get(str(rt["name"]), 0.0)
-                            * per_target_analysis[str(rt["name"])]["fold_score_variance"]
+                            * per_target_analysis[str(rt["name"])][
+                                "fold_score_variance"
+                            ]
                             for rt in regression_targets
                             if rt["name"] in per_target_analysis
                         )
@@ -263,7 +266,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
     fold_score_variance_sample = float(np.var(arr, ddof=1))
 
     # S1 - implemented 2026-08-03
-    # Nadeau-Bengio Corrected Variance (v2.4 S1): Var_NB = Var_sample(ddof=1) * (1/K + n_val/n_train)
+    # Nadeau-Bengio Corrected Variance (S1): Var_NB = Var_sample(ddof=1) * (1/K + n_val/n_train)
     # For K-fold CV: n_val/n_train = 1/(K-1)
     K = len(arr)
     if K > 1:
@@ -274,7 +277,7 @@ def run(config: Any = None, state: Dict[str, Any] | None = None) -> Dict[str, An
         fold_score_variance_nb = fold_score_variance_sample
         se_oof = 0.0
 
-    # Primary fold_score_variance reports Nadeau-Bengio corrected variance per v2.4 spec
+    # Primary fold_score_variance reports Nadeau-Bengio corrected variance per the SoT spec
     fold_score_variance = fold_score_variance_nb
 
     # Calculate oof_vs_lb_delta if possible

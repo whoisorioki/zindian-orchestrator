@@ -3,7 +3,7 @@ Test Suite for Multi-Target Implementation
 ==========================================
 
 Validates the multi-target loops against World Cup 2026 Goal Prediction Challenge
-requirements per SoT v2.2.1 A11/A12 specifications.
+requirements per SoT A11/A12 specifications.
 """
 
 import tempfile

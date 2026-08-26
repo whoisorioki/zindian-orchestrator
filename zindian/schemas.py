@@ -61,7 +61,7 @@ def validate_skill_state(obj: Any) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValidationError("SKILL_STATE must be a JSON object")
     # Backward-compatibility shim: files written before anchor_oof_score was
-    # introduced (v2.0.1) will not carry the key. Insert null so the schema
+    # introduced will not carry the key. Insert null so the schema
     # validator does not reject them on first read.
     if "anchor_oof_score" not in obj:
         obj["anchor_oof_score"] = None
