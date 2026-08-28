@@ -14,7 +14,6 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 - S11 ground truth: direct grep of both skill bodies and all consumers/orchestrator — zero root-path reads or writes remain.
 
 ## [2026-08-27]
-## [2026-08-27]
 
 ### Fixed
 - **Multi-target composite consumes augmented OOF for classification targets (D2) — [RESOLVED]:** `skill_11_gate.py` `_run_multi_target_gate` now reads each classification target's score from `pseudo_label_multi_target_results[target]["best_oof_f1"]` when `pseudo_label_result.retraining_required == True`, falling back to `anchor_multi_target_metrics[target]["oof_f1"]` when the augmented record is absent. Regression targets (never pseudo-labelled under A12 freeze policy) still come from `anchor_multi_target_metrics[target]["oof_rmse"]`. This closes the SoT A12 promise ("composite uses augmented OOF for classification targets, original OOF for regression targets") — previously only the baseline half (H3) was wired (`_baseline_score` → `anchor_oof_score_augmented`), while the composite itself still compared frozen per-target scores. Companion SoT §2 Composite Score note ("Augmented OOF consumption").
@@ -26,7 +25,7 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 ### Verification
 - 32 tests in the affected subset (skill_11 multi-target, correlation pruning, skill_21 recombination, MASE fold scoring, composite se_oof, KSG MI, multi-target composite variance, augmented audit): 32 passed, 0 failed.
 
-## [v2.8-close-2026-08-25]
+## [2026-08-25]
 
 ### Fixed
 - **F1 — KSG pairwise MI scale invariance — [RESOLVED]:** `skill_10_shap.py` `_run_pairwise_mi_audit` regression branch was dividing `joint_mi` (estimated in `y_scaled` space, variance ≈ 1) by `var(y_raw)` (unstandardized), making the score proportional to `1/var(y_raw)`. Rescaling the target by c would shrink the score by c². Fix: divide by `var(y_scaled)` so numerator and denominator are in the same space and the ratio is scale-invariant.
@@ -47,7 +46,7 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 ### Open Items Carried Forward (canonical: SoT §7)
 - **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
-## [v2.7-close-2026-08-25]
+## [2026-08-25]
 
 ### Added
 - **MASE fold-score space closed (F4) — [RESOLVED]:** Full Option A MASE fold scoring shipped end-to-end.
@@ -79,7 +78,7 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 - **F2** — KSG estimator bivariate-Gaussian known-answer test not yet added (Low).
 - **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
-## [v2.6-close-2026-08-25]
+## [2026-08-25]
 
 ### Added
 - **Pairwise Mutual Information Leakage Audit (S6):** Implemented pairwise MI scan for top-10 SHAP features in `zindian/skills/skill_10_shap.py` (`_run_pairwise_mi_audit`). Joint MI is estimated via a KSG-style digamma/kNN estimator (sklearn `mutual_info_*` cannot compute joint two-feature MI), normalized by target entropy (classification) or `var(y)` (regression), compared against `mi_pairwise_threshold` (default 0.90). Flagged pairs land in `SKILL_STATE.json["leakage_pairwise_mi_advisory"]` — advisory-only, surfaced at Human Gate 2. Known limitation logged as SoT §7 **F1** (regression normalization not scale-invariant); estimator known-answer validation pending as **F2**.
@@ -107,7 +106,7 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 - **F4 residual** — true naive-baseline-scaled MASE fold scoring, blocked on SoT §2 lifecycle definition (Medium, latent).
 - **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
-## [v2.5-close-2026-08-24]
+## [2026-08-24]
 
 ### Changed — Documentation
 - **`docs/source_of_truth.md`** — v2.5 closed, open items carried into v2.6:
@@ -136,7 +135,7 @@ All notable changes to the Zindian Orchestrator project during the ML Technical 
 - **R5** — `telemetry.aggregate` not written by `run_phase()`; `skill_22` does not verify it.
 - **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
-## [v2.5-docs-restructure-2026-08-24]
+## [2026-08-24]
 
 ### Changed
 - **Documentation deduplication restructure** — each doc now owns unique content; duplicates replaced with cross-links. No architecture or code changes from v2.4 (SOT header states this explicitly).
@@ -161,7 +160,7 @@ Documentation now cross-references these openly instead of hiding them:
 - **Preflight** — Multi-target OOF completeness check validates tag presence only, not N-per-branch count.
 - **GAP-3** — SHAP interaction effects (deferred to v3.0).
 
-## [v2.4-reporting-logs-2026-08-24]
+## [2026-08-24]
 
 ### Added
 - **Reporting & logging optimization audit** (`docs/reporting_logging_audit.md`): Consolidated investigation of report folder flooding, log organization, and a phase-by-phase SWOT; records Recommendation B (logs/) as the selected path and Recommendation A (report-root cleanup) as largely applied to the writers, with cleanup residue tracked.
@@ -186,7 +185,7 @@ Documentation now cross-references these openly instead of hiding them:
 - `docs/cli_integration_guide.md`: `report` subcommand description now points at `reports/summaries/<phase>_summary.json` (removed the root backward-compatible claim).
 - `docs/orchestrator_overview.md`: File-structure tree now includes `reports/diagnostics/predictions/`.
 
-## [v2.4-docs-update-2026-08-04]
+## [2026-08-04]
 
 ### Added
 - **Complete Skill & Phase Architecture Matrix** (`docs/quick_start.md`): Added comprehensive mapping for all 25 skill files (`skill_00` to `skill_22`) across 23 contiguous slots, detailing their assigned DAG phases (`Phase 1` to `Phase 4` or Sidecar Daemons `00`, `18`, `19`, `20`), Static vs Dynamic type classification, and state/report pipeline connections.
@@ -196,7 +195,7 @@ Documentation now cross-references these openly instead of hiding them:
 - `AGENTS.md`: Updated ground truth verification for skill module count claim to `[CONFIRMED]` (25 Python files across 23 contiguous slots `00` through `22`).
 - `tests/test_gate_option_b.py`, `tests/test_ambiguous_auto_detect_warnings.py`, `zindian/skills/skill_10_shap.py`: Added explicit type annotations for `failing_cases` and `initial_state`, and fixed return type annotation of `_train_shap_fold_model` to resolve mypy/pre-commit type errors.
 
-## [v2.4-closure-2026-08-03]
+## [2026-08-03]
 
 ### Added
 - **Formula correctness checker** (`scripts/formula_correctness_check.py`): Two independent techniques for verifying SoT-to-code formula alignment — numeric equivalence sampling (catches Finding A.1 double-/K bug) and unit-rescaling invariance (catches Finding A.3 MASE dimensional bug).
@@ -226,7 +225,7 @@ Documentation now cross-references these openly instead of hiding them:
 - `docs/source_of_truth.md`: S-comment parser now handles combined S1+S9 entries via regex extracting all S-numbers from bold text.
 - Known limitations documented: presence-check cannot detect commented-out state writes; prior `sot_alignment_check.py` verdicts on S7/S8/S10 were from a broken checker and are unconfirmed.
 
-## [v2.4 - 2026-08-01]
+## [2026-08-01]
 
 ### Added
 - **Nadeau-Bengio variance correction & OOF standard error** (`zindian/skills/skill_12_metric.py`): Computes $\text{Var}_{\text{NB}} = \text{Var}_{sample}(ddof=1) \times (1/K + n_{val}/n_{train})$ and the OOF standard error $\text{SE}_{\text{OOF}} = \sqrt{\text{Var}_{\text{NB}}}$.
@@ -268,7 +267,7 @@ Documentation now cross-references these openly instead of hiding them:
 - Cleaned Section 1 assumption entries and standardized Principle A6 (Lean State / Diagnostic Reports boundary).
 - Removed inline `IMPLEMENTATION STATUS` tags in favor of the formal Known Gaps Registry (Section 9).
 
-## [v2.4 - 2026-07-14]
+## [2026-07-14]
 
 ### Added
 - **Competition-agnostic research sidecar pipeline (skills 18 → 19 → 20):**
@@ -294,7 +293,7 @@ Documentation now cross-references these openly instead of hiding them:
 ### Fixed
 - **Compliance violation**: skill_18 was using Firecrawl commercial API in violation of Zindi competition rules (only free/open tools allowed). Reverted to free Semantic Scholar API.
 
-## [Reconciled - 2026-07-06]
+## [2026-07-06]
 
 ### Added
 - `logs/debt_audit_report_2026-07-06.md`: Detailed ML Technical Debt Audit reconciliation report.
@@ -308,7 +307,7 @@ Documentation now cross-references these openly instead of hiding them:
 ### Removed
 - Deleted non-git-tracked disabled directories `zindi_local_DISABLED/` and `zindi_stub_backup_DISABLED/`.
 
-## [Reconciled - 2026-07-05]
+## [2026-07-05]
 
 ### Added
 - `.github/workflows/ci.yml`: Added `lint` job to run `pre-commit` checks on every pull request and push to main.
