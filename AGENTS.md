@@ -687,6 +687,13 @@ Stop and ask before writing code if you encounter any of these:
   All of F4, F1, F2, S2, S6, S7, S8, S10, S11, preflight OOF completeness, R5,
   C1, C4, M6, DRIFT-3, C2, H1, H3/D2, D1, and the recombination policy are
   resolved — do not treat them as live risks.
+  (2026-08-27) the D2 half of H3/D2 was closed in `skill_11_gate.py`
+  `_run_multi_target_gate` — the composite now consumes each classification
+  target's augmented OOF from `pseudo_label_multi_target_results[target]["best_oof_f1"]`
+  (fallback `anchor_multi_target_metrics[target]["oof_f1"]`) when
+  `pseudo_label_result.retraining_required == True`, keeping regression on the
+  frozen original. T2 (`_prune_collinear(task_type="regression", y_true=...)`
+  Spearman residual test) also shipped in `test_correlation_pruning.py`.
 
 These are not situations to resolve with best judgement. Surface
 them. If a gap exists in the SoT, it must be patched in the SoT

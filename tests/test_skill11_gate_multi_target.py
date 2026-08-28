@@ -134,6 +134,40 @@ def test_gate_passes_when_all_conditions_met():
     assert final_kwargs["phase_3_gate_diagnosis"]["passed"] is True
 
 
+def test_composite_consumes_augmented_classification_oof_when_retraining():
+    """D2: when retraining_required, the per-target composite must consume the
+    augmented classification OOF score, not the frozen original.
+
+    Base composite avg_score = 0.2 (cls F1 0.8 -> distance 0.2). With an
+    augmented cls F1 of 0.95 the composite drops to
+    (0.2*0.6 + 0.05*0.4) = 0.14. Anchor_augmented = 0.16 therefore passes on
+    the augmented composite (0.02 > margin) but would BLOCK if the gate still
+    compared the frozen composite (0.16 - 0.2 < 0): proves D2 consumption.
+    """
+    config = _make_config()
+    state = _make_state(
+        pseudo_label_result={"retraining_required": True},
+        pseudo_label_multi_target_results={"label": {"augmented": True, "best_oof_f1": 0.95}},
+        anchor_oof_score=0.25,  # unfavourable original anchor
+        anchor_oof_score_augmented=0.16,  # favourable augmented baseline
+        metric_analysis={
+            "composite_fold_score_variance": 0.001,
+            "composite_se_oof": 0.0,
+        },
+    )
+    result, _ = _run(config, state)
+    assert result["status"] == "PASS"
+    assert result["diagnosis"]["baseline_key"] == "anchor_oof_score_augmented"
+
+    # Control: without the augmented pseudo-label result the gate must fall back
+    # to the frozen composite (avg 0.2) and BLOCK against 0.16.
+    control = dict(state)
+    control["pseudo_label_multi_target_results"] = {}
+    control_result, _ = _run(config, control)
+    assert control_result["status"] == "BLOCKED"
+    assert control_result["reason"] == "baseline gate failed"
+
+
 def test_composite_direction_is_minimize_lower_is_better():
     config = _make_config()
     fail_state = _make_state(

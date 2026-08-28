@@ -589,6 +589,16 @@ def _run_multi_target_gate(config, store, state) -> dict:
     if not multi_metrics:
         return {"status": "BLOCKED", "reason": "no multi-target metrics found"}
 
+    # H3/D2 — when pseudo-label retraining is active, the per-target composite
+    # must consume the _augmented classification OOF (SoT A12 L1600), keeping
+    # regression targets on their frozen original OOF (they were never retrained).
+    retraining_required = bool(
+        (state.get("pseudo_label_result") or {}).get("retraining_required", False)
+    )
+    pseudo_mt = state.get("pseudo_label_multi_target_results") or {}
+    if not isinstance(pseudo_mt, dict):
+        pseudo_mt = {}
+
     best_variant = state.get("best_variant_this_round") or state.get(
         "best_variant_branch"
     )
@@ -613,6 +623,19 @@ def _run_multi_target_gate(config, store, state) -> dict:
 
         if task_type == "classification":
             f1 = multi_metrics.get(target_name, {}).get("oof_f1", 0.0)
+            if retraining_required:
+                # D2: consume the augmented OOF score for classification targets.
+                # The augmented F1 is published by skill_21 under
+                # pseudo_label_multi_target_results[target]["best_oof_f1"]; the
+                # _oof_augmented OOF record itself carries only scores/fold_scores,
+                # so this key is the authoritative augmented scalar. Regression
+                # targets stay on the frozen original (never retrained).
+                aug_rec = pseudo_mt.get(target_name) if isinstance(pseudo_mt, dict) else {}
+                aug_f1 = (
+                    aug_rec.get("best_oof_f1") if isinstance(aug_rec, dict) else None
+                )
+                if aug_f1 is not None:
+                    f1 = float(aug_f1)
             distance = 1.0 - f1
         else:
             rmse = multi_metrics.get(target_name, {}).get("oof_rmse", 0.0)

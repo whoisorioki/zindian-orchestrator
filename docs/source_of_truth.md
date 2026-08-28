@@ -3,7 +3,7 @@
 **Version:** v2.8
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.8: F1 KSG scale-invariance fix, F2 bivariate Gaussian reference test)
+**Last updated:** August 2026 (v2.8: F1 KSG scale-invariance fix, F2 bivariate Gaussian reference test; augmented-composite classification-OOF consumption in `skill_11`)
 
 ---
 
@@ -388,6 +388,21 @@ For each target_spec in target_config["targets"]:
 
 composite_score = sum(weighted_distances) / total_weight
 ```
+
+> **Augmented OOF consumption:** When
+> `pseudo_label_result.retraining_required == True`, the `raw_score` fed into
+> the composite for each **classification** target must come from the augmented
+> OOF score, not the frozen pre-augmentation value. The authoritative augmented
+> scalar is `pseudo_label_multi_target_results[target]["best_oof_f1"]` (published
+> by `skill_21` per target after the retrained fold loop); it is synonymous with
+> the `*_oof_augmented` record for that target, which stores only the raw
+> per-row `scores`/`fold_scores` arrays and no scalar metric. Regression targets
+> were never pseudo-labelled (SoT A12, freeze policy) and are consumed from
+> `anchor_multi_target_metrics[target]["oof_rmse"]` unchanged. `skill_11_gate`
+> `_run_multi_target_gate` reads `best_oof_f1` (falling back to
+> `anchor_multi_target_metrics[target]["oof_f1"]` when the augmented record is
+> absent) so the composite and its `anchor_oof_score_augmented` baseline are
+> computed in the same augmented score-space.
 
 > **Target Met (Item 4):** Inverse-variance effective weighting. When `use_inverse_variance_weighting: True` is configured, target weight `w_k` is scaled inversely by target fold variance:
 > `w_k_eff = w_k / (sigma_{k,NB}^2 + epsilon)`

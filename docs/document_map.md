@@ -1,12 +1,12 @@
 # Zindian Orchestrator Documentation Structure Map (v2.8)
 
-This document provides a consolidated, unified map of the structure, cross-document overlaps, and ownership details for all nine files in the Zindian Orchestrator documentation suite. This map helps developers navigate the documentation and maintain structure during the v2.5 lean restructure.
+This document provides a consolidated, unified map of the structure, cross-document overlaps, and ownership details for all nine files in the Zindian Orchestrator documentation suite. This map helps developers navigate the documentation and maintain structure following the v2.5 lean restructure.
 
 ---
 
 ## 1. Document Structure Map
 
-### source_of_truth.md (v2.8) — Architecture Authority
+### source_of_truth.md — Architecture Authority
 | Section | Subsections | Information Category |
 |---|---|---|
 | **Header** | Version, Status, Scope, Last updated | Metadata |
@@ -96,7 +96,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **Contributing** | 4-step workflow (Design → Implement → Test → Document) + skill template Python code | Contributor guide |
 | **Support** | 4 links (overview, SoT, troubleshooting, license) | Help navigation |
 | **License** | Apache 2.0 | Legal |
-| **Version History** | v2.0–v2.5 table with highlights | Changelog summary |
+| **Version History** | v2.0–v2.8 table with highlights | Changelog summary |
 
 ---
 
@@ -123,7 +123,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 ### docs/quick_start.md — Operational Walkthrough
 | Section | Subsections | Information Category |
 |---|---|---|
-| **Header** | Title, scope note referencing SoT v2.5 | Metadata |
+| **Header** | Title, scope note referencing SoT v2.8 | Metadata |
 | **§1 Environment & Setup** | venv activation (Unix/Windows), pip install, test suite verification | Environment bootstrap |
 | **§2 Bootstrapping & Multi-Tenancy** | Competition path resolution order (5 priority levels) + F4 ambiguity hard-fail rule + Zindi API slug requirement + bootstrap command + created directory structure tree + .env auto-set | Competition workspace creation |
 | **§3 Competition Data Intake & Configuration** | Ingest data files (cp commands) + full challenge_config.json example JSON (spatial regression competition) | Data setup + config population |
@@ -132,7 +132,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **§6 Pipeline Phase Execution & Variant Management** | Per-phase CLI commands with inline comments + --variant behavior across Phase 2B/3A/3B/4 + full 25-skill matrix table (slot, phase, type, role) | Phase execution guide + skill inventory |
 | **§7 Querying the Competition Ledger** | 5 ledger query commands | DuckDB query guide |
 | **§8 CLI Command Quick Reference** | 21-command table (category, command, description) | CLI reference summary |
-| **Footer** | SoT version v2.5, Last Updated | Metadata |
+| **Footer** | SoT version v2.8, Last Updated | Metadata |
 
 ---
 
@@ -198,7 +198,7 @@ This document provides a consolidated, unified map of the structure, cross-docum
 | **Part 4 — Recommendations** | Rec B (session-based logs — selected/implemented) + Rec A (root flooding — writer migration done, 3 remaining items) | Action decisions + residual work |
 | **Part 5 — Action Plan** | Track 1 (log restructure — 3 steps) + Track 2 (report cleanup — 4 steps) + test count correction | Concrete next steps |
 | **Part 6 — Corrected Claim Log** | 9-row table (original claim, verdict, correction) | Fact correction record |
-| **Footer** | Verification method, SoT v2.5, maintainer | Metadata |
+| **Footer** | Verification method, SoT v2.8, maintainer | Metadata |
 
 ---
 

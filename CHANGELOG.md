@@ -2,6 +2,30 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [2026-08-28]
+
+### Fixed (documentation)
+- **Phase → skill mapping corrected across docs:** `README.md` phase table rewritten to match SoT §4 and the runtime `PHASE_*_SKILLS` lists in `zindian/orchestrator.py` (they agree exactly) — Phase 1 includes `skill_15` (reporter/telemetry); Phase 2A is Data Cleaning (`skill_03.policy_gate` → `skill_06`); Phase 2B is Signal Search (`skill_08` anchor → `skill_07` per variant, Gate 1 after anchor); Phase 3A is the Generalisation Audit (`skill_10` → `skill_09` → `skill_12`); Phase 3B is Promotion and Fusion (`skill_11` → `skill_21` → `skill_13`, Gates 2 & 3); Phase 4 Governance includes `skill_22`. One-line phase diagram sub-phase names aligned; Research Sidecar (00/18/19/20) documented as a non-phase layer per SoT §5.
+- **`docs/cli_integration_guide.md`:** Phase 3A no longer claims gate evaluation (`skill_11` lives in Phase 3B) — corrected to metric/fold-variance analysis (`skill_12`); Phase 3B & 4 bullet now lists the full skill sets (11/21/13 in 3B; 14/16/17/22 in 4).
+- **Stale S11 "residual root dual-writes" claims removed (code-verified 2026-08-28):** `skill_18`/`skill_20` write and read exclusively under `reports/diagnostics/` (skill_18 L494–532; skill_20 L568–661 incl. the `__main__` entry point; orchestrator sidecar runner L160–212) — no root `reports/` path is read or written by either skill. Removed the ⚠️ open-gap flags from the `skill_18`/`skill_20` rows in `docs/quick_start.md` and marked the residual items ✅ DONE in `docs/reporting_logging_audit.md` (Recommendation A writer migration now fully done; remaining work is stale-root-file pruning only).
+
+### Verification
+- Phase mapping ground truth: SoT §4 cross-checked against `PHASE_1_SKILLS`…`PHASE_4_SKILLS` in `zindian/orchestrator.py` — exact agreement; stale range mappings (`06–09`, `10–12`, `14–17`, "Phase 2A — Anchor", "skill_11 in Phase 3A") swept out of `README.md` + all `docs/*.md`.
+- S11 ground truth: direct grep of both skill bodies and all consumers/orchestrator — zero root-path reads or writes remain.
+
+## [2026-08-27]
+## [2026-08-27]
+
+### Fixed
+- **Multi-target composite consumes augmented OOF for classification targets (D2) — [RESOLVED]:** `skill_11_gate.py` `_run_multi_target_gate` now reads each classification target's score from `pseudo_label_multi_target_results[target]["best_oof_f1"]` when `pseudo_label_result.retraining_required == True`, falling back to `anchor_multi_target_metrics[target]["oof_f1"]` when the augmented record is absent. Regression targets (never pseudo-labelled under A12 freeze policy) still come from `anchor_multi_target_metrics[target]["oof_rmse"]`. This closes the SoT A12 promise ("composite uses augmented OOF for classification targets, original OOF for regression targets") — previously only the baseline half (H3) was wired (`_baseline_score` → `anchor_oof_score_augmented`), while the composite itself still compared frozen per-target scores. Companion SoT §2 Composite Score note ("Augmented OOF consumption").
+
+### Added
+- **Regression residual Spearman pruning test (T2) — [RESOLVED]:** `tests/test_correlation_pruning.py` `test_prune_collinear_regression_residual_spearman` — covers (a) residual-diversity (raw correlated, residual-independent → not pruned), and (b) a monotone non-linear residual pair where Pearson residual ≈ 0.943 < 0.95 but Spearman = 1.0, proving `_prune_collinear(task_type="regression", y_true=...)` delegates to the rank-based Spearman branch rather than Pearson.
+- **Multi-target augmented-composite gate test:** `tests/test_skill11_gate_multi_target.py` `test_composite_consumes_augmented_classification_oof_when_retraining` — a state that fails (BLOCKED) with the frozen composite but PASSES once `best_oof_f1` is consumed, plus the fallback control.
+
+### Verification
+- 32 tests in the affected subset (skill_11 multi-target, correlation pruning, skill_21 recombination, MASE fold scoring, composite se_oof, KSG MI, multi-target composite variance, augmented audit): 32 passed, 0 failed.
+
 ## [v2.8-close-2026-08-25]
 
 ### Fixed

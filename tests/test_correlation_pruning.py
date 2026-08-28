@@ -156,3 +156,59 @@ def test_prune_collinear_residuals_inverse():
     assert len(pruned_y) == 1
     assert len(dropped_y) == 1
     assert dropped_y[0]["dropped"] == "cand_b"
+
+
+def test_prune_collinear_regression_residual_spearman():
+    """T2: regression residual pruning must use Spearman rank correlation.
+
+    Branches sharing the true signal Z have raw Pearson ~1.0 and are pruned by
+    the shared-Signal collinearity when y_true is absent; once the target is
+    subtracted their residuals are independent and must NOT be pruned. In the
+    inverse direction, residuals correlated in rank (Spearman) must be pruned
+    even when raw Pearson is low — proving _prune_collinear delegates to the
+    Spearman branch for task_type="regression" (per AGENTS.md correlation note).
+    """
+    from zindian.oracle_fusion_core import _prune_collinear
+
+    # Residual-diversity case: Z dominates predictions, errors are independent.
+    Z = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    e_a = np.array([0.1, -0.1, 0.2, -0.2, 0.0])
+    e_b = np.array([-0.2, 0.2, -0.1, 0.1, 0.0])
+    X = Z + e_a
+    Y = Z + e_b
+    cands = [
+        {"name": "cand_a", "score": 0.8, "probs": X},
+        {"name": "cand_b", "score": 0.75, "probs": Y},
+    ]
+
+    # Without y_true, X and Y are dominated by Z (corr ~1.0) -> prune lower scorer.
+    pruned, dropped = _prune_collinear(
+        cands, task_type="regression", direction="maximize", y_true=None
+    )
+    assert len(dropped) == 1
+    assert dropped[0]["dropped"] == "cand_b"
+
+    # With y_true = Z, residuals are e_a/e_b (independent) -> NOT pruned.
+    pruned_y, dropped_y = _prune_collinear(
+        cands, task_type="regression", direction="maximize", y_true=Z
+    )
+    assert len(pruned_y) == 2
+    assert len(dropped_y) == 0
+
+    # Inverse: rank-correlated residuals (monotone, non-linear) must be pruned
+    # via Spearman even when the residual Pearson correlation is below the
+    # 0.95 threshold. r_b = r_a^3 preserves rank (Spearman = 1) but is modelled
+    # by the cube transform, so the linear residual Pearson drops below 0.95.
+    # This discriminates the regression Spearman branch from a naive Pearson one.
+    r_a = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
+    r_b = np.power(r_a, 3)  # 1,8,27,64,125 -> Spearman=1, Pearson rho < 0.95
+    Z2 = -r_a  # shared target
+    cands2 = [
+        {"name": "cand_a", "score": 0.8, "probs": Z2 + r_a},          # residual = r_a
+        {"name": "cand_b", "score": 0.75, "probs": Z2 + (r_b - 3.0)},  # residual = r_b-3
+    ]
+    pruned2, dropped2 = _prune_collinear(
+        cands2, task_type="regression", direction="maximize", y_true=Z2
+    )
+    assert len(dropped2) == 1
+    assert dropped2[0]["dropped"] == "cand_b"
