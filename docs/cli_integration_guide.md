@@ -110,8 +110,8 @@ python -m zindian.cli phase <1|2A|2B|3A|3B|4> [--competition <path/slug>] [--ver
 *   **Description:** Executes a complete pipeline phase with all corresponding skills. Target a specific competition slug/path using `--competition`, `--slug`, or `-c`.
 *   **`--variant <name>` Behavior Across Phases**:
     - **Phase 2B**: In Anchor Mode (without `--variant`), trains anchor baseline (`skill_08`) and prompts Gate 1. In Variant Mode (`--variant <name>`), checks Gate 1, skips anchor training, generates variant features & model (`skill_07`), registers sidecar `variants/<name>.json`, and prompts Gate 2 (`human_gate_2_<name>_approved`).
-    - **Phase 3A**: Loads `features_train_<name>.csv` and sidecar `variants/<name>.json` for targeted SHAP leak detection (`skill_10`), calibration (`skill_09`), and gate evaluation (`skill_11`).
-    - **Phase 3B & 4**: Auto-resolves registered & approved variants directly from `SKILL_STATE.json` for Oracle Fusion blending (`skill_13`) and final inference generation (`skill_14`).
+    - **Phase 3A**: Loads `features_train_<name>.csv` and sidecar `variants/<name>.json` for targeted SHAP leak detection (`skill_10`), calibration (`skill_09`), and metric/fold-variance analysis (`skill_12`).
+    - **Phase 3B & 4**: Gate evaluation (`skill_11`), pseudo-label retraining (`skill_21`), and Oracle Fusion blending (`skill_13`) run in Phase 3B; final inference generation (`skill_14`), submission (`skill_16`), governance sign-off (`skill_17`), and the reproducibility audit (`skill_22`) run in Phase 4 — with registered & approved variants auto-resolved from `SKILL_STATE.json`.
 
 #### 7. `status` - Show current state
 ```bash

@@ -35,7 +35,7 @@ layout work proceeds under B (see Part 4). **Recommendation A (report-root clean
 largely applied to the writers before the docs were aligned:** skill_03/04/10/15/17/21/22
 already write *exclusively* to categorized subdirectories (`audits/`, `diagnostics/`,
 `summaries/`, `diagnostics/predictions/`, `sessions/`). The remaining A work is limited to:
-~~relocating `preflight_*.json` into `reports/audits/preflight/`~~ ✅ **DONE** — `scripts/preflight_enforce.py` L877–880 now writes to `reports/audits/preflight/<timestamp>.json`. Remaining: `skill_18`/`skill_20` legacy root copies and stale root file pruning (see Part 4 + Part 5).
+~~relocating `preflight_*.json` into `reports/audits/preflight/`~~ ✅ **DONE** — `scripts/preflight_enforce.py` L877–880 now writes to `reports/audits/preflight/<timestamp>.json`. ~~Remaining: `skill_18`/`skill_20` legacy root copies~~ ✅ **DONE (verified 2026-08-28)** — both skills write and read exclusively under `reports/diagnostics/` (skill_18 L494–532; skill_20 L568–661, including the `__main__` entry point; orchestrator sidecar runner L160–212). Remaining: stale root file pruning only (see Part 4 + Part 5).
 
 ---
 
@@ -125,7 +125,7 @@ occurrence is confirmed in code (not inferred):
 
 **Impact on `reports/` — none.** `reports/` keeps its current state byte-for-byte.
 
-### Recommendation A — Eliminate root report flooding *(PARTIALLY APPLIED — writer migration done)*
+### Recommendation A — Eliminate root report flooding *(writer migration fully done — stale root artifact pruning remains)*
 
 The writer-side consolidation has already landed in code before doc alignment:
 
@@ -136,13 +136,13 @@ The writer-side consolidation has already landed in code before doc alignment:
 - skill_21 → probability arrays under `reports/diagnostics/predictions/`
 - skill_17 (governance) and skill_22 (audit) → `reports/audits/`
 
-Remaining work (writer + cleanup residue):
+Remaining work (cleanup residue only):
 
 1. ~~**Move preflight records**~~ ✅ **DONE** — `scripts/preflight_enforce.py` L877–880 writes to `reports/audits/preflight/<timestamp>.json`.
-2. **Residual root dual-writes:** `skill_18_librarian` and `skill_20_scientist` still emit
+2. ~~**Residual root dual-writes:** `skill_18_librarian` and `skill_20_scientist` still emit
    legacy root copies (`reports/literature_cache.json`, `reports/domain_hypotheses.json`,
    `reports/{validated,failed}_hypotheses.json`); their readers still read the root path.
-   Consolidate writer + reader to `reports/diagnostics/` in the same change.
+   Consolidate writer + reader to `reports/diagnostics/` in the same change.~~ ✅ **DONE (verified 2026-08-28)** — writers and readers now use `reports/diagnostics/` exclusively (skill_18 L494–532; skill_20 L568–661 including `__main__`; orchestrator sidecar runner L160–212). No root path is read or written by either skill.
 3. **Prune stale root files:** idempotent `scripts/optimize_report_footprint.py` to archive
    the leftover root duplicates produced before the writer consolidation.
 
@@ -164,11 +164,11 @@ Remaining work (writer + cleanup residue):
 
 ### Track 2 — Recommendation A *(writer migration DONE — cleanup residue remains)*
 
-Writer consolidation is complete for skill_03/04/10/15/17/21/22 (Part 4). Remaining:
+Writer consolidation is complete for skill_03/04/10/15/17/18/20/21/22 (Part 4). Remaining:
 
 1. ~~Relocate preflight writes to `reports/audits/preflight/`~~ ✅ **DONE** — verified at L877–880. SoT §3 preflight output path updated.
-2. Consolidate skill_18/skill_20 residual root dual-writes to `reports/diagnostics/`
-   (writer + reader together).
+2. ~~Consolidate skill_18/skill_20 residual root dual-writes to `reports/diagnostics/`
+   (writer + reader together)~~ ✅ **DONE (verified 2026-08-28)** — no root reads or writes remain in either skill.
 3. Add `scripts/optimize_report_footprint.py` and prune stale root artifacts.
 4. Document deprecation in `docs/deprecated_report_paths.md`.
 

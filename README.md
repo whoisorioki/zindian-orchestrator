@@ -33,17 +33,19 @@ Zindian Orchestrator is a deterministic, phase-gated pipeline that converts raw 
 ### The 4 Main Phases
 
 ```
-Phase 1 (Fingerprint) → Phase 2 (Anchor + Variants) → Phase 3 (Audit + Promotion) → Phase 4 (Governance)
+Phase 1 (Fingerprint + Config Lock) → Phase 2 (Data Cleaning + Signal Search) → Phase 3 (Generalisation Audit + Promotion & Fusion) → Phase 4 (Governance)
 ```
 
 | Phase | Skills | Gate |
 |---|---|---|
-| **Phase 1 — Fingerprint** | 01–05: integrity, intake, legality, EDA, CV strategy | — |
-| **Phase 2A — Anchor** | 06–09: preprocessing, features, anchor training, calibration | Gate 1 |
-| **Phase 2B — Variants** | 06–09 repeated per variant | Gate 2 (per branch) |
-| **Phase 3A — Audit** | 10–12: SHAP audit, gate evaluation, metric analysis | — |
-| **Phase 3B — Fusion** | 13: oracle fusion | Gate 3 |
-| **Phase 4 — Governance** | 14–17: inference, reporting, submission, governance sign-off | Gates 4 & 5 |
+| **Phase 1 — Fingerprint + Config Lock** | 01 → 02 → 03 (`policy_writer`) → 04 → 05 → 15: integrity, intake, legality policy, EDA, CV strategy, reporter/telemetry | — |
+| **Phase 2A — Data Cleaning** | 03 (`policy_gate`) → 06: legality enforcement, MNAR/MCAR imputation, constant-column drop | — |
+| **Phase 2B — Signal Search** | 08 → 07: anchor baseline training, then feature variants (07 repeated per variant branch) | Gate 1 (after `skill_08_anchor`) |
+| **Phase 3A — Generalisation Audit** | 10 → 09 → 12: SHAP + MI leak audit, calibration, metric/fold-variance analysis | — |
+| **Phase 3B — Promotion and Fusion** | 11 → 21 → 13: gate evaluation, pseudo-label retraining, oracle fusion | Gate 2 (per promoted branch), Gate 3 (before fusion) |
+| **Phase 4 — Governance** | 14 → 16 → 17 → 22: inference, submission, governance sign-off, reproducibility audit | Gate 4 (before inference), Gate 5 (before close) |
+
+**Research Sidecar (not a phase):** `skill_00` polls Zindi continuously across all phases; `skill_18` (librarian), `skill_19` (code miner), and `skill_20` (scientist) trigger asynchronously after Phases 1, 2A, and 3A respectively and feed non-blocking recommendations into Phase 2B feature generation and Phase 3B audits. See the SoT §5 trigger schedule for details.
 
 See [docs/orchestrator_overview.md](docs/orchestrator_overview.md) for a full walkthrough and [docs/source_of_truth.md](docs/source_of_truth.md) v2.8 for complete specifications.
 
@@ -251,13 +253,15 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| **2.8** | August 2026 | F1 closed (pairwise MI scale invariance — divide by `var(y_scaled)`), F2 closed (KSG bivariate Gaussian reference tests), multi-target composite consumes augmented classification OOF (D2) |
+| **2.7** | August 2026 | MASE fold-score space closed (F4, Option A), multi-target gate parity (H1), composite `se_oof`, strict A12 block policy, augmented-baseline consumption (H3), `fold_score_variance` NB-corrected doc fix (D1) |
 | **2.6** | August 2026 | Pairwise MI S6, S11 root write consolidation, preflight MT-OOF completeness, R5 telemetry.aggregate, session log deduplication (14-file rolling window); S2 MASE primary routing open |
 | **2.5** | August 2026 | Lean documentation restructure; closed S5 (multi-target recombination), C4 (per-branch Gate 2), M6 (target_std fallback), S7 spatial buffer, S8 adaptive pseudo-label quantiles, S10 artifact fingerprints |
 | **2.4** | August 2026 | Nadeau-Bengio corrected variance, 1-SE promotion margins, Kuncheva residual diversity, MI audits, spatial buffer CV, adaptive pseudo-labeling, 3-tier FP tolerance |
-| 2.3 | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
-| 2.2.1 | May 2026 | Multi-target pipeline, regression support |
-| 2.2 | April 2026 | Core skill modules, 5 human gates |
-| 2.0 | March 2026 | Phase 0-5 complete |
+| **2.3** | June 2026 | Carbon tracking (R5), multi-target support, pseudo-labeling, scale-invariant gating |
+| **2.2.1** | May 2026 | Multi-target pipeline, regression support |
+| **2.2** | April 2026 | Core skill modules, 5 human gates |
+| **2.0** | March 2026 | Phase 0-5 complete |
 
 ---
 
