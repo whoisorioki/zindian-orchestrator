@@ -1,6 +1,6 @@
 {
     "competition": "<competition_name>",
-    "competition_slug": "<slug>",
+    "competition_slug": null,
     "md5_target_hash": null,
     "current_git_branch": "main",
     "anchor_git_branch": null,
@@ -8,6 +8,7 @@
     "anchor_oof_score_augmented": null,
     "anchor_oof_score_per_target": null,
     "anchor_lb_score": null,
+    "anchor_rank": null,
     "feature_round": 0,
     "variants_tested": 0,
     "variants_passed": 0,
@@ -26,7 +27,6 @@
     "md5_train_file": null,
     "md5_test_file": null,
     "md5_sample_sub_file": null,
-    "anchor_rank": null,
     "overfit_risk": false,
     "compliance": {
         "last_checked": null,
@@ -52,6 +52,7 @@
     "cv_strategy_selection_reason": null,
     "cv_group_col": null,
     "cv_strategy_override": null,
+    "cv_split_source": null,
     "last_submission_comment": null,
     "last_submission_at": null,
     "best_variant_threshold": 0.0,
@@ -67,12 +68,20 @@
         "mcar_columns": [],
         "outlier_columns": [],
         "group_structure_confirmed": false,
-        "temporal_index_confirmed": false
+        "temporal_index_confirmed": false,
+        "detected_bands": [],
+        "MAE_naive_baseline": null
     },
     "metric_analysis": {
         "generated_at": null,
         "fold_scores": [],
         "fold_score_variance": null,
+        "fold_score_variance_sample": null,
+        "fold_score_variance_nb": null,
+        "se_oof": null,
+        "per_target": null,
+        "composite_fold_score_variance": null,
+        "use_inverse_variance_weighting": false,
         "recommended_threshold": 0.5,
         "oof_vs_lb_delta": null
     },
@@ -80,12 +89,15 @@
     "shap_feature_count": null,
     "shap_top_feature": null,
     "shap_top_features": [],
-    "leaked_features": [],
+    "leaked_features": {},
     "shap_audit_skipped_reason": null,
     "high_corr_pairs_count": 0,
     "pruning_delta_f1": 0.0,
     "pruning_pass": null,
     "shap_oof_cv_strategy_id": null,
+    "leakage_mi_advisory": [],
+    "shap_multi_target_results": null,
+    "anchor_multi_target_metrics": null,
     "reproducibility_audit": {
         "success": null,
         "timestamp": null
@@ -118,11 +130,10 @@
         "execution_failure_reason": null,
         "guard_condition_flags": {}
     },
-    "shap_multi_target_results": null,
-    "anchor_multi_target_metrics": null,
     "phase_3_gate_diagnosis": null,
     "data_patch_detected": null,
     "budget_warning": null,
     "submission_blocked": null,
-    "sidecar_recommendations": []
+    "sidecar_recommendations": [],
+    "feature_engineering_resolved": null
 }

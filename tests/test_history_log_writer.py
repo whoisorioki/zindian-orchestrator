@@ -364,3 +364,40 @@ class _FakePaths:
         self.root = root
         self.competition_dir = root / "competitions" / slug
         self.state_path = self.competition_dir / "SKILL_STATE.json"
+
+
+class TestArchiveUpdatesHistoryLog:
+    def test_archive_command_updates_history_log(self, tmp_path, monkeypatch):
+        """Archive command must write/update history_log.jsonl with latest competition values."""
+        from argparse import Namespace
+        from zindian.cli import main
+
+        comp_dir = tmp_path / "competitions" / "archived-comp"
+        comp_dir.mkdir(parents=True, exist_ok=True)
+        (comp_dir / "challenge_config.json").write_text(
+            json.dumps({"slug": "archived-comp", "metric": "logloss", "task_type": "classification"}),
+            encoding="utf-8",
+        )
+        (comp_dir / "SKILL_STATE.json").write_text(
+            json.dumps({"slug": "archived-comp", "anchor_oof_score": 0.25}),
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["zindian", "archive", "archived-comp"],
+        )
+
+        # Call main CLI handler
+        main()
+
+        hist_file = tmp_path / "competition_history" / "history_log.jsonl"
+        assert hist_file.exists()
+        lines = hist_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["slug"] == "archived-comp"
+        assert entry["metric"] == "logloss"
+        assert entry["anchor_oof_score"] == 0.25
+

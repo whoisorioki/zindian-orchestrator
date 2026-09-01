@@ -1513,7 +1513,7 @@ def run(
 
     # -- Phase A: Plugin dispatch ------------------------------
     print("\n[A] Feature extraction (plugin)")
-    plugin_path = config.get("feature_extraction_plugin")
+    plugin_path = config.get("feature_extraction_plugin") or "plugins.tabular_extractor"
 
     # -- Phase A: Load extractor plugin -------------------------
     extractor_instance: Any = None

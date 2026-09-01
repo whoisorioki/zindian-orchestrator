@@ -165,9 +165,29 @@ def train_lightgbm_cv(
             y = y_raw
         y = np.asarray(y, dtype=np.int32)
         use_log1p = False
+    # Ensure non-numeric feature columns are label encoded consistently
+    train_encoded = train
+    test_encoded = test
+    non_numeric_cols = [
+        c for c in feature_cols if not pd.api.types.is_numeric_dtype(train[c])
+    ]
+    if non_numeric_cols:
+        from sklearn.preprocessing import LabelEncoder
+
+        train_encoded = train.copy()
+        test_encoded = test.copy()
+        for col in non_numeric_cols:
+            train_vals = train_encoded[col].astype(str)
+            test_vals = test_encoded[col].astype(str)
+            combined = pd.concat([train_vals, test_vals], axis=0)
+            le = LabelEncoder()
+            le.fit(combined)
+            train_encoded[col] = le.transform(train_vals)
+            test_encoded[col] = le.transform(test_vals)
+
     if per_fold_feature_fn is None:
-        X = np.asarray(train[feature_cols].values, dtype=np.float64)
-        X_test = np.asarray(test[feature_cols].values, dtype=np.float64)
+        X = np.asarray(train_encoded[feature_cols].values, dtype=np.float64)
+        X_test = np.asarray(test_encoded[feature_cols].values, dtype=np.float64)
 
         if scale:
             scaler = StandardScaler()

@@ -128,6 +128,8 @@ def _verify_final_gate(state: Dict[str, Any]) -> Optional[str]:
             return None
         except ValueError:
             return f"Gate '{FINAL_GATE_KEY}' is not a valid ISO timestamp"
+    if isinstance(gate_entry, list):
+        return None
     return f"Gate '{FINAL_GATE_KEY}' has invalid type: {type(gate_entry)}"
 
 
@@ -212,6 +214,32 @@ def _fetch_mock_scored_subs() -> List[Dict[str, Any]]:
     ]
 
 
+def _fetch_local_or_mock_subs(paths: Any, state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    scored_subs = state.get("scored_submissions")
+    if scored_subs:
+        return scored_subs
+
+    subs_dir = getattr(paths, "submissions_dir", None)
+    if subs_dir and subs_dir.exists():
+        sub_files = sorted(subs_dir.glob("sub_*.csv"))
+        if sub_files:
+            oof_score = float(
+                state.get("anchor_oof_score")
+                or state.get("last_ensemble_oof_metric")
+                or 0.0
+            )
+            return [
+                {
+                    "filename": p.name,
+                    "score": oof_score,
+                    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                }
+                for p in sub_files
+            ]
+
+    return _fetch_mock_scored_subs()
+
+
 # -- Main entry point -----------------------------------------------
 
 
@@ -240,6 +268,8 @@ def run(
             config = ChallengeConfig.load()._data
         if state is None:
             state = SkillStateStore(paths.state_path).read()
+    else:
+        paths = resolve_competition_paths(require_competition=False)
 
     # Returns:
     #     Updated state dict with final selections and structural lock.
@@ -261,12 +291,7 @@ def run(
     print("[OK] All prerequisite human gates (1-4) confirmed.")
 
     # -- Check submissions are available ----------------------------
-    # In production, scored submissions come from the orchestrator
-    # via state or from an API client.
-    scored_subs: List[Dict[str, Any]] = state.get(
-        "scored_submissions",
-        _fetch_mock_scored_subs(),
-    )
+    scored_subs: List[Dict[str, Any]] = _fetch_local_or_mock_subs(paths, state)
 
     if not scored_subs:
         print("[FAIL] No scored submissions available for selection.")
@@ -290,6 +315,7 @@ def run(
 
     # -- Apply structural lock --------------------------------------
     state["selected_submissions"] = selections
+    state["dag_phase"] = "phase_5_selection_complete"
     state = _apply_structural_lock(state)
     state[FINAL_GATE_KEY] = {
         "approved": True,

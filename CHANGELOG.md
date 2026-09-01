@@ -2,6 +2,18 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [2026-09-01]
+
+### Added
+- **Multi-Column SampleSubmission Dynamic Formatting (`skill_14`):** Updated `skill_14_inference.py` to dynamically derive `submission_cols` from `SampleSubmission.csv` headers (`list(sample.columns)`) when `submission_columns` is omitted from `challenge_config.json`. Supports multi-metric classification formats (e.g. `['ID', 'TargetF1', 'TargetRAUC']`) where `TargetF1` receives thresholded binary 0/1 hard labels and `TargetRAUC` receives continuous probabilities in $(0, 1)$.
+- **Anchor Baseline Comprehensive Report:** Generated executive and technical report at `competitions/climate-risk-health-prediction-challenge/reports/summaries/anchor_baseline_report.md` documenting model architecture, cross-validation metrics, SHAP feature rankings, and leaderboard performance.
+
+### Fixed
+- **Ensemble Submission Gate Validation (`skill_16`):** Updated gate approval resolution in `skill_16_submit.py` to allow ensemble branches (`ensemble`, `oracle_fusion`) to submit when gated by `human_gate_3_approved`, bypassing the missing per-branch Gate 2 check intended only for single model variants.
+- **Multi-Column Classification Validation (`skill_16`):** Fixed `_validate_binary()` failure in `skill_16_submit.py` for multi-column classification submissions by separating hard-label validation (non-last value columns) from probability interval validation (last value column), irrespective of the global `use_probabilities` setting.
+- **DAG Phase Synchronization across Phase 3B & 4:** Added explicit `dag_phase` updates in `oracle_fusion_core.py` (`phase_3_fusion_complete`), `skill_14_inference.py` (`phase_4_inference_complete`), and `skill_17_governance.py` (`phase_5_selection_complete`), resolving persistent `phase_3_gate_blocked` state drifts.
+- **Governance Gate List Type Compatibility (`skill_17`):** Patched `skill_17_governance.py` `_verify_final_gate()` to correctly validate `human_gate_5_selection` when stored as a `list` rather than a boolean flag.
+
 ## [2026-08-28]
 
 ### Fixed (documentation)

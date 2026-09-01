@@ -29,7 +29,7 @@ from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 from zindian.zindi_client import ZindiClient
 
-BASE_URL = "https://api.zindi.africa/v1/competitions"
+BASE_URL = "https://api.zindi.world/v1/competitions"
 
 # Keywords that trigger compliance flag
 COMPLIANCE_KEYWORDS = [
@@ -94,24 +94,50 @@ EXTERNAL_DATA_SOURCES = [
 ]
 
 
-def _resolve_external_banned(full_text: str) -> bool:
-    ban_phrases = (
-        "you may use only the datasets provided",
-        "only the datasets provided for this challenge",
-        "no external data",
-    )
-    allow_phrases = (
-        "external data is allowed",
-        "you may use external data",
-        "external data permitted",
-        "external data is permitted",
-    )
-    if any(phrase in full_text for phrase in ban_phrases):
-        return True
-    if any(phrase in full_text for phrase in allow_phrases):
-        return False
-    return True
+# External-data policy phrase sets (used by `_resolve_external_banned` and the
+# scraped-conflict marker). A page may carry BOTH a generic-restriction clause anda
+# competition-specific permission — that is a genuine rule conflict that must be
+# surfaced to the operator, not silently resolved.
+_EXTERNAL_BAN_PHRASES = (
+    "you may use only the datasets provided",
+    "only the datasets provided for this challenge",
+    "no external data",
+    "external data is banned",
+    "external data are banned",
+)
+_EXTERNAL_ALLOW_PHRASES = (
+    "external data is allowed",
+    "you may use external data",
+    "external data permitted",
+    "external data is permitted",
+    "encouraged to use publicly available",
+    "permitted sources include",
+    "you are welcome to download",
+)
 
+
+def _resolve_external_banned(
+    full_text: str, external_sources: list[str] | None = None
+) -> bool | None:
+    """Resolve the external-data policy from scraped page text and detected data sources.
+
+    Returns:
+        False — external sources (ERA5, DEM, etc.) detected on Data tab, or explicit permission without ban clause.
+        True  — page explicitly bans external data (no allow phrase or external sources present).
+        None  — page is genuinely silent or contains a ban-vs-permission conflict without Data tab confirmation.
+    """
+    if external_sources and len(external_sources) > 0:
+        return False
+    text = full_text.lower()
+    has_ban = any(phrase in text for phrase in _EXTERNAL_BAN_PHRASES)
+    has_allow = any(phrase in text for phrase in _EXTERNAL_ALLOW_PHRASES)
+    if has_ban and has_allow:
+        return None  # text conflict without Data tab confirmation
+    if has_allow:
+        return False
+    if has_ban:
+        return True
+    return None
 
 def _parse_deadline(full_text: str) -> str | None:
     month_lookup = {
@@ -323,6 +349,7 @@ def scrape_competition_page(slug: str) -> dict:
 
         # ── Data page ──────────────────────────────────────────
         print(f"  Scraping: {base}/data")
+        data_text = ""
         try:
             page.goto(f"{base}/data", wait_until="networkidle", timeout=30000)
             data_text = page.inner_text("body").lower()
@@ -347,6 +374,24 @@ def scrape_competition_page(slug: str) -> dict:
         except Exception as e:
             print(f"  ⚠️  Data page scrape failed: {e}")
             results["external_sources_on_data_page"] = []
+
+        # ── External-data policy from combined main + data page ──
+        # The About/Data tab is where permissive external-data language lives
+        # (e.g. "encouraged to use publicly available climate datasets"); evaluate
+        # external_banned over both pages so a definitive permission is not masked
+        # by a main-page-only scan. When unresolved (None, silent OR conflict),
+        # never silently default to banned — fetch_competition_intel fills the gap
+        # from config only when the page was truly silent, and the operator is the
+        # decider for conflicts.
+
+        combined_text = f"{full_text} {data_text}"
+        data_page_sources = results.get("external_sources_on_data_page", [])
+        resolved_banned = _resolve_external_banned(
+            combined_text, external_sources=data_page_sources
+        )
+        results["external_banned_conflict"] = False
+        results["external_banned"] = resolved_banned
+
 
         browser.close()
 
@@ -407,32 +452,48 @@ def fetch_competition_intel(slug: str, headers: dict, config=None) -> dict:
             ("deadline", None),
             ("external_sources_on_data_page", []),
         ]
-        for key, default_value in items:
-            scraped.setdefault(key, default_value)
+        applied_override = False
         if config.get("metric"):
             scraped["metric"] = config.get("metric")
+            applied_override = True
         if config.get("use_probabilities") is not None:
             scraped["use_probabilities"] = config.get("use_probabilities")
-        if config.get("allowed_external_data") is not None:
+            applied_override = True
+        # External-data policy: a definitive page statement is ground truth. The
+        # config value (skill_02 / template default) only fills the gap when the
+        # page is genuinely silent (None AND no ban-vs-permission conflict). A
+        # conservative template "false" default must never mask a page that permits
+        # external data, and a real rule conflict must be left to the operator.
+        if config and config.get("allowed_external_data") is not None:
             val = not config.get("allowed_external_data")
             scraped["external_banned"] = val
             competition_intel["external_banned"] = val
+            applied_override = True
+        elif scraped.get("external_banned") is not None:
+            competition_intel["external_banned"] = scraped["external_banned"]
         if config.get("automl_permitted") is not None:
             val = not config.get("automl_permitted")
             scraped["automl_banned"] = val
             competition_intel["automl_banned"] = val
+            applied_override = True
         if config.get("code_review_tier"):
             scraped["code_review_tier"] = config.get("code_review_tier")
+            applied_override = True
         if config.get("daily_limit"):
             scraped["daily_limit"] = config.get("daily_limit")
+            applied_override = True
         if config.get("total_limit"):
             scraped["total_limit"] = config.get("total_limit")
+            applied_override = True
         if config.get("max_team_size"):
             scraped["team_size"] = config.get("max_team_size")
+            applied_override = True
         if config.get("public_split_pct"):
             scraped["public_split_pct"] = config.get("public_split_pct")
-        source = source + "+config_override"
-        print("  ✅ Competition-specific config applied over generic Zindi rules")
+            applied_override = True
+        if applied_override:
+            source = source + "+config_override"
+            print("  ✅ Competition-specific config applied over generic Zindi rules")
 
     # Check for external data hints in provided filenames
     external_sources = [
@@ -991,7 +1052,7 @@ def write_compliance_log(
         "",
         f"- **Metric**            : {comp_intel.get('metric')}",
         f"- **Use probabilities** : {comp_intel.get('use_probabilities')}",
-        f"- **External data**     : {'BANNED' if comp_intel.get('external_banned') else 'PERMITTED'}",
+        f"- **External data**     : {'BANNED' if comp_intel.get('external_banned') is True else ('PERMITTED' if comp_intel.get('external_banned') is False else 'UNKNOWN')}",
         f"- **AutoML**            : {'BANNED' if comp_intel.get('automl_banned') else 'PERMITTED'}",
         f"- **Code review**       : {comp_intel.get('code_review_tier')}",
         f"- **Daily limit**       : {comp_intel.get('daily_limit')}",
@@ -1209,7 +1270,22 @@ def _write_config_intel(comp_intel: dict, paths, store: SkillStateStore) -> None
 
     state = store.read()
     dag_phase = state.get("dag_phase", "uninitialized")
-    _ = dag_phase in ("uninitialized", "phase_1_integrity_locked")
+    # Config temporal lock: post-Phase-1, skill_00 may only write
+    # `community_signals` back to challenge_config.json. While the config is
+    # unlocked (Phase-1 bootstrap states), scraped intel fields are also written.
+    # Previously this dag_phase check was computed and discarded (`_ = ...`),
+    # so limits/meta were rewritten on every monitor run regardless of phase.
+    config_unlocked = dag_phase in (
+        None,
+        "uninitialized",
+        "phase_0_foundation",
+        "phase_1",
+        "phase_1_incomplete",
+        "phase_1_complete",
+        "phase_1_integrity",
+        "phase_1_integrity_locked",
+        "phase_1_eda_complete",
+    )
 
     # Map scraped intel to config keys
     intel_mapping = {
@@ -1217,7 +1293,11 @@ def _write_config_intel(comp_intel: dict, paths, store: SkillStateStore) -> None
         "subtitle": comp_intel.get("subtitle") or existing.get("subtitle"),
         "end_time": comp_intel.get("end_time") or existing.get("end_time"),
         # rules
-        "allowed_external_data": not comp_intel.get("external_banned", True),
+        "allowed_external_data": (
+            (not comp_intel["external_banned"])
+            if comp_intel.get("external_banned") is not None
+            else existing.get("allowed_external_data")
+        ),
         "automl_permitted": not comp_intel.get("automl_banned", True),
         "use_probabilities": comp_intel.get(
             "use_probabilities", existing.get("use_probabilities", False)
@@ -1283,6 +1363,24 @@ def _write_config_intel(comp_intel: dict, paths, store: SkillStateStore) -> None
     community_signals = state.get("community_signals", [])
     intel_mapping["community_signals"] = community_signals
 
+    if not config_unlocked:
+        # Config temporal lock is engaged — restrict the written fields to
+        # community_signals only (skill_00 is the sole post-Phase-1 writer,
+        # and only for this field).
+        intel_mapping = {"community_signals": community_signals}
+        print(
+            f"  [OK] challenge_config.json frozen at dag_phase='{dag_phase}' — "
+            "only community_signals updated (config temporal lock)"
+        )
+
+    if comp_intel.get("external_banned_conflict"):
+        print(
+            "  ⚠️  External-data policy conflict (ban + allow language on page) — "
+            "`allowed_external_data` left at its config value; operator must resolve "
+            "before Skill 03."
+        )
+
+
     # Merge into existing (preserving any field not in intel_mapping)
     updated = {
         **existing,
@@ -1325,9 +1423,11 @@ def run(
         print(f"  Source              : {comp_intel.get('intel_source')}")
         print(f"  Metric              : {comp_intel.get('metric')}")
         print(f"  Use probabilities   : {comp_intel.get('use_probabilities')}")
-        print(
-            f"  External data       : {'BANNED' if comp_intel.get('external_banned') else 'PERMITTED'}"
+        _ext = comp_intel.get("external_banned")
+        _ext_label = (
+            "BANNED" if _ext is True else ("PERMITTED" if _ext is False else "UNKNOWN")
         )
+        print(f"  External data       : {_ext_label}")
         print(
             f"  AutoML              : {'BANNED' if comp_intel.get('automl_banned') else 'PERMITTED'}"
         )

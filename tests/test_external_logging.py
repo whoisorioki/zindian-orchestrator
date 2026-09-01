@@ -39,9 +39,10 @@ def test_externalized_logging_captures_stdout_and_stderr():
                 result = run_skill("dummy_skill_test")
                 assert result.get("status") == "SUCCESS"
 
-                # Verify log file is created
-                log_file = tmp_path / "logs" / "dummy_skill_test.log"
-                assert log_file.exists()
+                # Verify log file is created in logs directory
+                log_files = list((tmp_path / "logs").rglob("dummy_skill_test.log"))
+                assert len(log_files) > 0
+                log_file = log_files[0]
 
                 # Verify log file content
                 log_content = log_file.read_text(encoding="utf-8")

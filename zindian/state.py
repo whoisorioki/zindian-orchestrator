@@ -97,6 +97,10 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
 class SkillStateStore:
     path: Path
 
+    def __post_init__(self) -> None:
+        if isinstance(self.path, str):
+            self.path = Path(self.path)
+
     # Class-level lock: serializes all read-modify-write operations across
     # ALL instances in the same process. Required because run_deep_research
     # spawns a daemon thread that creates its own SkillStateStore instance;

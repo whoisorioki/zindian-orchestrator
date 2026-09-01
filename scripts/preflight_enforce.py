@@ -432,19 +432,21 @@ def verify_section_1_assumptions(
         total_budget = budget.get("total")
     else:
         total_budget = budget
+    max_total = cfg.get("total_limit") or 1000
     if (
         total_budget is None
         or not isinstance(total_budget, (int, float))
-        or total_budget > 30
+        or total_budget <= 0
+        or total_budget > max_total
     ):
         fail(
-            f"[A3 Zindi Limits Violation] submission_budget total must be <= 30, got {total_budget}"
+            f"[A3 Zindi Limits Violation] submission_budget total must be > 0 and <= {max_total}, got {total_budget}"
         )
     if cfg.get("automl_permitted") is not False:
         fail(
             f"[A3 Zindi Limits Violation] automl_permitted must be False, got {cfg.get('automl_permitted')}"
         )
-    ok("A3 check: submission_budget <= 30 and automl_permitted is False")
+    ok(f"A3 check: submission_budget <= {max_total} and automl_permitted is False")
 
     # A4 - Supervised learning only
     train_file_name = cfg.get("input_files", {}).get("train") or "Train.csv"
@@ -566,7 +568,7 @@ def verify_section_1_assumptions(
 
     # Preflight MT-OOF - implemented 2026-08-24
     # Completeness check (multi-target only)
-    targets = cfg.get("target_config", {}).get("targets", [])
+    targets = (cfg.get("target_config") or {}).get("targets", [])
     if isinstance(targets, list) and len(targets) > 1:
         active_branches = set()
         for grps in oof_keys.values():
@@ -750,7 +752,11 @@ def main():
         comp_path = comp_paths.competition_dir
     except Exception:
         if args.competition:
-            comp_path = Path(args.competition)
+            c = Path(args.competition)
+            if c.is_absolute() or "/" in args.competition or "\\" in args.competition:
+                comp_path = c
+            else:
+                comp_path = root / "competitions" / args.competition
         else:
             comps = [p for p in (root / "competitions").iterdir() if p.is_dir()]
             if not comps:

@@ -987,7 +987,8 @@ def run(
             "cv_strategy": cv_strategy,
             "task_type": "classification",
             "feature_count": int(len(feature_cols)),
-            "n_pseudo_labels_added": int(n_pseudo_added_total),
+            "augmented_training_set_size": int(len(X_labelled) + X_pseudo.shape[0]),
+            "n_pseudo_samples_injected": int(n_pseudo_added_total),
         },
     )
 

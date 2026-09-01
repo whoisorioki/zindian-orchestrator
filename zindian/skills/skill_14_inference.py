@@ -276,8 +276,7 @@ def run(
     # Fall back to target-derived column names for single-target competitions.
     submission_cols = target_config.get("submission_columns") or []
     if not submission_cols:
-        submission_col = config.get("submission_target_col") or targets[0]["name"]
-        submission_cols = [id_col, submission_col]
+        submission_cols = list(sample.columns)
 
     print(f"Branch      : {branch_name}")
     print(f"Targets     : {[t['name'] for t in targets]}")
@@ -343,19 +342,17 @@ def run(
         #     probability (use_probabilities=True) or binary label.
         # For regression: the single non-ID column receives the clipped prediction.
         value_cols = [c for c in submission_cols if c != id_col]
-        if target_task == "classification" and bool(
-            config.get("use_probabilities", True)
-        ):
+        if target_task == "classification":
             if len(value_cols) >= 2:
-                # First value column = hard labels, second = raw probabilities
+                # Multi-column classification submission (e.g. TargetF1 hard label + TargetRAUC probability)
                 out_df[value_cols[0]] = (raw_probs >= threshold).astype(int)
                 out_df[value_cols[1]] = np.clip(raw_probs, 1e-7, 1 - 1e-7)
-            elif len(value_cols) == 1:
+                for extra_col in value_cols[2:]:
+                    out_df[extra_col] = np.clip(raw_probs, 1e-7, 1 - 1e-7)
+            elif bool(config.get("use_probabilities", True)):
                 out_df[value_cols[0]] = np.clip(raw_probs, 1e-7, 1 - 1e-7)
-        elif target_task == "classification":
-            # use_probabilities=False: only hard labels
-            submission_col_name = value_cols[0] if value_cols else target_name
-            out_df[submission_col_name] = (raw_probs >= threshold).astype(int)
+            else:
+                out_df[value_cols[0]] = (raw_probs >= threshold).astype(int)
         elif target_task == "regression":
             submission_col_name = value_cols[0] if value_cols else target_name
             bounds = config.get("target_domain_bounds") or {}
@@ -390,9 +387,12 @@ def run(
         if state is None:
             store.update(
                 last_inference_path=str(out_path),
+                dag_phase="phase_4_inference_complete",
                 last_inference_at=datetime.now(timezone.utc).isoformat(),
                 last_updated=datetime.now(timezone.utc).isoformat(),
             )
+        else:
+            skill_state["dag_phase"] = "phase_4_inference_complete"
         print(f"\n[OK] Submission written -> {out_path}")
         print(f"     Rows: {len(out_df)} | Columns: {list(out_df.columns)}")
 

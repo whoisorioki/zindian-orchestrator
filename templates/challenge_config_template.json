@@ -5,6 +5,7 @@
     "end_time": null,
     "task_type": null,
     "target_col": null,
+    "submission_target_columns": [],
     "target_domain_bounds": {
         "min": null,
         "max": null
@@ -34,6 +35,11 @@
         "seed": 42
     },
     "populated_at": null,
+    "columns": {
+        "latitude": null,
+        "longitude": null
+    },
+    "time_slice": null,
     "feature_extraction_plugin": null,
     "id_col": null,
     "submission_log1p": false,
@@ -63,7 +69,11 @@
         "lat_col": null,
         "lon_col": null,
         "group_col": null,
-        "spatial_buffer_km": null
+        "spatial_buffer_km": null,
+        "min_lon": null,
+        "max_lon": null,
+        "min_lat": null,
+        "max_lat": null
     },
     "missingness_level": null,
     "infrastructure": {
@@ -118,5 +128,6 @@
         "conditions": [],
         "target_dependent_bins": [],
         "aliases": {}
-    }
+    },
+    "cv_limitations": null
 }

@@ -294,9 +294,18 @@ def run(re_verify: bool = False) -> dict:
                     f"[INFO] Resolved submission target column to '{submission_target_col}' in SampleSubmission.csv"
                 )
             else:
-                raise AssertionError(
-                    f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"
-                )
+                # Check for dual-column format or non-ID submission columns in SampleSubmission.csv
+                non_id_cols = [
+                    c for c in sub.columns if c.lower() not in ("id", "team_id", "uniqueid", "unique_id")
+                ]
+                if len(non_id_cols) >= 1:
+                    print(
+                        f"[INFO] Resolved submission columns in SampleSubmission.csv: {non_id_cols}"
+                    )
+                else:
+                    raise AssertionError(
+                        f"[FAIL] '{submission_target_col}' not found in SampleSubmission.csv"
+                    )
         print("[OK] Required columns present (warnings may have been emitted)")
 
     # Validate target values (skip in INIT mode)

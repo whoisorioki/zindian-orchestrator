@@ -330,10 +330,17 @@ def run(
         print(
             "No calibration requested — copying original test probs to calibrated files"
         )
-        test_path = _resolve_test_prob_path(
-            proc_dir, reports_dir, candidate_branch, retraining_active
-        )
-        mapping = {test_path.name: str(proc_dir / f"calib_{test_path.name}")}
+        try:
+            test_path = _resolve_test_prob_path(
+                proc_dir, reports_dir, candidate_branch, retraining_active
+            )
+            mapping = {test_path.name: str(proc_dir / f"calib_{test_path.name}")}
+        except FileNotFoundError:
+            print("Note: No test probability file found — skipping calibration pass")
+            return {
+                "status": "SKIPPED",
+                "reason": f"No test probability file found for branch '{candidate_branch}'",
+            }
     else:
         if method not in ("platt", "isotonic"):
             raise ValueError(f"Unknown method: {method}")

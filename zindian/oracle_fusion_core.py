@@ -420,6 +420,7 @@ def run(
             if not in_memory:
                 store.update(
                     anchor_git_branch="ensemble",
+                    dag_phase="phase_3_fusion_complete",
                     last_ensemble_path=str(test_prob_path),
                     last_ensemble_oof_metric=result.get("blend_oof_metric"),
                     last_ensemble_metric_name=result.get("metric"),
@@ -430,6 +431,7 @@ def run(
                 )
             else:
                 state_obj["anchor_git_branch"] = "ensemble"
+                state_obj["dag_phase"] = "phase_3_fusion_complete"
 
     # Remove ndarrays from result to prevent JSON serialization crash
     result.pop("submission_column", None)
@@ -597,11 +599,13 @@ def _run_multi_target_fusion(
             if not in_memory:
                 store.update(
                     anchor_git_branch="ensemble",
+                    dag_phase="phase_3_fusion_complete",
                     last_ensemble_multi_target_results=fusion_results,
                     last_updated=datetime.now(timezone.utc).isoformat(),
                 )
             else:
                 state_obj["anchor_git_branch"] = "ensemble"
+                state_obj["dag_phase"] = "phase_3_fusion_complete"
                 state_obj["last_ensemble_multi_target_results"] = fusion_results
 
             return {

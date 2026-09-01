@@ -11,6 +11,7 @@ import requests
 import tempfile
 from datetime import datetime, timezone
 import difflib
+from pathlib import Path
 from typing import cast
 
 from zindian.paths import CompetitionPaths, resolve_competition_paths
@@ -157,8 +158,18 @@ def extract_config(data: dict, slug: str) -> dict:
     private_split = data.get("private_split_pct") or data.get("private_split")
 
     # Team information from the API; do NOT hardcode EY-specific overrides here.
+    # The live API exposes teaming as `allow_teams` and
+    # `max_number_of_participants_per_team` — map those in addition to the
+    # legacy key names so team policy is read truthfully, not from a template
+    # default.
     team_allowed = data.get("team_allowed")
-    max_team_size = data.get("max_team_size") or data.get("team_size")
+    if team_allowed is None:
+        team_allowed = data.get("allow_teams")
+    max_team_size = (
+        data.get("max_team_size")
+        or data.get("team_size")
+        or data.get("max_number_of_participants_per_team")
+    )
 
     code_review_tier = data.get("code_review_tier")
     code_review_hours = data.get("code_review_hours")
@@ -652,6 +663,44 @@ def _detect_multi_target_from_submission(sample_submission_path, config):
     return target_config
 
 
+def _resolve_actual_target_col(
+    target_col: str | None,
+    train_columns: list[str],
+    dictionary_path: Path,
+) -> str | None:
+    """Validate a candidate target column against training columns, then the
+    competition-provided data dictionary.
+
+    The SampleSubmission columns are the OUTPUT contract (e.g. TargetF1 /
+    TargetRAUC) — they are not necessarily the training label's name. The data
+    dictionary is ground truth for column semantics, so a row whose description
+    marks the target ("target"/"label") identifies the real training target when
+    the candidate is a submission-only column.
+
+    Competition-agnostic: no column-name literals; names always come from the
+    dictionary / training file.
+    """
+    if target_col and target_col in train_columns:
+        return target_col
+    if dictionary_path.exists():
+        try:
+            import pandas as _pd
+
+            dd = _pd.read_csv(dictionary_path)
+            if {"column_name", "description"}.issubset(dd.columns):
+                for _, row in dd.iterrows():
+                    desc = str(row.get("description") or "").lower()
+                    col = str(row.get("column_name") or "")
+                    if (
+                        any(k in desc for k in ("target", "label"))
+                        and col in train_columns
+                    ):
+                        return col
+        except Exception as _e:
+            print(f"  [WARN] Could not parse data_dictionary.csv: {_e}")
+    return target_col
+
+
 def run(
     slug: str | None = None,
     headers: dict | None = None,
@@ -777,6 +826,28 @@ def run(
         except Exception as e:
             print(f"Multi-target detection skipped: {e}")
 
+    # Record the submission OUTPUT contract (SampleSubmission columns) separately
+    # from the training target name. These columns are what must be produced, not
+    # necessarily the training label's name (e.g. TargetF1/TargetRAUC vs the raw
+    # train target). Downstream submission writers read this.
+    try:
+        _sub_path = paths.data_raw_dir / (
+            existing.get("input_files", {}).get("sample") or "SampleSubmission.csv"
+        )
+        if _sub_path.exists():
+            import pandas as _subdf
+
+            _sub_head = _subdf.read_csv(_sub_path, nrows=1)
+            _non_id_cols = [
+                c
+                for c in _sub_head.columns
+                if str(c).upper() not in ("ID", "TEAM_ID", "UNIQUEID")
+            ]
+            if _non_id_cols:
+                final_to_write["submission_target_columns"] = list(_non_id_cols)
+    except Exception as _e3:
+        print(f"  [WARN] Could not record submission_target_columns: {_e3}")
+
     # Fallback: infer target_col from SampleSubmission.csv when API returned null.
     # Per SoT architecture, Phase 1 must populate this before config is locked.
     if not final_to_write.get("target_col"):
@@ -812,6 +883,37 @@ def run(
                     )
         except Exception as _e:
             print(f"[WARN] Could not infer target_col from SampleSubmission.csv: {_e}")
+
+    # Validate target_col against the actual training columns. The API may not
+    # expose the training label name, and the SampleSubmission fallback may have
+    # picked a submission-only column (a dual-column output such as TargetF1 /
+    # TargetRAUC). Resolve the true training target from the competition's data
+    # dictionary (ground truth for column semantics) when the candidate is not a
+    # training column.
+    if final_to_write.get("target_col"):
+        try:
+            _train_file = (final_to_write.get("input_files") or {}).get(
+                "train", "Train.csv"
+            )
+            _train_path = paths.data_raw_dir / _train_file
+            if _train_path.exists():
+                import pandas as _ptrain
+
+                _train_cols = list(_ptrain.read_csv(_train_path, nrows=1).columns)
+                _candidate = final_to_write.get("target_col")
+                _dictionary_path = paths.data_raw_dir / "data_dictionary.csv"
+                _resolved = _resolve_actual_target_col(
+                    _candidate, _train_cols, _dictionary_path
+                )
+                if _resolved != _candidate:
+                    print(
+                        f"[OK] target_col corrected from '{_candidate}' to '{_resolved}' "
+                        "(submission column is not a training column; resolved from "
+                        "data_dictionary ground truth)"
+                    )
+                    final_to_write["target_col"] = _resolved
+        except Exception as _e4:
+            print(f"[WARN] Could not validate target_col against training columns: {_e4}")
 
     # Fallback: infer task_type from metric if still null.
     if not final_to_write.get("task_type") and final_to_write.get("metric"):

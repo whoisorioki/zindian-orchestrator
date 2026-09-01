@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Optional, cast
+from datetime import datetime, timezone
 
 from .paths import resolve_competition_paths
 
@@ -116,7 +117,8 @@ def _validate_phase_map() -> None:
     missing = []
     for phase, skills in phase_map.items():
         for s in skills:
-            if s not in SKILL_REGISTRY:
+            base_s = s.split(".")[0]
+            if base_s not in SKILL_REGISTRY and s not in SKILL_REGISTRY:
                 missing.append((phase, s))
 
     if missing:
@@ -243,7 +245,6 @@ def run_skill(
     import time
     import sys
     import tracemalloc
-    from .paths import resolve_competition_paths
 
     class Tee:
         def __init__(self, original_stream, log_file):
@@ -268,70 +269,76 @@ def run_skill(
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     log_file_handler = None
+    is_standalone_run = False
+    run_dir = None
+    sanitized_name = None
+    paths = None
+
+    from . import paths as paths_mod
 
     try:
         try:
-            paths = resolve_competition_paths(require_competition=False)
+            paths = paths_mod.resolve_competition_paths(require_competition=False)
             if paths.competition_dir:
                 sanitized_name = skill_name.replace(".", "_")
                 run_dir = _current_run_dir  # may be None for standalone calls
-                if run_dir is not None:
-                    run_dir.mkdir(parents=True, exist_ok=True)
-                    # Session-scoped: write to run_dir/<skill>.log
-                    skill_log_path = run_dir / f"{sanitized_name}.log"
-                    log_file_handler = skill_log_path.open("w", encoding="utf-8")
-                    # Also open the shared session.log in append mode
-                    session_log_path = run_dir / "session.log"
-                    session_log_handler = session_log_path.open("a", encoding="utf-8")
-                    separator = f"\n{'=' * 60}\n=== {skill_name} ===\n{'=' * 60}\n"
-                    session_log_handler.write(separator)
-                    session_log_handler.flush()
-
-                    # Tee stdout/stderr to both the per-skill file and the session log
-                    class _MultiTee:
-                        """Fan-out stdout/stderr to multiple sinks."""
-
-                        def __init__(self, original, *sinks):
-                            self.original_stream = original
-                            self._sinks = sinks
-
-                        def write(self, data):
-                            if self.original_stream:
-                                self.original_stream.write(data)
-                            for s in self._sinks:
-                                try:
-                                    s.write(data)
-                                except Exception:
-                                    pass
-
-                        def flush(self):
-                            if self.original_stream:
-                                self.original_stream.flush()
-                            for s in self._sinks:
-                                try:
-                                    s.flush()
-                                except Exception:
-                                    pass
-
-                        def __getattr__(self, name):
-                            return getattr(self.original_stream, name)
-
-                    sys.stdout = _MultiTee(  # type: ignore[assignment]
-                        original_stdout, log_file_handler, session_log_handler
+                if run_dir is None:
+                    is_standalone_run = True
+                    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                    run_dir = (
+                        paths.competition_dir
+                        / "logs"
+                        / f"run_{timestamp}_{sanitized_name}"
                     )
-                    sys.stderr = _MultiTee(  # type: ignore[assignment]
-                        original_stderr, log_file_handler, session_log_handler
-                    )
-                    # Keep references so finally block can close them
-                    log_file_handler = (log_file_handler, session_log_handler)
-                else:
-                    # Flat fallback: logs/<skill>.log (used by standalone calls & tests)
-                    logs_dir = paths.competition_dir / "logs"
-                    logs_dir.mkdir(parents=True, exist_ok=True)
-                    log_path = logs_dir / f"{sanitized_name}.log"
-                    log_file_handler = log_path.open("w", encoding="utf-8")
-                    sys.stdout = Tee(original_stdout, log_file_handler)  # type: ignore[assignment]
-                    sys.stderr = Tee(original_stderr, log_file_handler)  # type: ignore[assignment]
+
+                run_dir.mkdir(parents=True, exist_ok=True)
+                # Session-scoped: write to run_dir/<skill>.log
+                skill_log_path = run_dir / f"{sanitized_name}.log"
+                log_file_handler = skill_log_path.open("w", encoding="utf-8")
+                # Also open the shared session.log in append mode
+                session_log_path = run_dir / "session.log"
+                session_log_handler = session_log_path.open("a", encoding="utf-8")
+                separator = f"\n{'=' * 60}\n=== {skill_name} ===\n{'=' * 60}\n"
+                session_log_handler.write(separator)
+                session_log_handler.flush()
+
+                # Tee stdout/stderr to both the per-skill file and the session log
+                class _MultiTee:
+                    """Fan-out stdout/stderr to multiple sinks."""
+
+                    def __init__(self, original, *sinks):
+                        self.original_stream = original
+                        self._sinks = sinks
+
+                    def write(self, data):
+                        if self.original_stream:
+                            self.original_stream.write(data)
+                        for s in self._sinks:
+                            try:
+                                s.write(data)
+                            except Exception:
+                                pass
+
+                    def flush(self):
+                        if self.original_stream:
+                            self.original_stream.flush()
+                        for s in self._sinks:
+                            try:
+                                s.flush()
+                            except Exception:
+                                pass
+
+                    def __getattr__(self, name):
+                        return getattr(self.original_stream, name)
+
+                sys.stdout = _MultiTee(  # type: ignore[assignment]
+                    original_stdout, log_file_handler, session_log_handler
+                )
+                sys.stderr = _MultiTee(  # type: ignore[assignment]
+                    original_stderr, log_file_handler, session_log_handler
+                )
+                # Keep references so finally block can close them
+                log_file_handler = (log_file_handler, session_log_handler)
         except Exception:
             pass
 
@@ -381,16 +388,19 @@ def run_skill(
                 import traceback
                 from .config import ConfigNotPopulated
 
+                tb_str = traceback.format_exc()
                 # Graceful diagnostics for configuration errors
                 if isinstance(e, ConfigNotPopulated):
                     print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
                 elif isinstance(e, KeyError):
                     print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+                else:
+                    print(f"\n[orchestrator] ❌ ERROR executing {skill_name}: {str(e)}\n{tb_str}")
 
                 result = {
                     "status": "ERROR",
                     "message": f"Skill {skill_name} failed: {str(e)}",
-                    "traceback": traceback.format_exc(),
+                    "traceback": tb_str,
                 }
         else:
             # Standard skill execution — skill_02 needs merge mode to preserve pre-set config
@@ -427,16 +437,19 @@ def run_skill(
                 import traceback
                 from .config import ConfigNotPopulated
 
+                tb_str = traceback.format_exc()
                 # Graceful diagnostics for configuration errors
                 if isinstance(e, ConfigNotPopulated):
                     print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: {str(e)}")
                 elif isinstance(e, KeyError):
                     print(f"\n[orchestrator] ⚠️  CONFIGURATION ERROR: Missing key '{e}'")
+                else:
+                    print(f"\n[orchestrator] ❌ ERROR executing {skill_name}: {str(e)}\n{tb_str}")
 
                 result = {
                     "status": "ERROR",
                     "message": f"Skill {skill_name} failed: {str(e)}",
-                    "traceback": traceback.format_exc(),
+                    "traceback": tb_str,
                 }
 
         # Stop telemetry
@@ -491,6 +504,16 @@ def run_skill(
                 )
                 for h in handles:
                     h.close()
+            except Exception:
+                pass
+
+        if is_standalone_run and run_dir and paths and paths.competition_dir:
+            try:
+                import shutil
+                latest_dir = paths.competition_dir / "logs" / f"run_latest_{sanitized_name}"
+                if latest_dir.exists():
+                    shutil.rmtree(latest_dir)
+                shutil.copytree(run_dir, latest_dir)
             except Exception:
                 pass
 
@@ -853,10 +876,12 @@ def run_phase(
 
             # Phase dependency checks - block execution if prerequisites not met
             if phase == "2A":
-                if (
-                    not state.get("phase_1_complete")
-                    and state.get("dag_phase") != "phase_1_complete"
-                ):
+                # Gate on the orchestrator-set phase_1_complete FLAG (written only
+                # when Phase 1 finishes with no skill errors). Never gate on the
+                # dag_phase string "phase_1_complete", which skill_01 sets merely
+                # to mean "integrity hashes locked" — a failed Phase 1 would
+                # otherwise still unlock Phase 2A.
+                if not state.get("phase_1_complete"):
                     return {
                         "status": "ERROR",
                         "message": "Phase 2A blocked: Phase 1 must complete first",
@@ -977,6 +1002,7 @@ def run_phase(
                     non_interactive=non_interactive,
                 )
                 if not approved:
+                    _current_run_dir = None
                     return {
                         "status": "ERROR",
                         "message": "Phase 2B variant execution blocked: Gate 1 not approved",
@@ -988,6 +1014,7 @@ def run_phase(
                     "Gate 3", store, state, config, non_interactive=non_interactive
                 )
                 if not approved:
+                    _current_run_dir = None
                     return {
                         "status": "ERROR",
                         "message": "Phase 3B fusion execution blocked: Gate 3 not approved",
@@ -999,6 +1026,7 @@ def run_phase(
                     "Gate 4", store, state, config, non_interactive=non_interactive
                 )
                 if not approved:
+                    _current_run_dir = None
                     return {
                         "status": "ERROR",
                         "message": "Phase 4 inference execution blocked: Gate 4 not approved",
@@ -1007,6 +1035,7 @@ def run_phase(
             print(f"\nRunning {skill_name}...")
             # Pass config and state to skills that need them
             skill_kwargs = kwargs.copy()
+            skill_kwargs["phase"] = phase
             if skill_name == "skill_03.policy_gate":
                 # Load policy and planned_features for policy_gate
                 try:
@@ -1024,9 +1053,26 @@ def run_phase(
                 except Exception:
                     pass
             elif skill_name == "skill_03.policy_writer":
-                skill_kwargs["monitor_data"] = (
-                    state.get("monitor_data", state.get("community_signals", {})) or {}
-                )
+                mon_data = {}
+                if paths is not None:
+                    zmon = paths.reports_dir / "zindi_monitor.json"
+                    if not zmon.exists():
+                        zmon = paths.reports_dir / "diagnostics" / "zindi_monitor.json"
+                    if zmon.exists():
+                        try:
+                            import json
+
+                            mon_data = json.loads(zmon.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+                if not mon_data:
+                    m_state = state.get("monitor_data")
+                    if isinstance(m_state, dict):
+                        mon_data = m_state
+                    elif isinstance(state.get("community_signals"), dict):
+                        mon_data = state.get("community_signals")
+
+                skill_kwargs["monitor_data"] = mon_data
                 skill_kwargs["config"] = config._data if config else {}
                 skill_kwargs["flagged_titles"] = state.get("flagged_titles", []) or []
             elif skill_name == "skill_06":
@@ -1134,6 +1180,16 @@ def run_phase(
                 "message": f"Skill {skill_name} not yet implemented",
             }
 
+    # ── Phase completion flag hygiene ─────────────────────────────
+    # A phase must only be marked "complete" when every invoked skill returned a
+    # non-ERROR status. Previously this flag was written unconditionally, so a
+    # failed (or unauthorised partial) run could leave phase_*_complete=True and
+    # unlock later phases.
+    phase_failed = any(
+        isinstance(res, dict) and res.get("status") == "ERROR"
+        for res in results.values()
+    )
+
     # R5 - implemented 2026-08-24
     # Mark phase complete and write telemetry.aggregate in state
     try:
@@ -1175,29 +1231,35 @@ def run_phase(
                 "written_at": datetime.now(timezone.utc).isoformat(),
             }
 
-            store.update(
-                **{phase_key: True, "telemetry.aggregate": telemetry_aggregate}
-            )
+            update_kwargs: dict = {"telemetry.aggregate": telemetry_aggregate}
+            update_kwargs[phase_key] = not phase_failed
+            store.update(**update_kwargs)
+            if phase_failed:
+                print(
+                    f"[orchestrator] {phase_key}=False — Phase {phase} had skill "
+                    "errors; not marked complete."
+                )
     except Exception as e:
         print(f"[orchestrator] Warning: Failed to write state updates/telemetry: {e}")
 
-    # Generate phase summary report
+    # Generate phase summary report (if skill_15 was not already executed in skill loop)
     try:
-        from .skills.skill_15_reporter import run_phase_summary, _write_json_summary
+        if "skill_15" not in results and "skill_15_reporter" not in results:
+            from .skills.skill_15_reporter import run_phase_summary, _write_json_summary
 
-        _phase = phase.lower().strip()
-        run_phase_summary(_phase)
-        _write_json_summary(
-            _phase,
-            paths,
-            state,
-            [
-                "anchor_oof_score",
-                "best_variant_features",
-                "submissions_used_total",
-                "cv_strategy_type",
-            ],
-        )
+            _phase = phase.lower().strip()
+            run_phase_summary(_phase)
+            _write_json_summary(
+                _phase,
+                paths,
+                state,
+                [
+                    "anchor_oof_score",
+                    "best_variant_features",
+                    "submissions_used_total",
+                    "cv_strategy_type",
+                ],
+            )
     except Exception as e:
         print(f"[orchestrator] Warning: Failed to write phase summary report: {e}")
 
@@ -1206,22 +1268,35 @@ def run_phase(
         import json
 
         _phase = phase.lower().strip()
-        json_filename = (
-            "phase_1_summary.json" if _phase == "1" else f"{_phase}_summary.json"
-        )
+        md_filename = f"phase_{_phase}_summary.md"
         assert paths is not None, "competition paths unavailable"
-        summary_path = paths.reports_dir / "summaries" / json_filename
+        summary_md_path = paths.reports_dir / "summaries" / md_filename
+
+        def _extract_json_from_summary_md(md_path: Path) -> Optional[dict]:
+            if not md_path.exists():
+                return None
+            try:
+                content = md_path.read_text(encoding="utf-8")
+                if "## Raw Metadata" in content:
+                    parts = content.split("## Raw Metadata")
+                    if len(parts) > 1 and "```json" in parts[1]:
+                        json_str = parts[1].split("```json")[1].split("```")[0].strip()
+                        return json.loads(json_str)
+            except Exception:
+                pass
+            return None
 
         if (
             _current_run_dir is not None
             and _current_run_dir.exists()
-            and summary_path.exists()
+            and summary_md_path.exists()
         ):
             import shutil
 
-            # Save a copy of the phase summary inside our active run log dir as summary.json
-            active_summary_path = _current_run_dir / "summary.json"
-            shutil.copy2(summary_path, active_summary_path)
+            new_data = _extract_json_from_summary_md(summary_md_path)
+            if new_data is not None:
+                meta_summary_path = _current_run_dir / ".summary_meta.json"
+                meta_summary_path.write_text(json.dumps(new_data, indent=2) + "\n", encoding="utf-8")
 
             # Helper to clean/strip volatile keys for comparison
             def _clean_dict_for_comparison(d: Any) -> Any:
@@ -1260,13 +1335,13 @@ def run_phase(
             competition_dir = paths.competition_dir
             assert competition_dir is not None
             latest_dir = competition_dir / "logs" / f"run_latest_phase{phase}"
-            latest_summary_path = latest_dir / "summary.json"
+            latest_summary_path = latest_dir / ".summary_meta.json"
+            if not latest_summary_path.exists():
+                latest_summary_path = latest_dir / "summary.json"
 
             is_similar = False
-            if latest_dir.exists() and latest_summary_path.exists():
+            if latest_dir.exists() and latest_summary_path.exists() and new_data is not None:
                 try:
-                    with open(summary_path, "r", encoding="utf-8") as f:
-                        new_data = json.load(f)
                     with open(latest_summary_path, "r", encoding="utf-8") as f:
                         old_data = json.load(f)
                     is_similar = are_summaries_similar(new_data, old_data)
@@ -1326,7 +1401,23 @@ def run_phase(
                 shutil.move(str(_current_run_dir), str(latest_dir))
                 print(f"  [Orchestrator] Promoted new run to: {latest_dir}")
 
+                # Rolling window: keep max 3 archived run directories per phase
+                logs_dir = competition_dir / "logs"
+                phase_archives = sorted(
+                    [
+                        d for d in logs_dir.glob(f"run_*_phase{phase}")
+                        if d.is_dir() and not d.name.startswith("run_latest")
+                    ],
+                    key=lambda p: p.stat().st_mtime,
+                )
+                if len(phase_archives) > 3:
+                    for old_archive in phase_archives[:-3]:
+                        try:
+                            shutil.rmtree(old_archive)
+                        except Exception:
+                            pass
     except Exception as e:
         print(f"[orchestrator] Warning: Failed to run log directory deduplication: {e}")
 
+    _current_run_dir = None
     return results

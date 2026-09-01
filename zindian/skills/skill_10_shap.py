@@ -163,7 +163,11 @@ def _feature_columns(frame: pd.DataFrame, target: str) -> list[str]:
     except Exception:
         id_col, lat_col, lon_col = "ID", "Latitude", "Longitude"
 
-    excluded = {target.lower(), id_col.lower(), lat_col.lower(), lon_col.lower()}
+    excluded = {
+        c.lower()
+        for c in (target, id_col, lat_col, lon_col)
+        if c is not None and isinstance(c, str)
+    }
     return [col for col in frame.columns if col.lower() not in excluded]
 
 
@@ -210,6 +214,20 @@ def _train_shap_fold_model(
     return model
 
 
+def _prepare_feature_matrix(frame: pd.DataFrame, feature_cols: list[str]) -> np.ndarray:
+    """Extract and encode feature columns into a numeric 2D float64 array, handling string/categorical columns and NaNs."""
+    X_df = frame[feature_cols].copy()
+    for col in feature_cols:
+        col_series = X_df[col]
+        if col_series.dtype.kind in ("U", "S", "O") or not pd.api.types.is_numeric_dtype(col_series):
+            le = LabelEncoder()
+            filled = col_series.astype(str).fillna("missing")
+            X_df[col] = le.fit_transform(filled)
+        else:
+            X_df[col] = col_series.fillna(col_series.median() if not col_series.dropna().empty else 0.0)
+    return np.asarray(X_df.values, dtype=np.float64)
+
+
 def _compute_shap_audit(
     frame: pd.DataFrame,
     feature_cols: list[str],
@@ -220,7 +238,7 @@ def _compute_shap_audit(
     task_type: str = "classification",
     state: dict | None = None,
 ) -> dict:
-    X = np.asarray(frame[feature_cols].values, dtype=np.float64)
+    X = _prepare_feature_matrix(frame, feature_cols)
     if task_type == "regression":
         y = np.asarray(frame[target].values, dtype=np.float64)
     else:
@@ -540,7 +558,8 @@ def _compute_shap_audit(
 def _build_pruned_feature_set(
     feature_cols: list[str], ranking: pd.DataFrame, frame: pd.DataFrame
 ) -> dict:
-    corr = cast(pd.DataFrame, frame.loc[:, feature_cols].corr()).abs()
+    X_num = pd.DataFrame(_prepare_feature_matrix(frame, feature_cols), columns=feature_cols)
+    corr = cast(pd.DataFrame, X_num.corr()).abs()
     corr_values = corr.to_numpy(dtype=float, copy=False)
     upper_mask = np.triu(np.ones(corr_values.shape, dtype=bool), k=1)
     rank_lookup = {
@@ -857,7 +876,7 @@ def run(
         print("[WARN] X.shape[1] < 2: skipping SHAP ratio audit.")
         # Perform 5-fold CV to get oof_probs and metrics
         splitter = make_cv_splitter(n_splits=n_splits, random_seed=seed or get_seed())
-        X = np.asarray(frame[feature_cols].values, dtype=np.float64)
+        X = _prepare_feature_matrix(frame, feature_cols)
         if task_type == "regression":
             y = np.asarray(frame[target].values, dtype=np.float64)
         else:
@@ -1385,10 +1404,30 @@ def _run_multi_target_shap(
 
     _write_outputs(paths, combined_report, summary_lines)
 
+    primary_target_name = (
+        targets[0]["name"]
+        if targets
+        else (list(all_results.keys())[0] if all_results else None)
+    )
+    primary_res = all_results.get(primary_target_name, {}) if primary_target_name else {}
+    primary_top_features_records = primary_res.get("top_features", [])
+    primary_top_features = [
+        r["feature"]
+        for r in primary_top_features_records
+        if isinstance(r, dict) and "feature" in r
+    ][:10]
+    primary_top_feature = primary_res.get("top_feature")
+    primary_feature_count = primary_res.get("pruned_feature_count") or len(
+        primary_top_features_records
+    )
+
     state_store = SkillStateStore(paths.state_path)
     state_store.update(
         shap_completed_at=generated_at,
         shap_multi_target_results=all_results,
+        shap_feature_count=primary_feature_count,
+        shap_top_feature=primary_top_feature,
+        shap_top_features=primary_top_features,
         pruning_pass=all_pass,
         last_updated=generated_at,
     )

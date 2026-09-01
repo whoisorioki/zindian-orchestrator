@@ -11,6 +11,11 @@ import json
 import subprocess
 from pathlib import Path
 
+# Ensure project root directory is on sys.path so `scripts` imports resolve correctly
+_ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(_ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROOT_DIR))
+
 
 def _to_unix_path(windows_path: str) -> str:
     """Convert a Windows path to forward-slashed format for Git Bash/MSYS2.
@@ -215,7 +220,7 @@ def main():
     add_competition_args(compile_requirements_parser)
 
     archive_parser = subparsers.add_parser(
-        "archive", help="Archive a completed competition folder (excludes CSVs)"
+        "archive", help="Archive a completed competition folder (preserves data CSVs, excludes redownloadable binaries)"
     )
     archive_parser.add_argument("slug", help="Competition slug (e.g. ey-frogs)")
     archive_parser.add_argument(
@@ -545,16 +550,51 @@ def main():
     elif args.command == "archive":
         import tarfile
         from datetime import datetime
+        from zindian.skills.skill_22_reproducibility_audit import write_history_log_entry
 
-        root = Path(__file__).resolve().parent.parent
         target_slug = comp_arg or args.slug
         if not target_slug:
             print("Error: Competition slug is required.")
             sys.exit(1)
-        comp_dir = root / "competitions" / target_slug
+
+        cwd_comp = Path.cwd() / "competitions" / target_slug
+        if cwd_comp.exists():
+            root = Path.cwd()
+            comp_dir = cwd_comp
+        else:
+            root = Path(__file__).resolve().parent.parent
+            comp_dir = root / "competitions" / target_slug
+
         if not comp_dir.exists():
             print(f"Error: Competition directory not found: {comp_dir}")
             sys.exit(1)
+
+        # Update cross-competition history log with latest competition state/config before archiving
+        config_data: dict[str, Any] = {}
+        state_data: dict[str, Any] = {}
+        cfg_file = comp_dir / "challenge_config.json"
+        state_file = comp_dir / "SKILL_STATE.json"
+
+        if cfg_file.exists():
+            try:
+                config_data = json.loads(cfg_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                print(f"Warning: Failed to parse challenge_config.json: {exc}")
+
+        if state_file.exists():
+            try:
+                state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                print(f"Warning: Failed to parse SKILL_STATE.json: {exc}")
+
+        config_data.setdefault("slug", target_slug)
+        state_data.setdefault("slug", target_slug)
+
+        try:
+            hist_log_path = write_history_log_entry(root, config_data, state_data)
+            print(f"✓ Cross-competition history log updated: {hist_log_path}")
+        except Exception as exc:
+            print(f"Warning: Failed to update history log: {exc}")
 
         archives_dir = root / "archives"
         archives_dir.mkdir(exist_ok=True)
@@ -563,17 +603,19 @@ def main():
         archive_name = f"{target_slug}-archive-{timestamp}.tar.gz"
         archive_path = archives_dir / archive_name
 
-        def exclude_csv(tarinfo):
+        def exclude_binaries(tarinfo):
+            # Preserve data CSVs (reserved competition data).
+            # Exclude large redownloadable binary artifacts (.tiff, .npy).
             name = tarinfo.name
-            if name.endswith(".csv") and (
-                "data/raw" in name or "data/processed" in name
-            ):
+            if name.endswith((".tiff", ".tif")):
+                return None
+            if name.endswith(".npy"):
                 return None
             return tarinfo
 
         print(f"Archiving {target_slug}...")
         with tarfile.open(archive_path, "w:gz") as tar:
-            tar.add(comp_dir, arcname=comp_dir.name, filter=exclude_csv)
+            tar.add(comp_dir, arcname=comp_dir.name, filter=exclude_binaries)
 
         archive_size_bytes = archive_path.stat().st_size
         if archive_size_bytes >= 1024 * 1024:

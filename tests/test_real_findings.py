@@ -521,8 +521,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
         "metric": "auc",
         "cv_strategy_type": "StratifiedKFold",
     }
-    summary_1_path = summaries_dir / "phase_1_summary.json"
-    summary_1_path.write_text(json.dumps(summary_1), encoding="utf-8")
+    summary_1_path = summaries_dir / "phase_1_summary.md"
+    summary_md_content = f"# Phase 1 Summary\n\n## Raw Metadata\n```json\n{json.dumps(summary_1, indent=2)}\n```\n"
+    summary_1_path.write_text(summary_md_content, encoding="utf-8")
 
     # Run the orchestrator phase
     orch.run_phase("1")
@@ -531,7 +532,9 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
     latest_dir = logs_dir / "run_latest_phase1"
     assert latest_dir.exists()
     assert (latest_dir / "session.log").read_text(encoding="utf-8") == "Run 1 logs"
-    assert (latest_dir / "summary.json").exists()
+    assert (latest_dir / ".summary_meta.json").exists()
+    assert not (latest_dir / "summary.json").exists()
+    assert not (latest_dir / "phase_1_summary.md").exists()
     assert not run_1_dir.exists()
 
     # 4. Simulate second run: similar summary
@@ -549,7 +552,8 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
         "metric": "auc",
         "cv_strategy_type": "StratifiedKFold",
     }
-    summary_1_path.write_text(json.dumps(summary_2), encoding="utf-8")
+    summary_2_md_content = f"# Phase 1 Summary\n\n## Raw Metadata\n```json\n{json.dumps(summary_2, indent=2)}\n```\n"
+    summary_1_path.write_text(summary_2_md_content, encoding="utf-8")
 
     orch.run_phase("1")
 
@@ -579,7 +583,8 @@ def test_log_directory_deduplication(tmp_path, monkeypatch):
         "metric": "auc",
         "cv_strategy_type": "GroupKFold",  # changed!
     }
-    summary_1_path.write_text(json.dumps(summary_3), encoding="utf-8")
+    summary_3_md_content = f"# Phase 1 Summary\n\n## Raw Metadata\n```json\n{json.dumps(summary_3, indent=2)}\n```\n"
+    summary_1_path.write_text(summary_3_md_content, encoding="utf-8")
 
     orch.run_phase("1")
 

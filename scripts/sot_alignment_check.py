@@ -177,21 +177,27 @@ SOT_CHECKS: dict[str, dict[str, Any]] = {
 
 
 def parse_sot_statuses(sot_content: str) -> dict:
-    """Parses the Known Gaps Registry section of the SoT to determine the declared status of S1-S11, Preflight, R5."""
+    """Parses the Known Gaps Registry section of the SoT and docs/resolved_gaps.md to determine the declared status of S1-S11, Preflight, R5."""
     statuses = {}
 
-    # Locate the Known Gaps Registry (section number is version-dependent)
-    sec9_match = re.search(r"## \d+\. Known Gaps Registry.*", sot_content, re.DOTALL)
+    resolved_gaps_path = WORKSPACE_DIR / "docs/resolved_gaps.md"
+    combined_text = (
+        resolved_gaps_path.read_text(encoding="utf-8") + "\n" + sot_content
+        if resolved_gaps_path.exists()
+        else sot_content
+    )
+
+    # Locate the Known Gaps Registry or Resolved Gaps section
+    sec9_match = re.search(r"(?:## \d+\. Known Gaps Registry|## 1\. Resolved Audit Trail Summary).*", combined_text, re.DOTALL)
     if not sec9_match:
         print(
-            "[ERROR] Could not locate the 'Known Gaps Registry' heading in source_of_truth.md"
+            "[ERROR] Could not locate the 'Known Gaps Registry' or 'Resolved Audit Trail Summary' heading"
         )
         sys.exit(1)
 
     sec9_text = sec9_match.group(0)
 
-    # Split the registry into its RESOLVED (audit-trail table) and OPEN
-    # (active gaps) subsections.
+    # Split into RESOLVED (audit-trail table) and OPEN (active gaps) subsections.
     resolved_part, _sep, open_part = sec9_text.partition("### OPEN")
 
     # RESOLVED subsection: Markdown table rows of the form
@@ -322,6 +328,7 @@ DOC_VERSION_CHECKS = [
     ("docs/ledger_architecture.md", r"\*\*Version:\*\* (\d+\.\d+)"),
     ("docs/reporting_logging_audit.md", r"Verified against SoT v(\d+\.\d+)"),
     ("docs/document_map.md", r"Documentation Structure Map \(v(\d+\.\d+)\)"),
+    ("docs/resolved_gaps.md", r"\*\*Document Version:\*\* v(\d+\.\d+)"),
 ]
 
 

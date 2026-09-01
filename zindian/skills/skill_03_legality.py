@@ -164,8 +164,22 @@ def synthesise_feature_policy(
     ):
         lat_lon_permitted = False
 
-    external_data_permitted = not comp.get("external_banned", True)
-    automl_permitted = not comp.get("automl_banned", False)
+    comp_banned = comp.get("external_banned")
+    if comp_banned is True:
+        external_data_permitted = False
+    elif comp_banned is False:
+        external_data_permitted = True
+    else:
+        config_ext = True
+        if config:
+            if "allowed_external_data" in config:
+                config_ext = bool(config.get("allowed_external_data"))
+            elif "external_data_permitted" in config:
+                config_ext = bool(config.get("external_data_permitted"))
+        external_data_permitted = config_ext
+
+    config_automl = bool(config.get("automl_permitted", True)) if config else True
+    automl_permitted = config_automl and not comp.get("automl_banned", False)
     use_probabilities = (
         comp.get("use_probabilities")
         if comp.get("use_probabilities") is not None

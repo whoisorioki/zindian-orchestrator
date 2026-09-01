@@ -94,6 +94,10 @@ rediscover.
 | Skill module count and dual-file slots (`skill_00`, `skill_13`) | 25 Python files across 23 contiguous numbered slots (`00` through `22`), with `skill_00` (`zindi_monitor`, `discussion_monitor`) and `skill_13` (`ensemble`, `oracle_fusion`) having dual files. | [CONFIRMED] |
 | Generic baseline state key: `anchor_oof_score` | See dedicated subsection below | [CONFIRMED] |
 | Legacy metric-specific keys (`anchor_oof_rmse`, `anchor_oof_f1`, `anchor_oof_auc`) | Currently the ACTUAL working gate key on at least one real competition (EY-frogs used `anchor_oof_f1` as its real, correct gating key after an earlier `anchor_oof_rmse` mix-up was resolved) | [CONFIRMED, on EY-frogs specifically] |
+| `resolve_competition_paths()` | `zindian/paths.py` | [CONFIRMED — accepts explicit `competition_dir` argument and resolves out-of-tree workspaces. Thread-safe (no `os.environ` side-effects).] |
+| `policy_writer()` `automl_permitted` rule | `zindian/skills/skill_03_legality.py` | [CONFIRMED — boolean `AND` between `config.get("automl_permitted")` and `not comp.get("automl_banned")` prevents unverified monitor overrides.] |
+| Multi-target SHAP state backfill | `zindian/skills/skill_10_shap.py` | [CONFIRMED — backfills primary target SHAP results to `shap_top_features`, `shap_top_feature`, `shap_feature_count` top-level state keys.] |
+| Pseudo-label model_config fields | `zindian/skills/skill_21_pseudo_label.py` | [CONFIRMED — model_config uses `augmented_training_set_size` and `n_pseudo_samples_injected` to prevent key-collision with top-level `pseudo_label_result.n_pseudo_labels_added`.] |
 
 ### On the skill module count claim
 

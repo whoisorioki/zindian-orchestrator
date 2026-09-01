@@ -84,51 +84,93 @@ ZINDIAN_COMPETITION_SLUG=one-step-ahead-of-drought-forecasting-global-water-stor
 
 ---
 
-## 3. Competition Data Intake & Configuration
+## 3. Competition Data Intake & Execution Sequence
 
-### Step 3.1: Ingest Data Files
-Move the competition dataset files (`Train.csv`, `Test.csv`, `SampleSubmission.csv`) into `competitions/<slug>/data/raw/`:
-```bash
-cp /path/to/downloads/Train.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
-cp /path/to/downloads/Test.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
-cp /path/to/downloads/SampleSubmission.csv competitions/one-step-ahead-of-drought-forecasting-global-water-storage-challenge/data/raw/
+### End-to-End Command Order for a New Competition
+
+When starting a new competition, execute commands in the following exact operational sequence:
+
+```mermaid
+flowchart TD
+    A["1. zindian bootstrap <slug>"] --> B["2. Ingest Raw Data (data/raw/)"]
+    B --> C["3. zindian monitor --competition <slug>"]
+    C --> D["4. zindian preflight --competition <slug>"]
+    D --> E["5. zindian phase 1 --competition <slug>"]
+    E --> F["6. Human Gate 1 Approval"]
+    F --> G["7. zindian phase 2A --competition <slug>"]
+    G --> H["8. Human Gate 2 Approval"]
+    H --> I["9. zindian phase 2B -> 3A -> 3B -> 4"]
+    I --> J["10. zindian archive --competition <slug>"]
 ```
 
-### Step 3.2: Configure `challenge_config.json`
-Populate `competitions/<slug>/challenge_config.json` with competition task parameters, metric, spatio-temporal signals, and submission limits:
+#### Step 3.1: Bootstrap Competition Workspace
+Initialize the competition folder structure:
+```bash
+python -m zindian.cli bootstrap <competition-slug>
+```
 
+#### Step 3.2: Ingest Raw Data Files
+Move raw competition files (`Train.csv`, `Test.csv`, `SampleSubmission.csv`, `data_dictionary.csv`) into `competitions/<slug>/data/raw/`:
+```bash
+cp /path/to/downloads/Train.csv competitions/<slug>/data/raw/
+cp /path/to/downloads/Test.csv competitions/<slug>/data/raw/
+cp /path/to/downloads/SampleSubmission.csv competitions/<slug>/data/raw/
+```
+
+#### Step 3.3: Fetch Competition Intelligence (`zindian monitor`)
+Scrape Zindi rules, evaluation metric, submission limits, and discussion board flags to populate `challenge_config.json`:
+```bash
+python -m zindian.cli monitor --competition <slug>
+```
+
+#### Step 3.4: Verify Environment Readiness (`zindian preflight`)
+Run the preflight compliance engine to confirm credentials, environment, raw files, and configuration validity:
+```bash
+python -m zindian.cli preflight --competition <slug>
+```
+
+#### Step 3.5: Execute Phase 1 (Integrity, Intake, EDA, & CV Architecture)
+Run Phase 1 to calculate MD5 data hashes, resolve target columns against `Train.csv` / `data_dictionary.csv`, generate EDA reports, and lock the CV strategy:
+```bash
+python -m zindian.cli phase 1 --competition <slug>
+```
+
+#### Step 3.6: Authorize Human Gate 1
+Review EDA and CV reports in `reports/diagnostics/` and approve Gate 1 in `competitions/<slug>/SKILL_STATE.json`:
 ```json
-{
-  "name": "One Step Ahead of Drought: Forecasting Global Water Storage Challenge",
-  "slug": "one-step-ahead-of-drought-forecasting-global-water-storage-challenge",
-  "task_type": "regression",
-  "target_col": "Target",
-  "metric": "root_mean_squared_error",
-  "metric_direction": "minimize",
-  "submission_budget": {
-    "total": 30,
-    "daily": 5,
-    "used": 0
-  },
-  "reproducibility": {
-    "seed": 42
-  },
-  "spatial_signal": {
-    "present": true,
-    "lat_col": "latitude",
-    "lon_col": "longitude",
-    "group_col": "location_id",
-    "spatial_buffer_km": 50.0
-  },
-  "cv_strategy": {
-    "type": "GroupKFold",
-    "n_splits": 5,
-    "shuffle": false,
-    "random_state": 42,
-    "group_col": "location_id",
-    "selection_reason": "GroupKFold by location_id prevents spatial autocorrelation leakage"
-  }
-}
+"human_gate_1_approved": true
+```
+
+#### Step 3.7: Execute Phase 2A (Policy Gate & Data Preprocessing)
+Run policy checks and data cleaning:
+```bash
+python -m zindian.cli phase 2A --competition <slug>
+```
+
+#### Step 3.8: Execute Phase 2B (Baseline Anchor Model & Feature Engineering)
+Extract features and train the initial baseline anchor model under the locked CV strategy:
+```bash
+python -m zindian.cli phase 2B --competition <slug>
+```
+
+#### Step 3.9: Authorize Human Gate 2
+Approve the baseline model branch in `SKILL_STATE.json`:
+```json
+"human_gate_2_anchor-baseline_approved": true
+```
+
+#### Step 3.10: Execute Pipeline Phases 3A through 4
+Run SHAP audits, metric calibration, pseudo-labeling, ensembling, and final inference generation:
+```bash
+python -m zindian.cli phase 3A --competition <slug>
+python -m zindian.cli phase 3B --competition <slug>
+python -m zindian.cli phase 4 --competition <slug>
+```
+
+#### Step 3.11: Submit & Archive Competition
+Submit your final predictions to Zindi via `zindian submit`, then update the cross-competition history log and archive the run:
+```bash
+python -m zindian.cli archive <slug>
 ```
 
 ---

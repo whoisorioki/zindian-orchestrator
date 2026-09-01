@@ -369,8 +369,12 @@ def run() -> dict:
     if target_config and target_config.get("targets"):
         return _run_multi_target_gate(config, store, state)
 
-    best_variant = state.get("best_variant_this_round") or state.get(
-        "best_variant_branch"
+    best_variant = (
+        state.get("best_variant_this_round")
+        or state.get("best_variant_branch")
+        or state.get("anchor_git_branch")
+        or state.get("active_branch")
+        or "anchor-baseline"
     )
     metric_key = _metric_key(config)
     best_score_value = state.get("best_variant_oof_score")
@@ -599,8 +603,12 @@ def _run_multi_target_gate(config, store, state) -> dict:
     if not isinstance(pseudo_mt, dict):
         pseudo_mt = {}
 
-    best_variant = state.get("best_variant_this_round") or state.get(
-        "best_variant_branch"
+    best_variant = (
+        state.get("best_variant_this_round")
+        or state.get("best_variant_branch")
+        or state.get("anchor_git_branch")
+        or state.get("active_branch")
+        or "anchor-baseline"
     )
     branch_name = str(best_variant or "unknown")
     human_gate_key = f"human_gate_2_{branch_name}_approved"

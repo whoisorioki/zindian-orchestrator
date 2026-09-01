@@ -47,6 +47,43 @@ python -m zindian.cli <command>
 
 If the console script is not available in a source checkout, `python -m zindian.cli <command>` is the equivalent fallback.
 
+### End-to-End Competition Command Order
+
+```bash
+# 1. Initialize competition workspace
+zindian bootstrap <slug>
+
+# 2. Ingest raw data files into competitions/<slug>/data/raw/
+# (Train.csv, Test.csv, SampleSubmission.csv, data_dictionary.csv)
+
+# 3. Fetch Zindi competition rules, metrics, and discussion flags
+zindian monitor --competition <slug>
+
+# 4. Verify environment lock and schema compliance
+zindian preflight --competition <slug>
+
+# 5. Run Phase 1 (Integrity, Intake, EDA, and CV Architecture)
+zindian phase 1 --competition <slug>
+
+# 6. Set human_gate_1_approved = true in SKILL_STATE.json
+
+# 7. Run Phase 2A (Policy Gate & Data Preprocessing)
+zindian phase 2A --competition <slug>
+
+# 8. Run Phase 2B (Feature Engineering & Baseline Anchor Model Training)
+zindian phase 2B --competition <slug>
+
+# 9. Set human_gate_2_anchor-baseline_approved = true in SKILL_STATE.json
+
+# 10. Execute remaining pipeline phases
+zindian phase 3A --competition <slug>
+zindian phase 3B --competition <slug>
+zindian phase 4 --competition <slug>
+
+# 10. Submit predictions to Zindi and archive competition run
+zindian archive --competition <slug>
+```
+
 ---
 
 ## Competition Context Resolution

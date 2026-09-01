@@ -528,9 +528,24 @@ def run(
     oof_df.to_csv(oof_path, index=False)
     print(f"[OK] OOF predictions saved -> {oof_path}")
 
-    # Submission formatting removed — Phase 2B writes probabilities only.
-    # skill_14 (Phase 4) reads test_probs from data/processed/ and produces
-    # the final submission CSV.
+    # Save test predictions/probabilities to data/processed/ for downstream skills (skill_09, skill_14)
+    branch_name = (
+        "anchor-baseline_augmented" if retraining_active else "anchor-baseline"
+    )
+    test_probs_path = paths.data_processed_dir / f"test_probs_{branch_name}.csv"
+    paths.data_processed_dir.mkdir(parents=True, exist_ok=True)
+    if test_preds.ndim > 1:
+        test_df = pd.DataFrame({id_col: np.asarray(test[id_col].values)})
+        for i in range(test_preds.shape[1]):
+            test_df[f"Predicted_class_{i}"] = test_preds[:, i]
+    else:
+        test_df = pd.DataFrame(
+            {
+                id_col: np.asarray(test[id_col].values),
+                "test_prob": test_preds,
+            }
+        )
+    test_df.to_csv(test_probs_path, index=False)
 
     if retraining_active:
         score_key = "anchor_oof_score_augmented"

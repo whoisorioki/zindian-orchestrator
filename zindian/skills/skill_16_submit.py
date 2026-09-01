@@ -213,9 +213,9 @@ def validate(
         bounds_cfg = config.get("target_domain_bounds") or {}
         bounds = bounds_cfg if isinstance(bounds_cfg, dict) else {}
         for idx, vcol in enumerate(value_cols):
-            if len(value_cols) > 1 and task_type == "classification" and use_probs:
-                # Multi-column probability submission: binary for non-last columns,
-                # probability interval for the last value column.
+            if len(value_cols) > 1 and task_type == "classification":
+                # Multi-column classification submission (e.g. TargetF1 hard label + TargetRAUC probability):
+                # binary for non-last columns, probability interval for the last value column.
                 if idx < len(value_cols) - 1:
                     errors.extend(
                         _validate_binary(sub[vcol].to_numpy().astype(np.float64))
@@ -400,11 +400,17 @@ def run(
 
     branch = _branch_from_state(skill_state)
     if branch and branch != "unknown":
-        gate2_key = f"human_gate_2_{branch}_approved"
-        if not bool(skill_state.get(gate2_key, False)):
+        if branch == "ensemble":
+            gate_approved = bool(skill_state.get("human_gate_3_approved", False))
+            gate_key = "human_gate_3_approved"
+        else:
+            gate_key = f"human_gate_2_{branch}_approved"
+            gate_approved = bool(skill_state.get(gate_key, False))
+
+        if not gate_approved:
             return {
                 "status": "BLOCKED",
-                "reason": f"{gate2_key}_missing",
+                "reason": f"{gate_key}_missing",
                 "message": f"Branch '{branch}' has not been human-approved.",
             }
 
