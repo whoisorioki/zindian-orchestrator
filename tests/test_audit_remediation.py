@@ -261,11 +261,61 @@ def test_reconcile_gate5_derivation(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert rl.derive_gate5_ids(manifest) == {"9oXDE1j3", "PzruUqvQ"}
 
 
+def test_fusion_pool_excludes_blend_branches(tmp_path: Path):
+    """Base-model fusion pool must exclude blend/derived branches
+    (ensemble, calibration_*) via the config-driven fusion_excluded_branches."""
+    import numpy as np
+
+    from zindian.oracle_fusion_core import _collect_verified_candidates
+
+    proc = tmp_path / "data" / "processed"
+    proc.mkdir(parents=True)
+    reports = proc.parent / "reports"
+    reports.mkdir(parents=True)
+    for n in ("ensemble", "variant-1", "calibration_ensemble"):
+        (proc / f"test_probs_{n}.csv").write_text(
+            "ID,P\n3,0.4\n4,0.6\n", encoding="utf-8"
+        )
+
+    class P:
+        data_processed_dir = proc
+        reports_dir = reports
+
+    mk = lambda name, scores: {
+        "branch_name": name,
+        "scores": scores,
+        "cv_strategy_id": "config:test",
+        "seed": 42,
+        "model_config": {},
+    }
+    state = {
+        "human_gate_2_ensemble_approved": True,
+        "human_gate_2_variant-1_approved": True,
+        "human_gate_2_calibration_ensemble_approved": True,
+        "branch_ensemble_oof": mk("ensemble", [0.2, 0.8]),
+        "branch_variant-1_oof": mk("variant-1", [0.3, 0.7]),
+        "branch_calibration_ensemble_oof": mk("calibration_ensemble", [0.25, 0.75]),
+    }
+    y = np.array([0, 1])
+
+    got = _collect_verified_candidates(
+        state,
+        y,
+        task_type="classification",
+        metric_name="multi",
+        direction="maximize",
+        use_probabilities=True,
+        retraining_active=False,
+        paths=P(),
+        excluded_branches={"ensemble", "calibration_ensemble"},
+    )
+    names = [c["name"] for c in got]
+    assert names == ["variant-1"], f"blend branches must be excluded, got {names}"
+
 def test_preflight_oof_lb_collision_guard(tmp_path: Path):
     """The OOF/LB collision guard must fail hard on the exact historical
     contamination (anchor_oof_auc == manifest lb_auc) and pass clean OOF state."""
     from scripts.preflight_enforce import scan_oof_lb_collision
-
     comp = tmp_path / "comp"
     (comp / "reports").mkdir(parents=True)
     (comp / "reports" / "submissions_manifest.json").write_text(

@@ -118,6 +118,7 @@ def _collect_verified_candidates(
     use_probabilities: bool,
     retraining_active: bool,
     paths: Any = None,
+    excluded_branches: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build candidate pool from SKILL_STATE branch records only.
@@ -125,6 +126,9 @@ def _collect_verified_candidates(
     Selection rules:
     - Key pattern: branch_{name}_oof
     - Include only branches with human_gate_2_{name}_approved == True
+    - Exclude names in ``excluded_branches`` (used to keep blend/derived
+      branches like ``ensemble`` / ``calibration_*`` out of the base pool),so
+      the combiner averages genuine base models rather than nesting prior blends.
     - If retraining is active, include only names ending with _augmented
     """
     candidates: list[dict[str, Any]] = []
@@ -148,6 +152,11 @@ def _collect_verified_candidates(
         gate2_key = f"human_gate_2_{branch_name}_approved"
         if not bool(state.get(gate2_key, False)):
             continue
+
+        if excluded_branches is not None and branch_name in excluded_branches:
+
+            continue
+
 
         scores_obj = value.get("scores", [])
         scores_arr = np.asarray(scores_obj, dtype=np.float64)
@@ -702,6 +711,9 @@ def _run_single_target_fusion(
         use_probabilities=use_probabilities,
         retraining_active=retraining_active,
         paths=paths,
+        excluded_branches=set(
+            config_obj.get("fusion_excluded_branches", []) or []
+        ),
     )
     if not all_variants:
         return {
