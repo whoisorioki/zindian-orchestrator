@@ -5,8 +5,8 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document is aligned with SoT version **v2.8**.
-**Last updated:** August 2026
+version-specific claim below. This document is aligned with SoT version **v2.9**.
+**Last updated:** September 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
 Truth table.
@@ -98,6 +98,13 @@ rediscover.
 | `policy_writer()` `automl_permitted` rule | `zindian/skills/skill_03_legality.py` | [CONFIRMED — boolean `AND` between `config.get("automl_permitted")` and `not comp.get("automl_banned")` prevents unverified monitor overrides.] |
 | Multi-target SHAP state backfill | `zindian/skills/skill_10_shap.py` | [CONFIRMED — backfills primary target SHAP results to `shap_top_features`, `shap_top_feature`, `shap_feature_count` top-level state keys.] |
 | Pseudo-label model_config fields | `zindian/skills/skill_21_pseudo_label.py` | [CONFIRMED — model_config uses `augmented_training_set_size` and `n_pseudo_samples_injected` to prevent key-collision with top-level `pseudo_label_result.n_pseudo_labels_added`.] |
+| `BufferedSpatialCV` split strategy | `zindian/skills/skill_05_cv.py` | [CONFIRMED — uses explicit `lat_col`, `lon_col`, and `spatial_buffer_km` to build spatially buffered fold splits.] |
+| Feature engine 3-stage execution pipeline | `zindian/skills/skill_07_features.py` | [CONFIRMED — stage 1 (date_decomposition, rolling_aggregates, static_bins) runs before stage 2 (polynomials, interactions, ratios, conditions) to enable cascaded feature engineering.] |
+| Zindi platform endpoint normalization & timeout patch | `zindian/zindi_client.py` | [CONFIRMED — normalizes `api.zindi.africa` to `api.zindi.world` and applies explicit HTTP timeout tuple `(30.0, 300.0)` on uploads.] |
+| Submission Audit Ledger & Manifest | `zindian/ledger.py` & `skill_16_submit.py` | [CONFIRMED — `submissions` table includes `lb_f1`, `lb_auc`, `zindi_id`; persisted via `show_submission_board()` and `submissions_manifest.json`.] |
+| Rules Compliance Cutoff (0.5) | `zindian/skills/skill_14_inference.py` | [CONFIRMED — classification hard labels strictly use 0.5 cutoff per competition rules.] |
+| Gate OOF Metric Key Resolution | `zindian/skills/skill_07_features.py` & `skill_11_gate.py` | [CONFIRMED — writes and resolves canonical `best_variant_oof_score` with fallback to composite 0.6 F1 + 0.4 AUC.] |
+| Pre-Fusion Isotonic Calibration | `zindian/oracle_fusion_core.py` | [CONFIRMED — candidate OOF/test probability vectors are calibrated via Isotonic Regression before ensembling.] |
 
 ### On the skill module count claim
 

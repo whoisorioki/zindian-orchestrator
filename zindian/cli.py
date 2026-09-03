@@ -119,10 +119,11 @@ def main():
     ledger_best = ledger_sub.add_parser("best", help="Show best experiment")
     ledger_passed = ledger_sub.add_parser("passed", help="Show passed experiments")
     ledger_failed = ledger_sub.add_parser("failed", help="Show failed experiments")
+    ledger_chain = ledger_sub.add_parser("blockchain", help="Show cryptographic submission blockchain audit chain")
 
     # Add competition context to ledger and all its subcommand subparsers
     add_competition_args(ledger_parser)
-    for sub in [ledger_exps, ledger_subs, ledger_best, ledger_passed, ledger_failed]:
+    for sub in [ledger_exps, ledger_subs, ledger_best, ledger_passed, ledger_failed, ledger_chain]:
         add_competition_args(sub)
 
     monitor_parser = subparsers.add_parser("monitor", help="Monitor Zindi competition")
@@ -302,9 +303,59 @@ def main():
                 elif args.ledger_command == "passed":
                     passed = ledger.get_passed_experiments()
                     print(json.dumps(passed, indent=2, default=str))
-                elif args.ledger_command == "failed":
-                    failed = ledger.get_failed_experiments()
-                    print(json.dumps(failed, indent=2, default=str))
+                elif args.ledger_command in ("blockchain", "chain"):
+                    import hashlib
+                    from zindian.paths import resolve_competition_paths
+
+                    subs = ledger.query(
+                        "SELECT * FROM submissions ORDER BY submitted_at ASC"
+                    )
+                    exps = {
+                        e["experiment_id"]: e
+                        for e in ledger.query("SELECT * FROM experiments")
+                    }
+                    chain = []
+                    prev_hash = "0" * 64
+                    comp_paths = resolve_competition_paths()
+                    sub_dir = comp_paths.submissions_dir
+
+                    for idx, sub in enumerate(subs, 1):
+                        exp = exps.get(sub.get("experiment_id"), {})
+                        sub_file = sub_dir / f"sub_{sub['submission_id']:03d}_ensemble.csv"
+                        if not sub_file.exists():
+                            csvs = sorted(list(sub_dir.glob("sub_*.csv")))
+                            if idx <= len(csvs):
+                                sub_file = csvs[idx - 1]
+                            elif csvs:
+                                sub_file = csvs[-1]
+
+                        file_sha256 = "N/A"
+                        actual_filename = sub_file.name if sub_file.exists() else f"sub_{sub['submission_id']:03d}_ensemble.csv"
+                        if sub_file.exists():
+                            file_sha256 = hashlib.sha256(
+                                sub_file.read_bytes()
+                            ).hexdigest()
+
+                        block = {
+                            "index": idx,
+                            "timestamp": str(sub.get("submitted_at")),
+                            "submission_db_id": sub.get("submission_id"),
+                            "file_name": actual_filename,
+                            "zindi_comment": sub.get("comment"),
+                            "branch_name": sub.get("branch_name"),
+                            "public_score": sub.get("public_score"),
+                            "oof_score": exp.get("oof_score"),
+                            "calibration": exp.get("calibration_method") or "none",
+                            "file_sha256": file_sha256,
+                            "previous_hash": prev_hash,
+                        }
+                        block_bytes = json.dumps(block, sort_keys=True).encode("utf-8")
+                        block_hash = hashlib.sha256(block_bytes).hexdigest()
+                        block["block_hash"] = block_hash
+                        prev_hash = block_hash
+                        chain.append(block)
+
+                    print(json.dumps(chain, indent=2, default=str))
                 else:
                     ledger_parser.print_help()
         except Exception as e:

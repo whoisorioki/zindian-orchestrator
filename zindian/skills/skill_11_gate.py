@@ -15,12 +15,15 @@ import math
 import numpy as np
 
 from zindian.config import ChallengeConfig
+from zindian.metrics import composite_metric
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
 
 def _metric_key(config: ChallengeConfig) -> str:
-    metric_name = str(config.get("metric", "f1_score"))
+    metric_name = str(config.get("metric", "f1_score")).lower()
+    if metric_name in ("multi", "composite", "zindi"):
+        return "composite"
     return "f1" if metric_name == "f1_score" else metric_name
 
 
@@ -380,6 +383,14 @@ def run() -> dict:
     best_score_value = state.get("best_variant_oof_score")
     if best_score_value is None:
         best_score_value = state.get(f"best_variant_oof_{metric_key}")
+    if best_score_value is None:
+        # Fallback for composite/multi-metric classification
+        auc_val = state.get("best_variant_oof_auc")
+        f1_val = state.get("best_variant_oof_f1")
+        if auc_val is not None and f1_val is not None:
+            best_score_value = composite_metric(float(f1_val), float(auc_val))
+        else:
+            best_score_value = auc_val or f1_val
     best_score = float(best_score_value or 0.0)
     fold_score_variance = _fold_score_variance(state)
     effective_variance_threshold, effective_gate_margin, threshold_warning = (

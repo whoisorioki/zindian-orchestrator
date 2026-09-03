@@ -1,9 +1,9 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.8
+**Version:** v2.9
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** August 2026 (v2.8: F1 KSG scale-invariance fix, F2 bivariate Gaussian reference test; augmented-composite classification-OOF consumption in `skill_11`)
+**Last updated:** September 2026 (v2.9: BufferedSpatialCV strategy support, 3-stage feature engineering pipeline with rolling_aggregates/static_bins, zindi.world endpoint normalization and upload timeout hardening)
 
 ---
 
@@ -1095,7 +1095,7 @@ Step 2 — Group / Spatial check:
           == true
        OR config["spatial_signal"]["present"] == true:
 
-      cv_strategy = GroupKFold
+      cv_strategy = GroupKFold (or BufferedSpatialCV when explicit spatial coordinates and buffer are present)
 
       Group col resolution:
           If config["group_signal"]["present"] == true:
@@ -1108,9 +1108,9 @@ Step 2 — Group / Spatial check:
            skill_02 from the competition's location
            identifier column)
 
-      Reason: group leakage prevention
+      Reason: group leakage prevention & spatial autocorrelation elimination
 
-      > **Spatial CV Buffering (S7):** `skill_05_cv`'s `_apply_spatial_buffer` function is fully implemented: training set samples within `spatial_buffer_km` km of any validation fold sample are excluded from that fold's training split. `challenge_config_template.json`'s `spatial_signal` block includes `spatial_buffer_km: null`.
+      > **Spatial CV Buffering (S7):** `skill_05_cv` implements `BufferedSpatialCV` using `build_spatial_splits` / `_apply_spatial_buffer`: training set samples within `spatial_buffer_km` km of any validation fold sample are excluded from that fold's training split. `cv_strategy` stores `type: "BufferedSpatialCV"`, `lat_col`, `lon_col`, and `spatial_buffer_km`.
       → Go to write
 
 Step 3 — Imbalance check (classification only):
@@ -1337,6 +1337,34 @@ logic change.
 **`skill_07_features` — Engineering rules engine:**
 
 ```
+3-Stage Cascaded Execution Order:
+
+STAGE 1: Primary Structural, Long-Memory & Discretization Base Features
+    → date_decomposition:
+        Calendar parts (year, month, day_of_year, dow) + cyclical sin/cos encodings.
+    → rolling_aggregates:
+        Spatial-temporal long-memory rolling windows (mean, std, sum, min, max).
+        Preserves full spatial timeline across train/test splits.
+        Schema: { "column": "tavg", "group_by": "location_id", "sort_by": "date", "window": 90, "min_periods": 1, "function": "mean", "name": "tavg_90d_mean" }
+    → static_bins:
+        Static demographic cohort discretization with explicit numeric edge thresholds.
+        Schema: { "column": "age", "edges": [0, 5, 15, 64, 120], "labels": [0, 1, 2, 3], "name": "age_cohort" }
+
+STAGE 2: Derived Composite Features
+    → polynomials, interactions, ratios, conditions
+    (Evaluated AFTER Stage 1 so composite terms can reference Stage 1 outputs, e.g. ["age_cohort", "tavg_90d_mean"])
+
+STAGE 3: Target-Dependent & Global Dimensionality Transformations
+    → target_dependent_bins:
+        Quantile target encodings. TARGET-DEPENDENT two-mode contract:
+        Fold-restricted during CV; full training set during final inference.
+    → aliases:
+        Column renaming mapping dict.
+    → pca:
+        Global dimensionality reduction. Fit strictly on train fold/set only.
+    → drop_columns:
+        Explicit column removal. Target and ID columns are protected guards.
+
 If config["temporal_signal"]["present"] == true:
     → Lag features, rolling means, time-since features
 
@@ -1366,10 +1394,6 @@ If config["target_distribution"] == "continuous_skewed"
 If config["missingness_level"] == "high":
     → Interaction terms between MNAR indicator columns
       and top features from anchor
-      **DOCUMENTATION ERROR:** Original text claimed "top SHAP features"
-      but `skill_10_shap.py` has no anchor-only invocation mode. SHAP values
-      are not available during `skill_07` feature generation. This rule cannot
-      be implemented as documented.
 
 If config["group_signal"]["present"] == true:
     → Group aggregations (mean, std, count)
@@ -1382,13 +1406,9 @@ If config["group_signal"]["present"] == true:
                 Computed using all training rows
         Omitting the inference mode causes a column
         mismatch crash at skill_14.
-        Aggregations of non-target columns (e.g. group
-        size counts, group feature means) are structural —
-        no two-mode contract required for those.
 
 Sidecar enrichment (non-blocking — see A9):
-    Read SKILL_STATE.get("sidecar_recommendations",
-                          default=[])
+    Read SKILL_STATE.get("sidecar_recommendations", default=[])
     If present: enrich variant generation
     If absent : proceed from fingerprint alone
 ```

@@ -1,6 +1,6 @@
 # Zindian Orchestrator — Resolved Gaps & Audit Trail History
 
-**Document Version:** v2.8  
+**Document Version:** v2.9  
 **Last Updated:** September 2026  
 **Paired Document:** `docs/source_of_truth.md`
 

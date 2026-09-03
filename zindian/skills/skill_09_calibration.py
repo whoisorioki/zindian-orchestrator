@@ -259,11 +259,20 @@ def run(
     store = SkillStateStore(paths.state_path)
     state = store.read()
 
-    # Read method from state if not provided
-    if method is None:
-        method = state.get("calibration_method") or "none"
-
     raw_config = getattr(config, "_data", {}) or {}
+
+    # P1 audit fix: the challenge config's calibration policy takes priority
+    # over a stale state value. Previously a state-pinned
+    # "calibration_method": "none" silently bypassed calibration even when
+    # the challenge config requested a real method, because the orchestrator
+    # dispatches run() with no explicit `method` kwarg.
+    # Priority: explicit arg > config > state > "none".
+    if method is None:
+        method = (
+            raw_config.get("calibration_method")
+            or state.get("calibration_method")
+            or "none"
+        )
     task_type = str(
         raw_config.get("task_type", config.get("task_type", "classification"))
     )

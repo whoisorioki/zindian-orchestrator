@@ -233,36 +233,59 @@ def validate(
     return errors
 
 
+def _branch_from_state(state: dict[str, Any], submission_file: Path | None = None) -> str:
+    if submission_file:
+        name = submission_file.name.lower()
+        if "ensemble" in name:
+            return "ensemble"
+        for k in state:
+            if k.startswith("branch_") and k.endswith("_oof"):
+                b = k.removeprefix("branch_").removesuffix("_oof")
+                if b in name:
+                    return b
+
+    branch = (
+        state.get("current_active_branch")
+        or state.get("best_variant_this_round")
+        or state.get("best_variant_branch")
+        or state.get("anchor_git_branch")
+        or "unknown"
+    )
+    return str(branch)
+
+
 def determine_submission_metrics(
     submission_file: Path,
     state: dict[str, Any],
 ) -> tuple[float | None, str]:
-    """Resolve (oof_score, source_key) directly from the SKILL_STATE branch records.
+    """Resolve (oof_score, source_key) directly from the SKILL_STATE branch records."""
+    branch = _branch_from_state(state, submission_file)
 
-    No filename parsing. We inspect the active branch from the state (set by
-    Skill 11 / 13) and return the OOF score from the matching
-    `branch_{name}_oof` record.
-    """
-    active_branch = (
-        state.get("current_active_branch")
-        or state.get("anchor_git_branch")
-        or state.get("best_variant_this_round")
-    )
-    candidate_keys: list[str] = []
-    if isinstance(active_branch, str) and active_branch:
-        candidate_keys.append(f"branch_{active_branch}_oof")
-    candidate_keys.extend(
-        [
-            # Generic keys
-            "last_ensemble_oof_score",
-            "best_ensemble_oof_score",
-            "last_variant_oof_score",
-            "best_variant_oof_score",
-            "anchor_oof_score_augmented",
-            "anchor_oof_score_challenged",
-            "anchor_oof_score",
-        ]
-    )
+    if branch == "ensemble":
+        if "last_ensemble_oof_metric" in state:
+            v = state["last_ensemble_oof_metric"]
+            if isinstance(v, (int, float)):
+                return float(v), "last_ensemble_oof_metric"
+        if "branch_ensemble_oof" in state:
+            v = state["branch_ensemble_oof"]
+            if isinstance(v, dict) and "scores" in v:
+                try:
+                    arr = np.asarray(v["scores"], dtype=np.float64)
+                    return float(arr.mean()), "branch_ensemble_oof"
+                except (TypeError, ValueError):
+                    pass
+
+    candidate_keys: list[str] = [
+        f"branch_calibration_{branch}_oof",
+        f"branch_{branch}_oof",
+        "last_ensemble_oof_score",
+        "best_ensemble_oof_score",
+        "last_variant_oof_score",
+        "best_variant_oof_score",
+        "anchor_oof_score_augmented",
+        "anchor_oof_score_challenged",
+        "anchor_oof_score",
+    ]
     for key in candidate_keys:
         value = state.get(key)
         if isinstance(value, dict):
@@ -273,6 +296,8 @@ def determine_submission_metrics(
                     return float(arr.mean()), key
                 except (TypeError, ValueError):
                     continue
+            elif "score" in value and isinstance(value["score"], (int, float)):
+                return float(value["score"]), key
         elif isinstance(value, (int, float)) and not isinstance(value, bool):
             try:
                 return float(value), key
@@ -281,54 +306,26 @@ def determine_submission_metrics(
     return None, "missing"
 
 
-def _branch_from_state(state: dict[str, Any]) -> str:
-    branch = (
-        state.get("current_active_branch")
-        or state.get("anchor_git_branch")
-        or state.get("best_variant_this_round")
-        or "unknown"
-    )
-    return str(branch)
-
-
 def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
-    # Resolve using git_branch first
-    git_branch = state.get("current_git_branch")
-    if git_branch:
-        for k, v in state.items():
-            if (
-                k.startswith(f"branch_{git_branch}_")
-                and k.endswith("_oof")
-                and isinstance(v, dict)
-            ):
-                mc = v.get("model_config") or {}
-                fc = mc.get("feature_count")
-                if isinstance(fc, (int, float)):
-                    return int(fc)
-
-    # Try calibration_candidate_oof_key
-    calib_key = state.get("calibration_candidate_oof_key")
-    if calib_key:
-        oof = state.get(calib_key)
+    if branch == "ensemble":
+        variants = state.get("last_ensemble_variants")
+        if isinstance(variants, list) and len(variants) > 0:
+            return len(variants)
+        oof = state.get("branch_ensemble_oof")
         if isinstance(oof, dict):
             mc = oof.get("model_config") or {}
             fc = mc.get("feature_count")
             if isinstance(fc, (int, float)):
                 return int(fc)
 
-    # Fallback to branch_{branch}_oof (with target matching)
-    for k, v in state.items():
-        if (
-            k.startswith(f"branch_{branch}")
-            and k.endswith("_oof")
-            and isinstance(v, dict)
-        ):
-            mc = v.get("model_config") or {}
+    for key in (f"branch_calibration_{branch}_oof", f"branch_{branch}_oof"):
+        oof = state.get(key)
+        if isinstance(oof, dict):
+            mc = oof.get("model_config") or {}
             fc = mc.get("feature_count")
             if isinstance(fc, (int, float)):
                 return int(fc)
 
-    # Final fallbacks
     for key in (
         "last_ensemble_features",
         "best_variant_features",
@@ -341,15 +338,19 @@ def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
 
 
 def _calibration_method_from_state(state: dict[str, Any], branch: str) -> str:
-    oof = state.get(f"branch_{branch}_oof")
-    if isinstance(oof, dict):
-        mc = oof.get("model_config") or {}
-        cm = mc.get("calibration_method")
-        if isinstance(cm, str) and cm:
-            return cm
+    for key in (f"branch_calibration_{branch}_oof", f"branch_{branch}_oof"):
+        oof = state.get(key)
+        if isinstance(oof, dict):
+            mc = oof.get("model_config") or {}
+            cm = mc.get("calibration_method") or mc.get("method")
+            if isinstance(cm, str) and cm:
+                return cm
     cm = state.get("last_calibration_method")
     if isinstance(cm, str) and cm:
         return cm
+    top_level = state.get("calibration_method")
+    if isinstance(top_level, str) and top_level in ("platt", "isotonic"):
+        return top_level
     return "none"
 
 
@@ -398,7 +399,7 @@ def run(
             "message": "Human Gate 4 not approved. Skill 14 must be human-approved before submission.",
         }
 
-    branch = _branch_from_state(skill_state)
+    branch = _branch_from_state(skill_state, sub_path)
     if branch and branch != "unknown":
         if branch == "ensemble":
             gate_approved = bool(skill_state.get("human_gate_3_approved", False))
@@ -481,8 +482,8 @@ def run(
     best_f1, metric_source = determine_submission_metrics(sub_path, skill_state)
     feature_count = _feature_count_from_state(skill_state, branch)
     calibration_method = _calibration_method_from_state(skill_state, branch)
-    git_branch = skill_state.get("current_git_branch", "unknown")
     metric_name = str(config.get("metric", "f1")).upper()
+    metric_display = "COMPOSITE" if metric_name == "MULTI" else metric_name
 
     print(
         f"""
@@ -490,8 +491,8 @@ def run(
 === HUMAN GATE: Skill 16 — Submit ===
 ============================================================
 File              : {sub_path.name}
-Branch            : {git_branch}
-OOF {metric_name} : {best_f1}
+Branch            : {branch}
+OOF {metric_display} : {best_f1}
 Reference ROC-AUC : {best_auc}
 Metric source     : {metric_source}
 Feature count     : {feature_count}
@@ -511,7 +512,7 @@ Type YES to submit or NO to abort.
     metric_name_lower = metric_name.lower()
     oof_tag = "oof_f1" if "f1" in metric_name_lower else "oof_score"
     comment = (
-        f"branch:{git_branch}"
+        f"branch:{branch}"
         f"|{oof_tag}:{oof_str}"
         f"|features:{feature_count}"
         f"|calib:{calibration_method}"
@@ -542,7 +543,7 @@ Type YES to submit or NO to abort.
     log_entry = (
         f"\n## Submission [{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}]\n"
         f"**File**: {sub_path.name}\n"
-        f"**Branch**: {git_branch}\n"
+        f"**Branch**: {branch}\n"
         f"**Comment**: {comment}\n"
         f"**Result**: {json.dumps(result)}\n"
     )
@@ -580,7 +581,7 @@ Type YES to submit or NO to abort.
     try:
         with Ledger() as ledger:
             exp_id = ledger.log_experiment(
-                branch_name=git_branch,
+                branch_name=branch,
                 oof_score=best_f1,
                 metric=metric_name_lower,
                 feature_count=feature_count if isinstance(feature_count, int) else None,
@@ -589,9 +590,11 @@ Type YES to submit or NO to abort.
                 dag_phase=skill_state.get("dag_phase"),
                 notes=comment,
             )
+            z_id = str(result.get("id")) if result.get("id") else None
             ledger.log_submission(
                 experiment_id=exp_id,
-                branch_name=git_branch,
+                branch_name=branch,
+                zindi_id=z_id,
                 public_score=result.get("public_score"),
                 my_rank=my_rank if "my_rank" in locals() else None,
                 comment=comment,
@@ -621,31 +624,123 @@ def pull_submission_board() -> list[dict[str, Any]]:
 
 
 def show_submission_board() -> None:
-    """Render the submission board from the platform."""
+    """Render the submission board from the platform and persist to DuckDB ledger."""
     subs = pull_submission_board()
     clean: list[dict[str, Any]] = []
+    
+    # Persist board entries to ledger
+    try:
+        paths = resolve_competition_paths()
+        manifest_map: dict[str, dict[str, Any]] = {}
+        manifest_path = paths.reports_dir / "submissions_manifest.json"
+        if manifest_path.exists():
+            try:
+                import json
+                with manifest_path.open(encoding="utf-8") as f:
+                    manifest_data = json.load(f)
+                    for item in manifest_data:
+                        manifest_map[str(item.get("zindi_id"))] = item
+            except Exception:
+                pass
+
+        # Load Human Gate 5 selections.
+        # Primary source: reports/audits/final_selections.json — the file
+        # written by skill_17 after the human Gate 5 decision (schema:
+        # {"selections": [{"filename": ..., "score": ...}]}). Filenames are
+        # joined to zindi_ids via submissions_manifest.json.
+        # Fallback: SKILL_STATE human_gate_5_selection (list of filenames).
+        gate5_ids = set()
+        gate5_files = set()
+        gate5_source = "none"
+        final_sel_path = paths.reports_dir / "audits" / "final_selections.json"
+        if final_sel_path.exists():
+            try:
+                import json
+                with final_sel_path.open(encoding="utf-8") as f:
+                    sel_data = json.load(f)
+                for item in sel_data.get("selections", []):
+                    fname = str(item.get("filename", ""))
+                    if fname:
+                        gate5_files.add(fname)
+                # Join filenames -> zindi_ids through the manifest.
+                filename_to_zindi = {
+                    str(item.get("filename", "")): str(item.get("zindi_id", ""))
+                    for item in manifest_map.values()
+                }
+                for fname in gate5_files:
+                    z_id = filename_to_zindi.get(fname)
+                    if z_id:
+                        gate5_ids.add(z_id)
+                if gate5_files:
+                    gate5_source = "final_selections.json"
+            except Exception:
+                pass
+
+        if not gate5_files and paths.state_path.exists():
+            try:
+                import json
+                with paths.state_path.open(encoding="utf-8") as f:
+                    st_data = json.load(f)
+                gate5_files.update(st_data.get("human_gate_5_selection", []))
+                if gate5_files:
+                    gate5_source = "SKILL_STATE.human_gate_5_selection"
+            except Exception:
+                pass
+        if gate5_source != "none":
+            print(f"[Gate 5] selected_for_final governed by: {gate5_source}")
+
+        with Ledger() as ledger:
+            for s in subs:
+                z_id = str(s.get("id"))
+                pub_score = s.get("public_score")
+                filename = str(s.get("filename", ""))
+                platform_chosen = bool(s.get("chosen", False))
+                comment = s.get("comment")
+                m_info = manifest_map.get(z_id, {})
+                lb_f1 = s.get("lb_f1") or m_info.get("lb_f1")
+                lb_auc = s.get("lb_auc") or m_info.get("lb_auc")
+                submitted_at = s.get("created_at") or m_info.get("created_at")
+
+                # If Human Gate 5 selections exist, they govern selected_for_final
+                if gate5_ids or gate5_files:
+                    selected_for_final = (z_id in gate5_ids) or (filename in gate5_files)
+                else:
+                    selected_for_final = platform_chosen
+
+                ledger.upsert_submission_by_zindi_id(
+                    zindi_id=z_id,
+                    public_score=pub_score,
+                    lb_f1=lb_f1,
+                    lb_auc=lb_auc,
+                    selected_for_final=selected_for_final,
+                    comment=comment,
+                    submitted_at=submitted_at,
+                )
+    except Exception as exc:
+        print(f"[WARN] Failed to persist submission board to ledger: {exc}")
+
     for s in subs:
         clean.append(
             {
                 "id": s.get("id"),
                 "date": str(s.get("created_at", ""))[:10],
                 "file": s.get("filename"),
-                "lb_f1": s.get("public_score"),
+                "public_score": s.get("public_score"),
                 "status": s.get("status"),
                 "chosen": s.get("chosen"),
                 "comment": s.get("comment"),
             }
         )
-    col_id, col_date, col_f1, col_ch, col_file = 12, 12, 13, 6, 40
+    col_id, col_date, col_score, col_ch, col_file = 12, 12, 13, 6, 40
     sep = "-" * 150
-    hdr = f"{'ID':{col_id}} {'Date':{col_date}} {'LB F1':>{col_f1}} {'Ch':>{col_ch}}  {'File':{col_file}} Comment"
+    hdr = f"{'ID':{col_id}} {'Date':{col_date}} {'Public Score':>{col_score}} {'Ch':>{col_ch}}  {'File':{col_file}} Comment"
     print(hdr)
     print(sep)
     for s in clean:
         chosen = "YES" if s["chosen"] else "   "
-        f1_str = f"{s['lb_f1']:.9f}" if s["lb_f1"] else "0.000000000"
+        score_str = f"{s['public_score']:.9f}" if s["public_score"] else "0.000000000"
         row = (
-            f"{s['id']:{col_id}} {s['date']:{col_date}} {f1_str:>{col_f1}} {chosen:>{col_ch}}  "
+            f"{s['id']:{col_id}} {s['date']:{col_date}} {score_str:>{col_score}} {chosen:>{col_ch}}  "
             f"{s['file']:{col_file}} {s['comment']}"
         )
         print(row)

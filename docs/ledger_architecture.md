@@ -1,6 +1,6 @@
 # Ledger Architecture
 
-**Version:** 2.8
+**Version:** 2.9
 **Last Updated:** August 2026
 **Authority:** Binding for all experiment tracking
 

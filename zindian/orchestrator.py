@@ -968,6 +968,7 @@ def run_phase(
         _current_run_dir = None
 
     results = {}
+    variant_gate2_prompted = False
     for skill_name in skills:
         variant_arg = kwargs.get("variant_name")
         if phase == "2B" and variant_arg and skill_name == "skill_08":
@@ -1146,6 +1147,31 @@ def run_phase(
 
             # Gate 2 Check: after skill_08 completes in variant run
             if phase == "2B" and variant_arg and skill_name == "skill_08":
+                approved = prompt_human_gate(
+                    "Gate 2",
+                    store,
+                    state,
+                    config,
+                    variant_name=variant_arg,
+                    non_interactive=non_interactive,
+                )
+                if not approved:
+                    return {
+                        "status": "ERROR",
+                        "message": f"Phase 2B variant '{variant_arg}' execution blocked: Gate 2 not approved",
+                    }
+
+            # Gate 2 Check: after skill_07 variant training completes. skill_08
+            # is skipped for variant runs, so without this the variant's
+            # human_gate_2_{variant}_approved key would never be captured and
+            # skill_13 fusion could never discover the trained branch.
+            if (
+                phase == "2B"
+                and variant_arg
+                and skill_name == "skill_07"
+                and not variant_gate2_prompted
+            ):
+                variant_gate2_prompted = True
                 approved = prompt_human_gate(
                     "Gate 2",
                     store,

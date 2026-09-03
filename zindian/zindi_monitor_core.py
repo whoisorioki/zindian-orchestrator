@@ -993,7 +993,7 @@ def fetch_submission_intel(client: ZindiClient) -> dict:
                 "id": s.get("id"),
                 "date": s.get("created_at", "")[:10],
                 "file": s.get("filename"),
-                "lb_f1": score,
+                "public_score": score,
                 "chosen": s.get("chosen", False),
                 "comment": s.get("comment", ""),
             }
@@ -1077,8 +1077,9 @@ def write_compliance_log(
     ]
     for s in sub_intel.get("all", []):
         chosen = "YES" if s["chosen"] else "   "
-        f1 = f"{s['lb_f1']:.9f}"
-        lines.append(f"{s['id']:<12} {s['date']:<12} {f1:>12} {chosen:>8}  {s['file']}")
+        score_val = s.get("public_score", 0.0)
+        score_str = f"{score_val:.9f}"
+        lines.append(f"{s['id']:<12} {s['date']:<12} {score_str:>12} {chosen:>8}  {s['file']}")
 
     lines += [
         "",
@@ -1525,8 +1526,9 @@ def run(
         print(f"  {'-' * 80}")
         for s in sub_intel["all"]:
             chosen = "YES" if s["chosen"] else "   "
-            f1 = f"{s['lb_f1']:.9f}"
-            print(f"  {s['id']:<12} {s['date']:<12} {f1:>12} {chosen:>8}  {s['file']}")
+            score_val = s.get("public_score", 0.0)
+            score_str = f"{score_val:.9f}"
+            print(f"  {s['id']:<12} {s['date']:<12} {score_str:>12} {chosen:>8}  {s['file']}")
     except Exception as e:
         print(f"  ⚠️  Submission board failed: {e}")
         sub_intel = {

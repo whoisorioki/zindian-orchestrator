@@ -603,12 +603,15 @@ def run(
     if isinstance(cfg_vt, (int, float)):
         variance_threshold = float(cfg_vt)
 
-    calibration_present = (
-        bool(state.get("calibration_method"))
-        or bool(state.get("calibration_written_at"))
-        or bool(state.get("last_calibration_method"))
-        or bool(state.get("last_calibration_at"))
-    )
+    # gc5 audit fix: skill_09 writes calibration_method/calibration_written_at
+    # to state even when method == "none" (passthrough copy), so a truthy
+    # method string or timestamp is NOT evidence of real calibration.
+    # Only an actual calibrator (platt / isotonic) satisfies this guard.
+    calibration_present = str(
+        state.get("calibration_method") or ""
+    ).lower() in ("platt", "isotonic") or str(
+        state.get("last_calibration_method") or ""
+    ).lower() in ("platt", "isotonic")
 
     conf_pos, conf_neg, threshold = _resolve_threshold(config)
     initial_test_probs = _resolve_initial_test_probs(state, paths, config, target_col)
@@ -708,6 +711,19 @@ def run(
     # `.to_numpy()` guarantees a concrete `np.ndarray`; `.values` may return
     # a `pd.api.extensions.ExtensionArray` for nullable dtypes which fails
     # strict Pylance narrowing against `np.ndarray` parameter annotations.
+    for col in feature_cols:
+        if train[col].dtype.kind in ("U", "S", "O") or not pd.api.types.is_numeric_dtype(train[col]):
+            _le_feat = LabelEncoder()
+            all_vals = pd.concat([train[col], test[col]]).astype(str).fillna("missing")
+            _le_feat.fit(all_vals)
+            train[col] = _le_feat.transform(train[col].astype(str).fillna("missing"))
+            if col in test.columns:
+                test[col] = _le_feat.transform(test[col].astype(str).fillna("missing"))
+        else:
+            train[col] = train[col].fillna(train[col].median() if not train[col].dropna().empty else 0.0)
+            if col in test.columns:
+                test[col] = test[col].fillna(train[col].median() if not train[col].dropna().empty else 0.0)
+
     X_labelled = train[feature_cols].to_numpy(dtype=np.float32)
     _y_lab_raw = train[target_col].to_numpy()
     if _y_lab_raw.dtype.kind in ("U", "S", "O"):
@@ -901,12 +917,11 @@ def run(
     leaked_features = state.get("leaked_features") if isinstance(state, dict) else []
     if not isinstance(leaked_features, list):
         leaked_features = []
-    calibration_present = (
-        bool(state.get("calibration_method"))
-        or bool(state.get("calibration_written_at"))
-        or bool(state.get("last_calibration_method"))
-        or bool(state.get("last_calibration_at"))
-    )
+    calibration_present = str(
+        state.get("calibration_method") or ""
+    ).lower() in ("platt", "isotonic") or str(
+        state.get("last_calibration_method") or ""
+    ).lower() in ("platt", "isotonic")
     confidence_threshold_met = bool(
         test_probs_prev is not None and float(test_probs_prev.max()) >= conf_pos
     )
@@ -951,7 +966,7 @@ def run(
     pseudo_label_result = {
         "ran": True,
         "n_pseudo_labels_added": int(n_pseudo_added_total),
-        "retraining_required": bool(retraining_required),
+        "retraining_required": bool(retraining_required and best_iteration > 0),
         "guard_conditions_met": bool(guard_conditions_met),
         "guard_failure_reason": guard_failure_reason,
         "execution_failure_reason": None,

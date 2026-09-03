@@ -364,7 +364,74 @@ def scan_automl_imports(skills_dir: Path) -> None:
         for v in violations:
             print(f"  VIOLATION: {v}")
         fail(f"AutoML import violations found: {len(violations)}")
-    ok("No AutoML library imports detected")
+def scan_classification_threshold_compliance(skills_dir: Path) -> None:
+    """Verify that skill_14_inference.py strictly uses 0.5 threshold for classification hard labels.
+
+    AST-based checks (stronger than substring matching):
+      1. FAIL if the module reads a dynamic threshold from state — any
+         ``... model_config ... ["threshold"]`` / ``.get("threshold")``
+         subscript/access, or any reference to ``best_variant_threshold``.
+      2. FAIL unless there is an assignment ``threshold = 0.5`` (a Name
+         target named ``threshold`` bound to the literal ``0.5``).
+    """
+    inf_file = skills_dir / "skill_14_inference.py"
+    if not inf_file.exists():
+        ok("skill_14_inference.py check skipped (file absent in mock environment)")
+        return
+
+    import ast
+
+    content = inf_file.read_text(encoding="utf-8")
+    if "best_variant_threshold" in content:
+        fail(
+            "[Rules Compliance Violation] skill_14_inference.py must not read "
+            "dynamic best_variant_threshold for hard label generation"
+        )
+
+    tree = ast.parse(content, filename=str(inf_file))
+    dynamic_threshold_reads: list[str] = []
+    threshold_assignments: list[float | None] = []
+
+    for node in ast.walk(tree):
+        # Detect dict-style dynamic threshold lookups:
+        #   x["threshold"], x.get("threshold") where x resolves through
+        #   a binding named *config*/*model_config*/*oof_entry*/*mc*.
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and node.slice.value == "threshold":
+            dynamic_threshold_reads.append(ast.dump(node.value)[:80])
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "threshold"
+        ):
+            dynamic_threshold_reads.append(ast.dump(node.func.value)[:80])
+        # Detect the compliant fixed assignment: threshold = 0.5
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "threshold"
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, (int, float))
+                ):
+                    threshold_assignments.append(float(node.value.value))
+
+    if dynamic_threshold_reads:
+        fail(
+            "[Rules Compliance Violation] skill_14_inference.py must not read "
+            "dynamic threshold values (found dynamic 'threshold' lookups); "
+            "hard labels must use the fixed 0.5 cutoff"
+        )
+    if not threshold_assignments or all(t != 0.5 for t in threshold_assignments):
+        fail(
+            "[Rules Compliance Violation] skill_14_inference.py must use a fixed "
+            "0.5 threshold cutoff for classification hard labels "
+            "(expected assignment 'threshold = 0.5')"
+        )
+    ok("Classification hard label 0.5 threshold lock verified in skill_14_inference.py")
 
 
 # ---------------------------------------------------------------------------
@@ -596,11 +663,16 @@ def verify_section_1_assumptions(
     cv_strategy = cfg.get("cv_strategy", {})
     if spatial.get("present", False) or spatial.get("group_col"):
         cv_type = cv_strategy.get("type")
-        if cv_type != "GroupKFold":
+        # "BufferedSpatialCV" is the spatial-native type emitted by
+        # skill_05 (KMeans geographic blocks + GroupKFold + optional
+        # Haversine buffer). "GroupKFold" with a null group_col routes
+        # to the same spatial clustering fallback in skill_05. Both are
+        # valid spatial routes; anything else is a violation.
+        if cv_type not in ("GroupKFold", "BufferedSpatialCV"):
             fail(
-                f"[A8 Spatial Route Violation] Spatial signal is present but cv_strategy.type is '{cv_type}', expected 'GroupKFold'"
+                f"[A8 Spatial Route Violation] Spatial signal is present but cv_strategy.type is '{cv_type}', expected 'GroupKFold' or 'BufferedSpatialCV'"
             )
-    ok("A8 check: Spatial structures route strictly to GroupKFold")
+    ok("A8 check: Spatial structures route to GroupKFold or BufferedSpatialCV")
 
     # A9 - The research sidecar is non-blocking at every consumption point
     unsafe_keys = {
@@ -654,7 +726,10 @@ def verify_section_1_assumptions(
             )
     else:
         fail("requirements.txt missing")
-    ok("A10 check: requirements.txt has pip-compile signature header")
+    ok("A10 check: requirements.txt is autogenerated by pip-compile")
+
+    # Rules Compliance Check - Classification hard label 0.5 threshold lock
+    scan_classification_threshold_compliance(skills_dir)
 
     # A12 - Multi-target mixed-task competitions require recombination policy
     target_config = cfg.get("target_config")
@@ -719,6 +794,10 @@ def main():
             failures.append(str(e))
         try:
             scan_oof_cv_strategy_tags(skills_dir)
+        except PreflightError as e:
+            failures.append(str(e))
+        try:
+            scan_classification_threshold_compliance(skills_dir)
         except PreflightError as e:
             failures.append(str(e))
 

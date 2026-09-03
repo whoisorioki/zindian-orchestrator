@@ -70,6 +70,11 @@ def _score_predictions(
     metric = metric_name.lower()
 
     if task_type == "classification":
+        if metric in ("composite", "multi", "zindi"):
+            f1, thr = _classification_threshold_and_f1(y_true, preds)
+            auc = float(roc_auc_score(y_true, preds))
+            composite = 0.6 * float(f1) + 0.4 * float(auc)
+            return float(composite), float(thr)
         if metric in ("f1", "f1_score"):
             f1, thr = _classification_threshold_and_f1(y_true, preds)
             return float(f1), float(thr)
@@ -111,6 +116,7 @@ def _collect_verified_candidates(
     direction: str,
     use_probabilities: bool,
     retraining_active: bool,
+    paths: Any = None,
 ) -> list[dict[str, Any]]:
     """
     Build candidate pool from SKILL_STATE branch records only.
@@ -145,6 +151,22 @@ def _collect_verified_candidates(
         scores_obj = value.get("scores", [])
         scores_arr = np.asarray(scores_obj, dtype=np.float64)
         if len(scores_arr) != len(y_true):
+            continue
+
+        # Verify test probability file existence before considering candidate
+        effective_paths = paths or resolve_competition_paths()
+        proc_dir = effective_paths.data_processed_dir
+        reports_dir = effective_paths.reports_dir
+        
+        has_test_file = False
+        for test_name in _candidate_test_names(branch_name):
+            for base_dir in (proc_dir, reports_dir):
+                if (base_dir / f"{test_name}.csv").exists():
+                    has_test_file = True
+                    break
+            if has_test_file:
+                break
+        if not has_test_file:
             continue
 
         oof_score, threshold = _score_predictions(
@@ -193,8 +215,9 @@ def _prune_collinear(
     task_type: str,
     direction: str,
     y_true: np.ndarray | None = None,
+    max_correlation: float = 0.96,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Drop lower-scoring candidate for any pair with correlation > 0.95.
+    """Drop lower-scoring candidate for any pair with correlation > max_correlation.
 
     When y_true is provided (S4), computes correlation on error residuals:
         e_a = pred_a - y_true, e_b = pred_b - y_true
@@ -222,7 +245,7 @@ def _prune_collinear(
                     b_vec,
                     task_type,
                 )
-                if corr <= 0.95:
+                if corr <= max_correlation:
                     continue
 
                 if _is_better(float(a["score"]), float(b["score"]), direction):
@@ -250,6 +273,8 @@ def _candidate_test_names(oof_name: str) -> list[str]:
     # Branch records in SKILL_STATE carry branch_name (e.g., "variant-1").
     # Legacy names are included for backward compatibility.
     names = [f"test_probs_{oof_name}"]
+    if oof_name.startswith("calibration_"):
+        names.append(f"test_probs_{oof_name.removeprefix('calibration_')}")
     if oof_name.startswith("oof_probs_"):
         names.append(oof_name.replace("oof_probs_", "test_probs_", 1))
     if oof_name.startswith("oof_"):
@@ -675,6 +700,7 @@ def _run_single_target_fusion(
         direction=direction,
         use_probabilities=use_probabilities,
         retraining_active=retraining_active,
+        paths=paths,
     )
     if not all_variants:
         return {
@@ -691,8 +717,13 @@ def _run_single_target_fusion(
     # S4 - implemented 2026-08-03
     # Activated error-residual correlation pruning (S4) on 2026-08-03
     # to evaluate error residuals instead of raw predictions.
+    max_corr = float(config_obj.get("fusion_correlation_threshold", 0.96))
     pruned_variants, dropped_pairs = _prune_collinear(
-        all_variants, task_type=task_type, direction=direction, y_true=y_true
+        all_variants,
+        task_type=task_type,
+        direction=direction,
+        y_true=y_true,
+        max_correlation=max_corr,
     )
     if not pruned_variants:
         return {
@@ -719,9 +750,35 @@ def _run_single_target_fusion(
     if test_map is None:
         return {"status": "FAILED", "reason": "Missing test prob files"}
 
-    # Phase 3: Normalized optimization loop
-    oof_matrix = np.array([v["probs"] for v in selected], dtype=np.float64)
+    # Phase 3: Normalized optimization loop & candidate calibration
+    calibrated_oof_list = []
+    calibrated_test_list = []
+    use_calib = task_type == "classification" and bool(config_obj.get("calibrate_before_fusion", True))
+    if use_calib:
+        from sklearn.isotonic import IsotonicRegression
+        print("[Fusion] Applying Isotonic Calibration to candidate OOF & Test vectors before blending...")
+
+    for v in selected:
+        oof_vec = np.asarray(v["probs"], dtype=np.float64)
+        test_path = test_map[v["name"]]
+        df_test = pd.read_csv(test_path)
+        prob_col = [c for c in df_test.columns if c != "ID"][0]
+        test_vec = np.asarray(df_test[prob_col].values, dtype=np.float64)
+
+        if use_calib:
+            iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+            c_oof = iso.fit_transform(oof_vec, y_true)
+            c_test = iso.transform(test_vec)
+        else:
+            c_oof = oof_vec
+            c_test = test_vec
+
+        calibrated_oof_list.append(c_oof)
+        calibrated_test_list.append(c_test)
+
+    oof_matrix = np.array(calibrated_oof_list, dtype=np.float64)
     blend_probs = oof_matrix.mean(axis=0)
+    submission_values = np.array(calibrated_test_list, dtype=np.float64).mean(axis=0)
 
     blend_score, blend_threshold = _score_predictions(
         y_true,
@@ -732,7 +789,6 @@ def _run_single_target_fusion(
     )
 
     if target_name:
-        # Multi-target path: resolve target-specific anchor score from the metrics dict
         multi_metrics = state_obj.get("anchor_multi_target_metrics", {})
         target_metrics = multi_metrics.get(target_name, {})
         if task_type == "regression":
@@ -767,24 +823,13 @@ def _run_single_target_fusion(
             f"Delta (blend-anchor)       : {blend_score - anchor_score:+.6f} (higher is better)"
         )
 
-    # Blend test predictions
-    test_matrices = []
-    for name, test_path in test_map.items():
-        df = pd.read_csv(test_path)
-        prob_col = [c for c in df.columns if c != "ID"][0]
-        test_matrices.append(np.asarray(df[prob_col].values, dtype=np.float64))
-
-    test_blend = np.array(test_matrices, dtype=np.float64).mean(axis=0)
-    if task_type == "classification" and not use_probabilities:
+    if task_type == "classification":
         thr = 0.5 if blend_threshold is None else float(blend_threshold)
-        submission_values = (test_blend >= thr).astype(int)
-    else:
-        submission_values = test_blend
-
-    if task_type == "classification" and not use_probabilities:
         print(
-            f"\nTest predictions: {int(submission_values.sum())} present, "
-            f"{int((submission_values == 0).sum())} absent"
+            f"\nTest probability summary: mean={float(submission_values.mean()):.4f} "
+            f"min={float(submission_values.min()):.4f} max={float(submission_values.max()):.4f} "
+            f"(distinct={int(np.unique(submission_values).size)}); "
+            f"{int((submission_values >= thr).sum())} rows >= threshold {thr:.2f}"
         )
 
     # Dry-run exit

@@ -318,17 +318,30 @@ def run(
             prob_df = prob_df.set_index(id_col).reindex(sample[id_col]).reset_index()
         raw_probs = np.asarray(prob_df[prob_col].values, dtype=np.float64)
 
-        # -- Resolve optimal threshold from state --------------------------------
-        # Check for per-target threshold first, fall back to single-target key
-        threshold = None
-        oof_key = f"branch_{branch_name}_{target_name}_oof"
-        oof_entry = skill_state.get(oof_key) or {}
-        if isinstance(oof_entry, dict) and oof_entry.get("model_config"):
-            threshold = oof_entry["model_config"].get("threshold")
-        if threshold is None:
-            threshold = skill_state.get("best_variant_threshold") or 0.5
-        threshold = float(threshold)
-        print(f"Threshold   : {threshold:.4f} (target={target_name})")
+        # P0 audit guard: a classification probability artifact with <= 2
+        # distinct values on a non-trivial test set is a binarized label
+        # vector, not probabilities. Emitting it as a probability column
+        # collapses AUC ranking (measured LB regression: composite -0.077).
+        # Fail hard rather than submit a degenerate probability column.
+        if (
+            target_task == "classification"
+            and len(raw_probs) >= 10
+            and np.unique(raw_probs).size <= 2
+        ):
+            raise RuntimeError(
+                f"Degenerate probability artifact for target '{target_name}': "
+                f"'{prob_path.name}' holds only {np.unique(raw_probs).size} "
+                f"distinct value(s) across {len(raw_probs)} rows. This is a "
+                f"thresholded label vector, not a probability column — check "
+                f"the writer (skill_08 / skill_13 fusion) for premature "
+                f"binarization."
+            )
+
+        # -- Rules Compliance (Phase 4): Classification Hard-Label Threshold Fixed at 0.5 ---
+        # Per competition rules, threshold tuning is prohibited for binary decision outputs.
+        # Hard labels (TargetF1) use standard 0.5 cutoff; TargetRAUC gets raw continuous probabilities.
+        threshold = 0.5
+        print(f"[Rule Compliance] Classification hard-label threshold fixed at standard {threshold:.1f} (target={target_name})")
 
         # -- Map to submission columns ------------------------------------------
         # Column semantics are inferred from SampleSubmission — no hardcoded
@@ -336,7 +349,7 @@ def run(
         #
         # For binary classification with use_probabilities=True:
         #   - If exactly 2 non-ID submission columns exist, the first is treated
-        #     as the hard-label column (threshold applied) and the second as the
+        #     as the hard-label column (0.5 threshold applied) and the second as the
         #     probability column (raw values clipped to (0,1)).
         #   - If exactly 1 non-ID submission column exists, it receives the raw
         #     probability (use_probabilities=True) or binary label.

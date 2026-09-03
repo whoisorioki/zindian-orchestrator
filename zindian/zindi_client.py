@@ -37,8 +37,114 @@ def _get_zindian_class():
 
 Zindian = _get_zindian_class()
 
-load_dotenv()
+def _harden_zindi_upload_timeouts(connect_timeout: float = 30.0, read_timeout: float = 300.0) -> None:
+    """
+    Patch the vendored zindi package's upload() to enforce HTTP timeouts.
 
+    The upstream `zindi.utils.upload()` (v0.0.4) calls `requests.post(...)`
+    with NO timeout, so a stalled Zindi API connection (accepted bytes but
+    no response) blocks skill_16's submit indefinitely. We rebind
+    `zindi.platform_api.upload` (the exact symbol platform_api resolved via
+    `from zindi.utils import upload` at import time) with a copy of the same
+    MultipartEncoderMonitor logic plus `timeout=(connect, read)`.
+
+    Idempotent: skips if the patch is already applied.
+    """
+    import zindi.platform_api as _platform_api
+
+    if getattr(_platform_api.upload, "_zindian_timeout_patched", False):
+        return
+
+    from requests_toolbelt import MultipartEncoder, MultipartEncoderMonitor
+    from tqdm import tqdm
+
+    def _upload_with_timeout(filepath, comment, url, headers):
+        filename = (os.sep).join(filepath.split(os.sep)[-2:])
+        encoder = MultipartEncoder(
+            {"file": (filename, open(filepath, "rb"), "text/plain"), "comment": comment}
+        )
+        with tqdm(
+            desc=f"Submit {filename}",
+            total=encoder.len,
+            ncols=100,
+            unit="o",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as progress_bar:
+            multipart_monitor = MultipartEncoderMonitor(
+                encoder,
+                lambda monitor: progress_bar.update(monitor.bytes_read - progress_bar.n),
+            )
+            req_headers = {**headers, "Content-Type": multipart_monitor.content_type}
+            response = requests.post(
+                url,
+                data=multipart_monitor,
+                params={"auth_token": headers["auth_token"]},
+                headers=req_headers,
+                timeout=(connect_timeout, read_timeout),
+            )
+        return response
+
+    _upload_with_timeout._zindian_timeout_patched = True  # type: ignore[attr-defined]
+    _platform_api.upload = _upload_with_timeout
+    _upload_with_timeout._zindian_timeout_patched = True  # type: ignore[attr-defined]
+    _platform_api.upload = _upload_with_timeout
+
+
+# The canonical Zindi API base. The vendored zindi package (v0.0.4) still
+# hardcodes the deprecated `api.zindi.africa` domain in six places; the
+# platform migrated to `zindi.world`. All endpoints are normalized here.
+ZINDI_WORLD_API = "https://api.zindi.world/v1/competitions"
+
+
+def _normalize_zindi_endpoints(user: Any = None) -> None:
+    """
+    Force every vendored-zindi endpoint onto api.zindi.world (idempotent).
+
+    Class-level patches (apply to future instances, incl. signin):
+      - PlatformAPI.signin            -> posts to world auth endpoint
+      - PlatformAPI._auth_headers     -> rewrites `current_url` headers
+                                        from zindi.africa to zindi.world
+    Instance-level rewrites (cover the already-constructed session):
+      - Zindian._Zindian__base_api    -> world competitions base
+      - Zindian._Zindian__api_client.base_api -> world competitions base
+    """
+    import zindi.platform_api as _platform_api
+
+    if not getattr(_platform_api, "_zindian_world_normalized", False):
+        # signin() uses an inline literal URL (not base_api) — reimplement.
+        def _signin_world(self, username, password):
+            response = requests.post(
+                "https://api.zindi.world/v1/auth/signin",
+                data={"username": username, "password": password},
+                headers=self.default_headers,
+            )
+            data = self._response_data(response)
+            return self._raise_on_errors(data)
+
+        _platform_api.ZindiPlatformAPI.signin = _signin_world
+
+        # Normalize referer-style `current_url` headers that still point at
+        # the deprecated domain (leaderboard / participations calls).
+        _orig_auth_headers = _platform_api.ZindiPlatformAPI._auth_headers
+
+        def _auth_headers_world(self, auth_token, current_url=None):
+            if isinstance(current_url, str) and "zindi.africa" in current_url:
+                current_url = current_url.replace("zindi.africa", "zindi.world")
+            return _orig_auth_headers(self, auth_token, current_url)
+
+        _platform_api.ZindiPlatformAPI._auth_headers = _auth_headers_world
+        _platform_api._zindian_world_normalized = True
+
+    if user is not None:
+        # Rewrite the already-constructed session's base endpoints.
+        user._Zindian__base_api = ZINDI_WORLD_API
+        api_client = getattr(user, "_Zindian__api_client", None)
+        if api_client is not None and hasattr(api_client, "base_api"):
+            api_client.base_api = ZINDI_WORLD_API
+
+
+load_dotenv()
 
 class ZindiClient:
     BASE_URL = "https://api.zindi.world/v1/competitions"
@@ -55,6 +161,9 @@ class ZindiClient:
             "token": self._auth_token,
         }
         self._challenge_id = None
+        # Normalize deprecated api.zindi.africa endpoints -> api.zindi.world
+        # BEFORE any session use (select_challenge builds URLs from base_api).
+        _normalize_zindi_endpoints(self._user)
         print(f"  [OK] Logged in as: {os.getenv('ZINDI_USERNAME')}")
 
     # ── Competition Discovery ──────────────────────────────────────
@@ -151,6 +260,10 @@ class ZindiClient:
         print(f"📤 Submitting: {filepath}")
         print(f"📝 Comment: {comment}")
         print(f"📊 Remaining before submit: {remaining}")
+
+        # Harden the vendored uploader with HTTP timeouts before the call
+        # (upstream zindi 0.0.4 posts with no timeout and can hang forever).
+        _harden_zindi_upload_timeouts()
 
         self._user.submit(filepaths=[filepath], comments=[comment])
 

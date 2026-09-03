@@ -20,6 +20,7 @@ from sklearn.preprocessing import LabelEncoder
 # KFold usage is delegated to the central CV factory / shared trainer
 from zindian.cv import make_cv_splitter
 
+from zindian.metrics import composite_metric
 from zindian.config import ChallengeConfig
 from zindian.config import get_seed
 from zindian.paths import resolve_competition_paths
@@ -146,7 +147,23 @@ def compute_oof_predictions(
     # Option [C] challenge intercept: allow anchor_challenge to override params/model family.
     anchor_challenge = state.get("anchor_challenge", {}) or {}
     model_family = "lightgbm"
-    model_params = {"learning_rate": 0.05, "num_leaves": 31, "seed": random_seed}
+    # P2 audit fix (probability overconfidence): default leaf-purity and
+    # regularization constraints so terminal nodes cannot reach 100% class
+    # purity and raw leaf posteriors stay rank-friendly for AUC.
+    # Per-competition overrides belong in challenge_config.json under
+    # "anchor_model_params" — never hardcoded competition values (A5).
+    model_params = {
+        "learning_rate": 0.05,
+        "num_leaves": 31,
+        "seed": random_seed,
+        "reg_lambda": 2.0,
+        "reg_alpha": 0.1,
+        "min_data_in_leaf": 40,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+    }
+    model_params.update(config.get("anchor_model_params") or {})
     if anchor_challenge.get("active", False):
         model_family = str(
             anchor_challenge.get("model_family")
@@ -569,9 +586,15 @@ def run(
         "log_loss": oof_logloss,
         "rmsle": oof_logloss if task_type == "regression" else oof_f1,
         "mase": oof_logloss if task_type == "regression" else oof_f1,
+        "multi": composite_metric(oof_f1, oof_auc),
+        "composite": composite_metric(oof_f1, oof_auc),
+        "zindi": composite_metric(oof_f1, oof_auc),
     }
     # S2 - implemented 2026-08-25
-    anchor_oof_score = metric_map.get(metric_name, oof_f1)
+    anchor_oof_score = metric_map.get(
+        metric_name,
+        composite_metric(oof_f1, oof_auc) if oof_auc is not None else oof_f1,
+    )
 
     secondary_metrics = None
     if task_type == "regression":

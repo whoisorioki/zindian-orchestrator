@@ -47,6 +47,7 @@ from zindian.state import (
     write_artifact_fingerprint,
 )
 from zindian.paths import resolve_competition_paths
+from zindian.metrics import composite_metric
 from zindian.state import SkillStateStore
 from zindian.skills._lightgbm_shared import train_lightgbm_cv
 
@@ -76,6 +77,10 @@ DEFAULT_FEATURE_ENGINEERING: dict[str, Any] = {
     "ratios": [],
     "conditions": [],
     "target_dependent_bins": [],
+    "date_decomposition": [],
+    "rolling_aggregates": [],
+    "static_bins": [],
+    "drop_columns": [],
     "aliases": {},
 }
 
@@ -268,10 +273,208 @@ def build_hypothesis_features(
                 raise ValueError(
                     f"Target column '{target_col}' cannot be used in target_dependent_bins — leakage risk."
                 )
+        for dd in fe_cfg.get("date_decomposition", []) or []:
+            if dd and str(dd.get("column", "")).lower() == target_lower:
+                raise ValueError(
+                    f"Target column '{target_col}' cannot be used in date_decomposition — leakage risk."
+                )
+        for ra in fe_cfg.get("rolling_aggregates", []) or []:
+            if isinstance(ra, dict):
+                for ra_key in ("column", "group_by", "sort_by"):
+                    if str(ra.get(ra_key, "")).lower() == target_lower:
+                        raise ValueError(
+                            f"Target column '{target_col}' cannot be used in rolling_aggregates '{ra_key}' — leakage risk."
+                        )
+        for sb in fe_cfg.get("static_bins", []) or []:
+            if isinstance(sb, dict):
+                if str(sb.get("column", "")).lower() == target_lower:
+                    raise ValueError(
+                        f"Target column '{target_col}' cannot be used in static_bins — leakage risk."
+                    )
 
     new_cols = []
+    # Operator-declared column drops (from challenge_config or a variant
+    # sidecar's feature_engineering block). Sources marked with
+    # date_decomposition.drop_source are appended by the op below.
+    fe_drop_columns = list(fe_cfg.get("drop_columns", []) or [])
 
-    # 1. Polynomial extensions (e.g. X^2)
+    # =========================================================================
+    # STAGE 1: Primary Structural, Long-Memory & Discretization Base Features
+    # (Must execute BEFORE Stage 2 composite interactions and ratios)
+    # =========================================================================
+
+    # Stage 1a. Date decomposition (calendar parts + cyclical sin/cos signals)
+    for dd in fe_cfg.get("date_decomposition", []) or []:
+        if not isinstance(dd, dict):
+            continue
+        dd_col = dd.get("column")
+        if dd_col not in train.columns or dd_col not in test.columns:
+            continue
+        dd_parts = dd.get("parts") or ["month", "day_of_year", "sin_doy", "cos_doy"]
+        dd_error_policy = dd.get("error_policy", "coerce")
+        tr_parsed = pd.to_datetime(train[dd_col], errors=dd_error_policy)
+        te_parsed = pd.to_datetime(test[dd_col], errors=dd_error_policy)
+        for dd_part in dd_parts:
+            out_col = f"{dd_col}_{dd_part}"
+            if dd_part == "sin_doy":
+                train[out_col] = np.sin(
+                    2.0 * np.pi * tr_parsed.dt.dayofyear.astype(float) / 365.25
+                )
+                test[out_col] = np.sin(
+                    2.0 * np.pi * te_parsed.dt.dayofyear.astype(float) / 365.25
+                )
+            elif dd_part == "cos_doy":
+                train[out_col] = np.cos(
+                    2.0 * np.pi * tr_parsed.dt.dayofyear.astype(float) / 365.25
+                )
+                test[out_col] = np.cos(
+                    2.0 * np.pi * te_parsed.dt.dayofyear.astype(float) / 365.25
+                )
+            elif dd_part == "sin_month":
+                train[out_col] = np.sin(
+                    2.0 * np.pi * tr_parsed.dt.month.astype(float) / 12.0
+                )
+                test[out_col] = np.sin(
+                    2.0 * np.pi * te_parsed.dt.month.astype(float) / 12.0
+                )
+            elif dd_part == "cos_month":
+                train[out_col] = np.cos(
+                    2.0 * np.pi * tr_parsed.dt.month.astype(float) / 12.0
+                )
+                test[out_col] = np.cos(
+                    2.0 * np.pi * te_parsed.dt.month.astype(float) / 12.0
+                )
+            elif dd_part == "month":
+                train[out_col] = tr_parsed.dt.month.astype(float)
+                test[out_col] = te_parsed.dt.month.astype(float)
+            elif dd_part == "day_of_year":
+                train[out_col] = tr_parsed.dt.dayofyear.astype(float)
+                test[out_col] = te_parsed.dt.dayofyear.astype(float)
+            elif dd_part == "dow":
+                train[out_col] = tr_parsed.dt.dayofweek.astype(float)
+                test[out_col] = te_parsed.dt.dayofweek.astype(float)
+            elif dd_part == "year":
+                train[out_col] = tr_parsed.dt.year.astype(float)
+                test[out_col] = te_parsed.dt.year.astype(float)
+            else:
+                continue
+            new_cols.append(out_col)
+        if dd.get("drop_source", False):
+            fe_drop_columns.append(dd_col)
+
+    # Stage 1b. Long-Memory Spatial-Temporal Rolling Aggregates
+    for ra in fe_cfg.get("rolling_aggregates", []) or []:
+        if not isinstance(ra, dict):
+            continue
+        col = ra.get("column")
+        group_by = ra.get("group_by")
+        sort_by = ra.get("sort_by")
+        w = int(ra.get("window", 30))
+        min_p = int(ra.get("min_periods", 1))
+        fn = str(ra.get("function", "mean")).lower()
+        out_col = ra.get("name") or f"{col}_{w}d_{fn}"
+
+        if (
+            col
+            and group_by
+            and sort_by
+            and col in train.columns
+            and col in test.columns
+            and group_by in train.columns
+            and group_by in test.columns
+            and sort_by in train.columns
+            and sort_by in test.columns
+        ):
+            combined = pd.concat(
+                [
+                    train[[group_by, sort_by, col]].assign(
+                        _is_test=False, _orig_idx=np.arange(len(train))
+                    ),
+                    test[[group_by, sort_by, col]].assign(
+                        _is_test=True, _orig_idx=np.arange(len(test))
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+            combined_sorted = combined.sort_values(
+                by=[group_by, sort_by]
+            ).reset_index(drop=True)
+
+            grouped_roll = combined_sorted.groupby(group_by)[col].rolling(
+                window=w, min_periods=min_p
+            )
+            if fn == "std":
+                res = grouped_roll.std().fillna(0.0)
+            elif fn == "sum":
+                res = grouped_roll.sum()
+            elif fn == "min":
+                res = grouped_roll.min()
+            elif fn == "max":
+                res = grouped_roll.max()
+            else:
+                res = grouped_roll.mean()
+
+            combined_sorted[out_col] = res.values
+
+            tr_res = (
+                combined_sorted[~combined_sorted["_is_test"]]
+                .sort_values("_orig_idx")[out_col]
+                .values
+            )
+            te_res = (
+                combined_sorted[combined_sorted["_is_test"]]
+                .sort_values("_orig_idx")[out_col]
+                .values
+            )
+
+            train[out_col] = tr_res.astype(float)
+            test[out_col] = te_res.astype(float)
+            new_cols.append(out_col)
+
+    # Stage 1c. Cohort Discretization / Static Numerical Binning
+    for sb in fe_cfg.get("static_bins", []) or []:
+        if not isinstance(sb, dict):
+            continue
+        col = sb.get("column")
+        edges = sb.get("edges")
+        labels = sb.get("labels", None)
+        out_col = sb.get("name") or f"{col}_cohort"
+
+        if (
+            col
+            and col in train.columns
+            and col in test.columns
+            and edges
+            and isinstance(edges, list)
+            and len(edges) >= 2
+        ):
+            edges_float = [float(e) for e in edges]
+            if labels is not None and isinstance(labels, list):
+                lbls: list[float] | None = [float(l) for l in labels]
+            else:
+                lbls = [float(i) for i in range(len(edges_float) - 1)]
+
+            train[out_col] = pd.cut(
+                train[col].astype(float),
+                bins=edges_float,
+                labels=lbls,
+                include_lowest=True,
+            ).astype(float)
+            test[out_col] = pd.cut(
+                test[col].astype(float),
+                bins=edges_float,
+                labels=lbls,
+                include_lowest=True,
+            ).astype(float)
+            new_cols.append(out_col)
+
+    # =========================================================================
+    # STAGE 2: Derived Composite Features (Polynomials, Interactions, Ratios)
+    # (Evaluated AFTER Stage 1 so interactions can reference rolling/binned columns)
+    # =========================================================================
+
+    # Stage 2a. Polynomial extensions (e.g. X^2)
     for col in fe_cfg.get("polynomials", []) or []:
         if col in train.columns and col in test.columns:
             out_col = f"{col}_sq"
@@ -279,7 +482,7 @@ def build_hypothesis_features(
             test[out_col] = test[col].astype(float) ** 2
             new_cols.append(out_col)
 
-    # 2. Interaction terms (e.g. X_i * X_j)
+    # Stage 2b. Interaction terms (e.g. X_i * X_j)
     for pair in fe_cfg.get("interactions", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
@@ -294,7 +497,7 @@ def build_hypothesis_features(
                 test[out_col] = test[c1].astype(float) * test[c2].astype(float)
                 new_cols.append(out_col)
 
-    # 3. Ratio pairs (e.g. X_i / (X_j + epsilon))
+    # Stage 2c. Ratio pairs (e.g. X_i / (X_j + epsilon))
     for pair in fe_cfg.get("ratios", []) or []:
         if len(pair) == 2:
             c1, c2 = pair[0], pair[1]
@@ -311,7 +514,7 @@ def build_hypothesis_features(
                 test[out_col] = test[c1].astype(float) / (test[c2].astype(float) + 1e-9)
                 new_cols.append(out_col)
 
-    # 4. Boolean conditions (e.g. X_i < threshold)
+    # Stage 2d. Boolean conditions (e.g. X_i < threshold)
     for cond in fe_cfg.get("conditions", []) or []:
         col = cond.get("column")
         op = cond.get("operator")
@@ -330,7 +533,12 @@ def build_hypothesis_features(
                 test[out_col] = (test[col].astype(float) == float(val)).astype(int)
             new_cols.append(out_col)
 
-    # 5. Target-dependent bin means (quantile binning — two-mode contract applies)
+    # =========================================================================
+    # STAGE 3: Target-Dependent & Global Dimensionality Transformations
+    # (Target encodings, PCA, Aliasing & Column Dropping / Finalization)
+    # =========================================================================
+
+    # Stage 3a. Target-dependent bin means (quantile binning — two-mode contract applies)
     for td in fe_cfg.get("target_dependent_bins", []) or []:
         col = td.get("column")
         q_val = int(td.get("q", 10))
@@ -402,15 +610,14 @@ def build_hypothesis_features(
                 train[out_col] = 0.0
                 test[out_col] = 0.0
 
-    # Apply aliases/renaming
+    # Stage 3b. Apply aliases and column renaming
     for old_name, new_name in (fe_cfg.get("aliases", {}) or {}).items():
         if old_name in train.columns:
             train.rename(columns={old_name: new_name}, inplace=True)
             test.rename(columns={old_name: new_name}, inplace=True)
             new_cols = [new_name if c == old_name else c for c in new_cols]
 
-    # 6. PCA components (structural feature — no fold-restriction needed;
-    #    fit on train only, transform both to avoid leakage)
+    # Stage 3c. PCA component extraction (fit on train fold/set only to avoid leakage)
     pca_spec = fe_cfg.get("pca")
     if pca_spec and isinstance(pca_spec, dict):
         try:
@@ -479,7 +686,7 @@ def build_hypothesis_features(
         except Exception as _pca_err:
             print(f"  [WARN] PCA feature generation failed: {_pca_err}")
 
-    # Guarantee dtype stability
+    # Stage 3d. Final column drop & output dataframe slicing
     for df in (train, test):
         for c in new_cols:
             if c not in df.columns:
@@ -487,7 +694,29 @@ def build_hypothesis_features(
             df[c] = df[c].astype(float)
 
     base_cols = list(train_df.columns)
-    final_cols = base_cols + [c for c in new_cols if c not in base_cols]
+    drop_lower = {str(c).lower() for c in fe_drop_columns}
+    if drop_lower:
+        # Protected columns (target / id) must never be dropped — dropping
+        # the target breaks training and is always a configuration error.
+        _id_col_guard = str(
+            cfg.get("id_col")
+            or cfg.get("id_column")
+            or (cfg.get("columns", {}) or {}).get("id")
+            or "ID"
+        )
+        _protected = {
+            str(target_col or "").lower(),
+            _id_col_guard.lower(),
+        }
+        _blocked_drops = [c for c in fe_drop_columns if str(c).lower() in _protected]
+        if _blocked_drops:
+            raise ValueError(
+                f"drop_columns cannot remove protected columns: {_blocked_drops}"
+            )
+        final_cols = [c for c in base_cols if str(c).lower() not in drop_lower]
+    else:
+        final_cols = base_cols
+    final_cols = final_cols + [c for c in new_cols if c not in final_cols]
     test_final_cols = [c for c in final_cols if c in test.columns]
     return cast(pd.DataFrame, train[final_cols]), cast(
         pd.DataFrame, test[test_final_cols]
@@ -543,6 +772,13 @@ def _resolve_variant_model_config(variant_name: str, paths, cfg: dict) -> dict:
         merged = dict(_DEFAULT_MODEL_CFG)
         merged.update(sidecar_model)
         return merged
+
+    # Check config["variants"] list
+    for v in cfg.get("variants", []):
+        if isinstance(v, dict) and v.get("name") == variant_name:
+            merged = dict(_DEFAULT_MODEL_CFG)
+            merged.update(v)
+            return merged
 
     return dict(_DEFAULT_MODEL_CFG)
 
@@ -641,6 +877,17 @@ def _build_single_model(family: str, hyperparams: dict, seed: int):
             n_jobs=-1,
             **hp,
         )
+    elif family in ("catboost", "cb"):
+        from catboost import CatBoostClassifier
+
+        return CatBoostClassifier(
+            iterations=hp.pop("n_estimators", hp.pop("iterations", 500)),
+            learning_rate=hp.pop("learning_rate", 0.05),
+            depth=hp.pop("max_depth", hp.pop("depth", 6)),
+            random_seed=seed,
+            verbose=0,
+            **hp,
+        )
     elif family == "lr":
         from sklearn.linear_model import LogisticRegression
 
@@ -708,13 +955,15 @@ def _dispatch_variant_training(
             per_fold_feature_fn=lambda t_df, te_df, fcols, tr_idx, targ_arr: (
                 np.asarray(
                     build_hypothesis_features(
-                        t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx
+                        t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx,
+                        variant_name=variant_name,
                     )[0][fcols].values,
                     dtype=np.float64,
                 ),
                 np.asarray(
                     build_hypothesis_features(
-                        t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx
+                        t_df, te_df, mode="cv", target_array=targ_arr, train_idx=tr_idx,
+                        variant_name=variant_name,
                     )[1][fcols].values,
                     dtype=np.float64,
                 ),
@@ -869,11 +1118,12 @@ def _fit_model(
             eval_set=[(X[val_idx], y[val_idx])],
             callbacks=[lgb.early_stopping(early_stopping), lgb.log_evaluation(-1)],
         )
-    elif family == "xgb":
+    elif family in ("catboost", "cb"):
         model.fit(
             X[tr_idx],
             y[tr_idx],
             eval_set=[(X[val_idx], y[val_idx])],
+            early_stopping_rounds=early_stopping,
             verbose=False,
         )
     else:
@@ -882,6 +1132,38 @@ def _fit_model(
 
 
 # -- Variant Training ----------------------------------------------------------
+
+
+def _encode_categorical_features(
+    train: pd.DataFrame, test: pd.DataFrame, feature_cols: list[str]
+) -> None:
+    """
+    Ordinal-encode non-numeric feature columns in place so tree training can
+    ingest them.
+
+    Fits the label mapping on the combined train+test domain (matching
+    _lightgbm_shared.train_lightgbm_cv) and applies it to both frames.
+    Already-numeric columns are left untouched (idempotent).
+    """
+    if not feature_cols:
+        return
+    from sklearn.preprocessing import LabelEncoder
+
+    for col in feature_cols:
+        if col not in train.columns:
+            continue
+        if pd.api.types.is_numeric_dtype(train[col]):
+            continue
+        train_vals = train[col].astype(str)
+        test_vals = test[col].astype(str) if col in test.columns else None
+        combined = pd.concat(
+            [train_vals] + ([test_vals] if test_vals is not None else [])
+        )
+        le = LabelEncoder()
+        le.fit(combined)
+        train[col] = le.transform(train_vals)
+        if test_vals is not None:
+            test[col] = le.transform(test_vals)
 
 
 def train_variant(
@@ -939,6 +1221,11 @@ def train_variant(
                     break
     else:
         TARGET = target_col
+
+    # Ordinal-encode any non-numeric feature columns (e.g. categorical strings
+    # like gender) so tree training can ingest them. Mirrors the shared LGB
+    # path: mapping fitted on train+test, both frames replaced in place.
+    _encode_categorical_features(train, test, feature_cols)
 
     X = np.asarray(train[feature_cols].values, dtype=np.float64)
     if task_type == "regression":
@@ -1238,6 +1525,8 @@ def _run_multi_target_variant(
                 target_col=target_name,
                 task_type=target_task,
                 gate_margin=effective_gate_margin,
+                paths=paths,
+                store=SkillStateStore(paths.state_path),
             )
             seed_results.append(r)
 
@@ -1260,10 +1549,20 @@ def _run_multi_target_variant(
             state.get("pseudo_label_result", {}).get("retraining_required", False)
         )
         branch_suffix = "_augmented" if retraining_active else ""
+        # Single-target competitions register the branch under the variant name
+        # alone so skill_13 candidate discovery, the test-probability CSV names,
+        # and the human_gate_2_{branch}_approved key all stay aligned. Only
+        # genuinely multi-target competitions keep the per-target suffix.
+        single_target = len(targets) == 1
+        branch_name = (
+            f"{variant_name}{branch_suffix}"
+            if single_target
+            else f"{variant_name}_{target_name}{branch_suffix}"
+        )
         oof_1d = mean_oof if mean_oof.ndim == 1 else np.argmax(mean_oof, axis=1)
         write_oof_record(
             store,
-            branch_name=f"{variant_name}_{target_name}{branch_suffix}",
+            branch_name=branch_name,
             scores=oof_1d.tolist(),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=42,
@@ -1304,7 +1603,7 @@ def _run_multi_target_variant(
 
             # Save OOF probabilities
             oof_df = pd.DataFrame({id_col: raw_train[id_col], "oof_prob": mean_oof})
-            oof_path = proc_dir / f"oof_{variant_name}_{target_name}{branch_suffix}.csv"
+            oof_path = proc_dir / f"oof_{branch_name}.csv"
             oof_df.to_csv(oof_path, index=False)
             print(f"  [OK] OOF probabilities saved -> {oof_path}")
 
@@ -1316,9 +1615,7 @@ def _run_multi_target_variant(
             test_prob_df = pd.DataFrame(
                 {id_col: raw_test[id_col], "test_prob": mean_test}
             )
-            test_prob_path = (
-                proc_dir / f"test_probs_{variant_name}_{target_name}{branch_suffix}.csv"
-            )
+            test_prob_path = proc_dir / f"test_probs_{branch_name}.csv"
             test_prob_df.to_csv(test_prob_path, index=False)
             print(f"  [OK] Test probabilities saved -> {test_prob_path}")
         except Exception as e:
@@ -1514,6 +1811,9 @@ def run(
     # -- Phase A: Plugin dispatch ------------------------------
     print("\n[A] Feature extraction (plugin)")
     plugin_path = config.get("feature_extraction_plugin") or "plugins.tabular_extractor"
+    if plugin_path.endswith(".py"):
+        plugin_path = plugin_path[:-3]
+    plugin_path = plugin_path.replace("/", ".")
 
     # -- Phase A: Load extractor plugin -------------------------
     extractor_instance: Any = None
@@ -1894,12 +2194,18 @@ def run(
         train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
         test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)
 
+        raw_tr = pd.read_csv(paths.data_raw_dir / config.get("input_files", {}).get("train", "Train.csv")) if id_col not in train_feat else None
+        raw_te = pd.read_csv(paths.data_raw_dir / config.get("input_files", {}).get("test", "Test.csv")) if id_col not in test_feat else None
+
+        train_id_series = train_feat[id_col] if id_col in train_feat else raw_tr[id_col]
+        test_id_series = test_feat[id_col] if id_col in test_feat else raw_te[id_col]
+
         oof_df = pd.DataFrame(
-            {id_col: train_feat[id_col], "oof_prob": np.asarray(result["oof_probs"])}
+            {id_col: train_id_series, "oof_prob": np.asarray(result["oof_probs"])}
         )
         oof_df.to_csv(proc_dir / f"oof_{variant_name}.csv", index=False)
         test_df_out = pd.DataFrame(
-            {id_col: test_feat[id_col], "test_prob": np.asarray(result["test_probs"])}
+            {id_col: test_id_series, "test_prob": np.asarray(result["test_probs"])}
         )
         test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
         print("  [OK] Saved OOF / test probs and feature matrices")
@@ -1920,19 +2226,24 @@ def run(
         if task_type == "regression"
         else config.get("metric_direction", "maximize")
     )
-    best_score_raw = state.get(f"best_variant_{primary_key}")
+    if result.get("oof_f1") is not None and result.get("oof_auc") is not None:
+        current_variant_score = composite_metric(
+            float(result["oof_f1"]), float(result["oof_auc"])
+        )
+    else:
+        current_variant_score = float(result.get("oof_score") or result.get(primary_key) or 0.0)
+
+    best_score_raw = state.get("best_variant_oof_score") or state.get(f"best_variant_{primary_key}")
     is_improvement = (
         best_score_raw is None
         or (
             (float(best_score_raw) == 0.0)
             or (
-                result[primary_key] < float(best_score_raw)
+                current_variant_score < float(best_score_raw)
                 if metric_direction == "minimize"
-                else result[primary_key] > float(best_score_raw)
+                else current_variant_score > float(best_score_raw)
             )
         )
-        if task_type == "regression"
-        else True
     )
 
     update: dict[str, Any] = {
@@ -1944,6 +2255,11 @@ def run(
     if result["gate"] == "PASS" and is_improvement:
         update["best_variant_this_round"] = variant_name
         update[f"best_variant_{primary_key}"] = result[primary_key]
+        update["best_variant_oof_score"] = float(current_variant_score)
+        if result.get("oof_f1") is not None:
+            update["best_variant_oof_f1"] = float(result["oof_f1"])
+        if result.get("oof_auc") is not None:
+            update["best_variant_oof_auc"] = float(result["oof_auc"])
         update["best_variant_threshold"] = result["threshold"]
         update["best_variant_features"] = len(feature_cols)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import duckdb
 import json
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -98,6 +99,9 @@ class Ledger:
                     branch_name         VARCHAR NOT NULL,
                     submission_rank     INTEGER,
                     public_score        FLOAT,
+                    lb_f1               FLOAT,
+                    lb_auc              FLOAT,
+                    zindi_id            VARCHAR,
                     private_score       FLOAT,
                     my_rank             INTEGER,
                     selected_for_final  BOOLEAN DEFAULT FALSE,
@@ -108,6 +112,32 @@ class Ledger:
                 )
             """
             )
+
+            # Safe migration for submissions table
+            for col_def in (
+                "lb_f1 FLOAT",
+                "lb_auc FLOAT",
+                "zindi_id VARCHAR",
+            ):
+                col_name = col_def.split()[0]
+                try:
+                    self.conn.execute(
+                        f"ALTER TABLE submissions ADD COLUMN IF NOT EXISTS {col_def}"
+                    )
+                except Exception:
+                    try:
+                        cols = [
+                            r[0]
+                            for r in self.conn.execute(
+                                "PRAGMA table_info('submissions')"
+                            ).fetchall()
+                        ]
+                        if col_name not in cols:
+                            self.conn.execute(
+                                f"ALTER TABLE submissions ADD COLUMN {col_def}"
+                            )
+                    except Exception:
+                        pass
 
             self.conn.commit()
 
@@ -184,25 +214,32 @@ class Ledger:
         branch_name: str,
         submission_rank: Optional[int] = None,
         public_score: Optional[float] = None,
+        lb_f1: Optional[float] = None,
+        lb_auc: Optional[float] = None,
+        zindi_id: Optional[str] = None,
         private_score: Optional[float] = None,
         my_rank: Optional[int] = None,
         selected_for_final: bool = False,
         selection_rationale: Optional[str] = None,
         comment: Optional[str] = None,
+        submitted_at: Optional[str] = None,
     ) -> int:
         """
         Log a submission to Zindi.
 
         Returns: submission_id
         """
+        if submitted_at is None:
+            submitted_at = datetime.now(timezone.utc).isoformat()
         with self._write_lock:
             cursor = self.conn.execute(
                 """
                 INSERT INTO submissions (
                     experiment_id, branch_name, submission_rank, public_score,
-                    private_score, my_rank, selected_for_final, selection_rationale, comment
+                    lb_f1, lb_auc, zindi_id, private_score, my_rank,
+                    selected_for_final, selection_rationale, comment, submitted_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING submission_id
             """,
                 [
@@ -210,11 +247,15 @@ class Ledger:
                     branch_name,
                     submission_rank,
                     public_score,
+                    lb_f1,
+                    lb_auc,
+                    zindi_id,
                     private_score,
                     my_rank,
                     selected_for_final,
                     selection_rationale,
                     comment,
+                    submitted_at,
                 ],
             )
 
@@ -330,6 +371,80 @@ class Ledger:
                    WHERE submission_id = ?""",
                 [selected, rationale, submission_id],
             )
+            self.conn.commit()
+
+    def upsert_submission_by_zindi_id(
+        self,
+        *,
+        zindi_id: str,
+        public_score: Optional[float] = None,
+        lb_f1: Optional[float] = None,
+        lb_auc: Optional[float] = None,
+        selected_for_final: Optional[bool] = None,
+        comment: Optional[str] = None,
+        branch_name: Optional[str] = None,
+        experiment_id: Optional[int] = None,
+        submitted_at: Optional[str] = None,
+    ) -> None:
+        """Update existing submission by zindi_id or match unlinked row, else insert."""
+        with self._write_lock:
+            existing = self.conn.execute(
+                "SELECT submission_id FROM submissions WHERE zindi_id = ?", [zindi_id]
+            ).fetchone()
+            if not existing and public_score is not None:
+                # Match unlinked historical row with matching public_score
+                existing = self.conn.execute(
+                    "SELECT submission_id FROM submissions WHERE zindi_id IS NULL AND ABS(public_score - ?) < 1e-4",
+                    [public_score],
+                ).fetchone()
+
+            if existing:
+                sub_id = existing[0]
+                self.conn.execute(
+                    """
+                    UPDATE submissions
+                    SET zindi_id = COALESCE(?, zindi_id),
+                        public_score = COALESCE(?, public_score),
+                        lb_f1 = COALESCE(?, lb_f1),
+                        lb_auc = COALESCE(?, lb_auc),
+                        selected_for_final = COALESCE(?, selected_for_final),
+                        comment = COALESCE(?, comment),
+                        submitted_at = COALESCE(?, submitted_at)
+                    WHERE submission_id = ?
+                    """,
+                    [
+                        zindi_id,
+                        public_score,
+                        lb_f1,
+                        lb_auc,
+                        selected_for_final,
+                        comment,
+                        submitted_at,
+                        sub_id,
+                    ],
+                )
+            else:
+                ts = submitted_at or datetime.now(timezone.utc).isoformat()
+                self.conn.execute(
+                    """
+                    INSERT INTO submissions (
+                        experiment_id, branch_name, zindi_id, public_score,
+                        lb_f1, lb_auc, selected_for_final, comment, submitted_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        experiment_id,
+                        branch_name or "unknown",
+                        zindi_id,
+                        public_score,
+                        lb_f1,
+                        lb_auc,
+                        selected_for_final if selected_for_final is not None else False,
+                        comment,
+                        ts,
+                    ],
+                )
             self.conn.commit()
 
     def update_gate_result(

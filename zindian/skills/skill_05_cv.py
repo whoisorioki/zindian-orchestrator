@@ -12,6 +12,7 @@ Usage:
     python -m zindian.skills.skill_05_cv
     python -m zindian.skills.skill_05_cv --strategy=spatial
     python -m zindian.skills.skill_05_cv --strategy=stratified
+    python -m zindian.skills.skill_05_cv --strategy=buffered_spatial
 """
 
 from __future__ import annotations
@@ -206,6 +207,28 @@ def _resolve_decision(
     eda = state.get("eda", {}) or {}
     raw_config = _config_data(config)
 
+    # Detect explicit spatial coordinates in config (zero-literal A5 compliance)
+    spatial_coords = raw_config.get("dataset_config", {}).get("spatial_coordinates")
+    lat_col = (raw_config.get("spatial_signal", {}) or {}).get("lat_col") or raw_config.get("latitude_column")
+    lon_col = (raw_config.get("spatial_signal", {}) or {}).get("lon_col") or raw_config.get("longitude_column")
+    has_spatial_coords = False
+    if spatial_coords and isinstance(spatial_coords, dict):
+        lat_col = spatial_coords.get("lat_col") or lat_col
+        lon_col = spatial_coords.get("lon_col") or lon_col
+    if lat_col and lon_col and lat_col in ft.columns and lon_col in ft.columns:
+        has_spatial_coords = True
+
+    if has_spatial_coords:
+        return {
+            "type": "BufferedSpatialCV",
+            "shuffle": False,
+            "n_splits": int(raw_config.get("cv_strategy", {}).get("n_splits", N_SPLITS)),
+            "lat_col": lat_col,
+            "lon_col": lon_col,
+            "spatial_buffer_km": float((raw_config.get("spatial_signal", {}) or {}).get("spatial_buffer_km", 0.0)),
+            "selection_reason": "spatial_coordinates_detected",
+        }
+
     temporal_confirmed = bool(eda.get("temporal_index_confirmed", False))
     group_confirmed = bool(eda.get("group_structure_confirmed", False))
     spatial_signal = bool(
@@ -364,23 +387,30 @@ def run(strategy: str = "compare") -> dict:
     # only fall back to data-driven detection when config is empty.
     config_cv_type = (config.get("cv_strategy") or {}).get("type")
     if config_cv_type and config_cv_type not in ("auto", "compare", None):
+        cv_cfg = config.get("cv_strategy", {}) or {}
         decision = {
             "type": config_cv_type,
-            "n_splits": config.get("cv_strategy", {}).get("n_splits", N_SPLITS),
-            "shuffle": config.get("cv_strategy", {}).get("shuffle", True),
-            "random_state": config.get("cv_strategy", {}).get(
-                "random_state", get_seed()
-            ),
+            "n_splits": cv_cfg.get("n_splits", N_SPLITS),
+            "shuffle": cv_cfg.get("shuffle", True),
+            "random_state": cv_cfg.get("random_state", get_seed()),
             "selection_reason": "configured_in_challenge_config",
         }
+        # Preserve spatial params if BufferedSpatialCV
+        if config_cv_type == "BufferedSpatialCV":
+            decision["lat_col"] = cv_cfg.get("lat_col")
+            decision["lon_col"] = cv_cfg.get("lon_col")
+            decision["spatial_buffer_km"] = cv_cfg.get("spatial_buffer_km", 0.0)
     else:
         decision = _resolve_decision(config, state, ft)
 
     forced_strategy = (
         strategy
-        if strategy in ("spatial", "stratified", "timeseries", "kfold")
+        if strategy in ("spatial", "stratified", "timeseries", "kfold", "buffered_spatial", "BufferedSpatialCV")
         else None
     )
+    # Map CLI-friendly "buffered_spatial" to canonical "BufferedSpatialCV"
+    if forced_strategy == "buffered_spatial":
+        forced_strategy = "BufferedSpatialCV"
     selected_type = forced_strategy or decision["type"]
     selection_reason = (
         decision["selection_reason"]
@@ -430,14 +460,42 @@ def run(strategy: str = "compare") -> dict:
 
     y_dtype = np.float32 if task_type == "regression" else np.int32
     y = np.asarray(target_series.values, dtype=y_dtype)
-    coords = (
-        np.asarray(ft[coord_cols].values, dtype=np.float64)
-        if len(coord_cols) == 2
-        else None
-    )
-    spatial_buffer_km = float(
-        ((config.get("spatial_signal") or {}).get("spatial_buffer_km") or 0.0)
-    )
+
+    # Resolve coordinates for BufferedSpatialCV (uses explicit lat_col/lon_col from decision;
+    # falls back to the same multi-source spatial detection as _resolve_decision when the
+    # decision was built by the config bypass or a CLI-forced strategy without lat/lon).
+    if selected_type == "BufferedSpatialCV":
+        lat_col = decision.get("lat_col")
+        lon_col = decision.get("lon_col")
+        if not (lat_col and lon_col):
+            _sd_coords = (config.get("dataset_config") or {}).get("spatial_coordinates")
+            if isinstance(_sd_coords, dict):
+                lat_col = lat_col or _sd_coords.get("lat_col")
+                lon_col = lon_col or _sd_coords.get("lon_col")
+            lat_col = lat_col or (
+                (config.get("spatial_signal") or {}).get("lat_col")
+                or config.get("latitude_column")
+            )
+            lon_col = lon_col or (
+                (config.get("spatial_signal") or {}).get("lon_col")
+                or config.get("longitude_column")
+            )
+        if lat_col and lon_col and lat_col in ft.columns and lon_col in ft.columns:
+            coords = np.asarray(ft[[lat_col, lon_col]].values, dtype=np.float64)
+            spatial_buffer_km = float(decision.get("spatial_buffer_km", 0.0))
+        else:
+            raise RuntimeError(
+                f"BufferedSpatialCV requires lat_col='{lat_col}' and lon_col='{lon_col}' in features"
+            )
+    else:
+        coords = (
+            np.asarray(ft[coord_cols].values, dtype=np.float64)
+            if len(coord_cols) == 2
+            else None
+        )
+        spatial_buffer_km = float(
+            ((config.get("spatial_signal") or {}).get("spatial_buffer_km") or 0.0)
+        )
 
     print(f"Features     : {len(feature_cols)}")
     print(f"Samples      : {len(y)}")
@@ -453,17 +511,27 @@ def run(strategy: str = "compare") -> dict:
             )
 
     # If GroupKFold was selected but no explicit group_col is available,
-    # attempt a spatial clustering fallback when coordinates exist. If that
-    # fails (too few points or clustering error), gracefully fall back to
+    # or if BufferedSpatialCV was selected, attempt spatial clustering when coordinates exist.
+    # If that fails (too few points or clustering error), gracefully fall back to
     # StratifiedKFold (classification with imbalance) or KFold otherwise.
     minority_ratio = config.get("minority_ratio") or (state.get("eda") or {}).get(
         "minority_ratio"
     )
 
-    if selected_type == "GroupKFold" and decision.get("group_col") is None:
-        print(
-            "\nGroupKFold requested but no group_col supplied — attempting spatial clustering fallback"
-        )
+    needs_spatial_clustering = (
+        (selected_type == "GroupKFold" and decision.get("group_col") is None)
+        or selected_type == "BufferedSpatialCV"
+    )
+
+    if needs_spatial_clustering:
+        if selected_type == "BufferedSpatialCV":
+            print(
+                "\nBufferedSpatialCV selected — building spatial splits with explicit coordinates"
+            )
+        else:
+            print(
+                "\nGroupKFold requested but no group_col supplied — attempting spatial clustering fallback"
+            )
         if coords is not None and len(coords) >= N_SPLITS:
             try:
                 _splits, geo_groups = build_spatial_splits(
@@ -475,15 +543,21 @@ def run(strategy: str = "compare") -> dict:
                     spatial_buffer_km=spatial_buffer_km,
                 )
                 # If clustering succeeded, mark group_col as generated and persist small artifact
-                selected_type = "GroupKFold"
-                selection_reason = selection_reason + "; spatial_clusters_generated"
+                if selected_type == "BufferedSpatialCV":
+                    # Keep BufferedSpatialCV as the selected type for audit trail
+                    selection_reason = selection_reason + "; spatial_buffer_applied"
+                else:
+                    selected_type = "GroupKFold"
+                    selection_reason = selection_reason + "; spatial_clusters_generated"
                 # signal generated cluster group in state; concrete group_col name is an implementation detail
                 state_store.update(
                     spatial_cluster_generated=True,
                     spatial_cluster_count=int(max(1, len(set(geo_groups)))),
                 )
                 print(
-                    "  [OK] spatial clusters generated; using GroupKFold on cluster groups"
+                    "  [OK] spatial splits generated; using BufferedSpatialCV"
+                    if selected_type == "BufferedSpatialCV"
+                    else "  [OK] spatial clusters generated; using GroupKFold on cluster groups"
                 )
             except Exception as exc:
                 print(
@@ -545,8 +619,8 @@ def run(strategy: str = "compare") -> dict:
     if len(ft) < materialized_n_splits:
         materialized_n_splits = max(2, len(ft))
     if (
-        selected_type == "GroupKFold"
-        and decision.get("group_col") is None
+        (selected_type == "BufferedSpatialCV" or 
+         (selected_type == "GroupKFold" and decision.get("group_col") is None))
         and coords is not None
     ):
         buffered_splits, buffered_groups = build_spatial_splits(
@@ -584,7 +658,8 @@ def run(strategy: str = "compare") -> dict:
         )
     state_update["cv_split_source"] = (
         "skill_05_spatial"
-        if selected_type == "GroupKFold" and decision.get("group_col") is None
+        if (selected_type == "BufferedSpatialCV" or 
+            (selected_type == "GroupKFold" and decision.get("group_col") is None))
         else "skill_05_configured"
     )
     current_phase = state.get("dag_phase")
@@ -624,6 +699,15 @@ def run(strategy: str = "compare") -> dict:
                 "group_col": decision.get("group_col"),
                 "selection_reason": selection_reason,
             }
+            # Preserve spatial parameters on the config round-trip so a
+            # BufferedSpatialCV decision survives into challenge_config.json
+            # and the config bypass can reconstruct it on the next run.
+            if selected_type == "BufferedSpatialCV":
+                cv_block["lat_col"] = decision.get("lat_col")
+                cv_block["lon_col"] = decision.get("lon_col")
+                cv_block["spatial_buffer_km"] = float(
+                    decision.get("spatial_buffer_km") or spatial_buffer_km or 0.0
+                )
 
             if cfg_data.get("cv_strategy") != cv_block:
                 cfg_data["cv_strategy"] = cv_block
@@ -657,10 +741,10 @@ if __name__ == "__main__":
         elif arg == "--strategy" and len(sys.argv) > sys.argv.index(arg) + 1:
             strategy = sys.argv[sys.argv.index(arg) + 1]
 
-    if strategy not in ("compare", "spatial", "stratified", "timeseries", "kfold"):
+    if strategy not in ("compare", "spatial", "stratified", "timeseries", "kfold", "buffered_spatial", "BufferedSpatialCV"):
         print(
             f"[FAIL] Unknown strategy '{strategy}'. "
-            f"Use: compare, spatial, stratified, timeseries, kfold"
+            f"Use: compare, spatial, stratified, timeseries, kfold, buffered_spatial, BufferedSpatialCV"
         )
         sys.exit(1)
 
