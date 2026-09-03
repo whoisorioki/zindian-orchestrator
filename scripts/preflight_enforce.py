@@ -170,10 +170,20 @@ def check_human_gate_keys(state: dict, cfg: dict) -> None:
                     f"SKILL_STATE.{key} has wrong type: {type(val).__name__}, expected {expected_type.__name__}"
                 )
 
-    # Check flat branch approvals using variants list from config
+    # Check flat branch approvals using variants list from config.
+    # Variant entries may be plain names (str) or sidecar dicts with a
+    # "name" key — use the name, never the dict repr (which would demand
+    # gate keys like "human_gate_2_{'name': ...}_approved" that no skill
+    # or operator can ever write).
     variants = cfg.get("variants", [])
     if variants:
-        for branch in variants:
+        for variant in variants:
+            if isinstance(variant, dict):
+                branch = str(variant.get("name", "")).strip()
+            else:
+                branch = str(variant).strip()
+            if not branch:
+                continue
             gate_key = f"human_gate_2_{branch}_approved"
             val = state.get(gate_key)
             if val is None:
@@ -432,6 +442,55 @@ def scan_classification_threshold_compliance(skills_dir: Path) -> None:
             "(expected assignment 'threshold = 0.5')"
         )
     ok("Classification hard label 0.5 threshold lock verified in skill_14_inference.py")
+
+
+def scan_oof_lb_collision(state: dict, comp_path: Path) -> None:
+    """Fail hard if any OOF-state value collides with a leaderboard value.
+
+    OOF metrics and public leaderboard metrics coinciding to within 1e-6 is
+    contamination by construction: independent data splits cannot produce
+    identical scores to six decimals. This guards the exact failure observed
+    in the 2026-09-03 audit, where ``anchor_oof_auc`` was found holding a
+    manifest ``lb_auc`` (0.827310924 == qouVDWN6).
+    """
+    manifest_path = comp_path / "reports" / "submissions_manifest.json"
+    if not manifest_path.exists():
+        ok("OOF/LB collision check skipped (no submissions_manifest.json)")
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(
+            f"OOF/LB collision check could not parse submissions_manifest.json: {exc}"
+        )
+        return
+
+    lb_values: list[tuple[str, str, float]] = []
+    for item in manifest:
+        z_id = str(item.get("zindi_id", "?"))
+        for field in ("public_score", "lb_f1", "lb_auc"):
+            v = item.get(field)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                lb_values.append((z_id, field, float(v)))
+
+    prefixes = ("anchor_oof", "best_variant_oof")
+    collisions: list[str] = []
+    for key, value in state.items():
+        if not any(key.startswith(p) for p in prefixes):
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        for z_id, field, lb in lb_values:
+            if abs(float(value) - lb) <= 1e-6:
+                collisions.append(f"{key}={value!r} == {z_id}.{field}={lb!r}")
+
+    if collisions:
+        fail(
+            "[OOF/LB Collision] Leaderboard values found inside OOF state keys "
+            "(OOF and LB metrics cannot coincide to 1e-6): "
+            + "; ".join(collisions)
+        )
+    ok("OOF/LB collision check: no OOF state key matches any leaderboard value")
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +789,9 @@ def verify_section_1_assumptions(
 
     # Rules Compliance Check - Classification hard label 0.5 threshold lock
     scan_classification_threshold_compliance(skills_dir)
+
+    # OOF/LB contamination guard — leaderboard values inside OOF state keys
+    scan_oof_lb_collision(state, comp_path)
 
     # A12 - Multi-target mixed-task competitions require recombination policy
     target_config = cfg.get("target_config")

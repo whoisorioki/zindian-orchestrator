@@ -259,3 +259,43 @@ def test_reconcile_gate5_derivation(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         {"zindi_id": "EGv7pdTK", "filename": "sub_014_ensemble.csv"},
     ]
     assert rl.derive_gate5_ids(manifest) == {"9oXDE1j3", "PzruUqvQ"}
+
+
+def test_preflight_oof_lb_collision_guard(tmp_path: Path):
+    """The OOF/LB collision guard must fail hard on the exact historical
+    contamination (anchor_oof_auc == manifest lb_auc) and pass clean OOF state."""
+    from scripts.preflight_enforce import scan_oof_lb_collision
+
+    comp = tmp_path / "comp"
+    (comp / "reports").mkdir(parents=True)
+    (comp / "reports" / "submissions_manifest.json").write_text(
+        json.dumps(
+            [
+                {
+                    "zindi_id": "qouVDWN6",
+                    "public_score": 0.821380801,
+                    "lb_f1": 0.817427385,
+                    "lb_auc": 0.827310924,
+                }
+            ]
+        )
+    )
+
+    # Contaminated state — the exact 2026-09-03 failure
+    with pytest.raises(PreflightError, match="OOF/LB Collision"):
+        scan_oof_lb_collision({"anchor_oof_auc": 0.827310924}, comp)
+
+    # Clean OOF state (the decontaminated values) passes
+    scan_oof_lb_collision(
+        {
+            "anchor_oof_f1": 0.8171949630916197,
+            "anchor_oof_auc": 0.813342,
+            "anchor_oof_score": 0.8156537778549717,
+            "best_variant_oof_auc": 0.8129801203415224,
+        },
+        comp,
+    )
+
+    # No manifest -> check is skipped, not failed
+    (comp / "reports" / "submissions_manifest.json").unlink()
+    scan_oof_lb_collision({"anchor_oof_auc": 0.5}, comp)

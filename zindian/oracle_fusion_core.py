@@ -27,6 +27,7 @@ from sklearn.metrics import (
 )
 
 from zindian.config import ChallengeConfig
+from zindian.metrics import composite_metric
 from zindian.paths import resolve_competition_paths
 from zindian.state import SkillStateStore
 
@@ -73,7 +74,7 @@ def _score_predictions(
         if metric in ("composite", "multi", "zindi"):
             f1, thr = _classification_threshold_and_f1(y_true, preds)
             auc = float(roc_auc_score(y_true, preds))
-            composite = 0.6 * float(f1) + 0.4 * float(auc)
+            composite = composite_metric(float(f1), float(auc))
             return float(composite), float(thr)
         if metric in ("f1", "f1_score"):
             f1, thr = _classification_threshold_and_f1(y_true, preds)
