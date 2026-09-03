@@ -129,6 +129,14 @@ def reconcile_database() -> None:
             print(f"[FIX] {zindi_id}: {', '.join(u.split(' =')[0] for u in updates)}")
     con.commit()
 
+    # Reconcile ensemble feature_count in experiments table (convert variant array length 3 to true feature count 37)
+    exp_fix = con.execute(
+        "UPDATE experiments SET feature_count = 37 WHERE branch_name = 'ensemble' AND feature_count = 3"
+    ).rowcount
+    if exp_fix:
+        print(f"[FIX] Reconciled {exp_fix} ensemble rows in experiments table (feature_count: 3 -> 37)")
+    con.commit()
+
     # Gate baseline decontamination: anchor_oof_auc previously held a
     # leaderboard value (0.827310924 == qouVDWN6 lb_auc). Restore the
     # recorded OOF values from experiments.exp6.

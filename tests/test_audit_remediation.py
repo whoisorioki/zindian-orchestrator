@@ -261,6 +261,31 @@ def test_reconcile_gate5_derivation(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert rl.derive_gate5_ids(manifest) == {"9oXDE1j3", "PzruUqvQ"}
 
 
+def test_ensemble_feature_count_resolution():
+    """_feature_count_from_state must report input feature count, not variant array length."""
+    from zindian.skills.skill_16_submit import _feature_count_from_state
+
+    # Case 1: Ensemble state with constituent variant feature counts (47 and 37)
+    state = {
+        "last_ensemble_variants": ["catboost-deep-specialist", "catboost-climate-interactions"],
+        "branch_catboost-deep-specialist_oof": {
+            "model_config": {"feature_count": 47}
+        },
+        "branch_catboost-climate-interactions_oof": {
+            "model_config": {"feature_count": 37}
+        },
+    }
+    assert _feature_count_from_state(state, "ensemble") == 47
+
+    # Case 2: Explicit last_ensemble_feature_count recorded
+    state_with_efc = {
+        "last_ensemble_variants": ["v1", "v2", "v3"],
+        "last_ensemble_feature_count": 42,
+    }
+    assert _feature_count_from_state(state_with_efc, "ensemble") == 42
+
+
+
 def test_fusion_pool_excludes_blend_branches(tmp_path: Path):
     """Base-model fusion pool must exclude blend/derived branches
     (ensemble, calibration_*) via the config-driven fusion_excluded_branches."""

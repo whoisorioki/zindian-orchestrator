@@ -307,33 +307,63 @@ def determine_submission_metrics(
 
 
 def _feature_count_from_state(state: dict[str, Any], branch: str) -> int | str:
-    if branch == "ensemble":
-        variants = state.get("last_ensemble_variants")
-        if isinstance(variants, list) and len(variants) > 0:
-            return len(variants)
-        oof = state.get("branch_ensemble_oof")
-        if isinstance(oof, dict):
-            mc = oof.get("model_config") or {}
-            fc = mc.get("feature_count")
-            if isinstance(fc, (int, float)):
-                return int(fc)
-
+    # 1. Check explicit OOF record model_config for the branch
     for key in (f"branch_calibration_{branch}_oof", f"branch_{branch}_oof"):
         oof = state.get(key)
         if isinstance(oof, dict):
             mc = oof.get("model_config") or {}
             fc = mc.get("feature_count")
-            if isinstance(fc, (int, float)):
+            if isinstance(fc, (int, float)) and int(fc) > 0:
                 return int(fc)
 
+    # 2. For ensemble, check last_ensemble_feature_count or constituent variants' feature counts
+    if branch == "ensemble":
+        efc = state.get("last_ensemble_feature_count")
+        if isinstance(efc, (int, float)) and int(efc) > 0:
+            return int(efc)
+        variants = state.get("last_ensemble_variants")
+        if isinstance(variants, list) and len(variants) > 0:
+            counts = []
+            for v_name in variants:
+                if v_name == "ensemble":
+                    continue
+                v_oof = state.get(f"branch_{v_name}_oof") or state.get(f"branch_calibration_{v_name}_oof")
+                if isinstance(v_oof, dict):
+                    v_fc = (v_oof.get("model_config") or {}).get("feature_count")
+                    if isinstance(v_fc, (int, float)) and int(v_fc) > 0:
+                        counts.append(int(v_fc))
+            if counts:
+                return max(counts)
+
+    # 3. Check general feature count state keys
     for key in (
-        "last_ensemble_features",
-        "best_variant_features",
         "last_ensemble_feature_count",
+        "best_variant_features",
+        "last_ensemble_features",
+        "shap_feature_count",
     ):
         v = state.get(key)
-        if isinstance(v, (int, float)):
+        if isinstance(v, (int, float)) and int(v) > 0:
             return int(v)
+
+    # 4. Fallback to feature CSV file on disk if available
+    try:
+        paths = resolve_competition_paths()
+        feat_file = paths.data_processed_dir / f"features_train_{branch}.csv"
+        if not feat_file.exists():
+            feat_file = paths.data_processed_dir / "features_train_anchor-baseline.csv"
+        if feat_file.exists():
+            import pandas as pd
+            cols = pd.read_csv(feat_file, nrows=1).columns
+            cfg = ChallengeConfig.load()
+            target_col = cfg.get("target_col")
+            id_col = cfg.get("id_col") or "ID"
+            feat_cols = [c for c in cols if c not in (id_col, target_col)]
+            if feat_cols:
+                return len(feat_cols)
+    except Exception:
+        pass
+
     return "?"
 
 

@@ -438,6 +438,28 @@ def run(
                 test_prob_df.to_csv(test_prob_path, index=False)
                 print(f"  [OK] Ensemble Test probabilities saved -> {test_prob_path}")
 
+            # Calculate ensemble feature count from constituent variants
+            ens_feature_count = None
+            ens_vars = result.get("variants", [])
+            if isinstance(ens_vars, list) and ens_vars:
+                counts = []
+                for v_name in ens_vars:
+                    if v_name == "ensemble":
+                        continue
+                    v_oof = state_obj.get(f"branch_{v_name}_oof") or state_obj.get(f"branch_calibration_{v_name}_oof")
+                    if isinstance(v_oof, dict):
+                        v_fc = (v_oof.get("model_config") or {}).get("feature_count")
+                        if isinstance(v_fc, (int, float)) and int(v_fc) > 0:
+                            counts.append(int(v_fc))
+                if counts:
+                    ens_feature_count = max(counts)
+            if ens_feature_count is None:
+                for k in ("best_variant_features", "shap_feature_count", "last_ensemble_feature_count"):
+                    v = state_obj.get(k)
+                    if isinstance(v, (int, float)) and int(v) > 0:
+                        ens_feature_count = int(v)
+                        break
+
             # Write OOF record to state
             if blend_probs is not None:
                 write_oof_record(
@@ -448,7 +470,11 @@ def run(
                         state_obj, config_obj._data
                     ),
                     seed=42,
-                    model_config={"target_name": "target", "variant": "ensemble"},
+                    model_config={
+                        "target_name": "target",
+                        "variant": "ensemble",
+                        "feature_count": ens_feature_count,
+                    },
                 )
 
             # Update anchor_git_branch to ensemble
@@ -461,12 +487,14 @@ def run(
                     last_ensemble_metric_name=result.get("metric"),
                     last_ensemble_threshold=result.get("threshold"),
                     last_ensemble_variants=result.get("variants"),
+                    last_ensemble_feature_count=ens_feature_count,
                     last_ensemble_dropped_collinear=result.get("dropped_collinear"),
                     last_updated=datetime.now(timezone.utc).isoformat(),
                 )
             else:
                 state_obj["anchor_git_branch"] = "ensemble"
                 state_obj["dag_phase"] = "phase_3_fusion_complete"
+                state_obj["last_ensemble_feature_count"] = ens_feature_count
 
     # Remove ndarrays from result to prevent JSON serialization crash
     result.pop("submission_column", None)
