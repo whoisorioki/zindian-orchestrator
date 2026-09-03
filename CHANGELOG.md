@@ -2,6 +2,16 @@
 
 All notable changes to the Zindian Orchestrator project during the ML Technical Debt audit reconciliation session are documented below.
 
+## [2026-09-03]
+
+### Fixed
+- **Audit Remediation & Metric Provenance Enforcement (`zindian.metrics`):**
+  - Updated `composite_metric()` in `zindian/metrics.py` to enforce a runtime guard using `ScoreProvenance` (`oof_score` vs `lb_score`). Passing Leaderboard-tagged (`lb`) metrics to `composite_metric()` now raises `ValueError` immediately.
+  - Reconciled DuckDB submission ledger (`experiments.db`) to exact UTC ISO timestamps, restoring missing `branch_name` and `my_rank` metadata.
+  - Enforced strict Human Gate 5 selection locks in both DuckDB ledger and `show_submission_board()` in `skill_16_submit.py`.
+  - Added AST-based preflight static scan check in `scripts/preflight_enforce.py` enforcing fixed 0.5 threshold cutoff for classification hard labels in `skill_14_inference.py`.
+  - Added comprehensive test coverage suite `tests/test_audit_remediation.py` (6 passing tests).
+
 ## [2026-09-01]
 
 ### Added

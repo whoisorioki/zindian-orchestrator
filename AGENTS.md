@@ -105,6 +105,7 @@ rediscover.
 | Rules Compliance Cutoff (0.5) | `zindian/skills/skill_14_inference.py` | [CONFIRMED — classification hard labels strictly use 0.5 cutoff per competition rules.] |
 | Gate OOF Metric Key Resolution | `zindian/skills/skill_07_features.py` & `skill_11_gate.py` | [CONFIRMED — writes and resolves canonical `best_variant_oof_score` with fallback to composite 0.6 F1 + 0.4 AUC.] |
 | Pre-Fusion Isotonic Calibration | `zindian/oracle_fusion_core.py` | [CONFIRMED — candidate OOF/test probability vectors are calibrated via Isotonic Regression before ensembling.] |
+| ScoreProvenance Metric Runtime Guard | `zindian/metrics.py` | [CONFIRMED — `composite_metric` enforces `ScoreProvenance` tagged values and raises `ValueError` if LB-sourced metrics are passed to prevent leaderboard contamination.] |
 
 ### On the skill module count claim
 

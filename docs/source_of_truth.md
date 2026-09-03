@@ -428,6 +428,8 @@ composite_score = sum(weighted_distances) / total_weight
 > `gamma_bar_k = min((1/K) * sum(n_{val,i} / n_{train,i}), 1.0)`
 > If `fold_sizes` are absent, the fallback remains the equal-fold geometry correction `gamma_bar_k = 1/K + 1/(K-1)`.
 > Epsilon-regime note: with the competitions currently represented in this workspace, no live competition state file is available to prove or disprove a near-zero-variance target from data. Operationally, the `epsilon=1e-8` safeguard only becomes relevant for degenerate near-constant fold-score sequences; the helper remains finite in that regime and is covered by `tests/test_scale_invariance.py::test_skill_12_near_zero_variance_stays_finite`.
+
+> **ScoreProvenance Metric Runtime Guard (`zindian.metrics`):** `composite_metric(f1, auc, provenance=ScoreProvenance.OOF)` in `zindian/metrics.py` enforces explicit metric provenance tagging. If Leaderboard-derived (`ScoreProvenance.LB`) values are supplied to `composite_metric()`, a `ValueError` runtime exception is raised immediately to prevent Leaderboard contamination of OOF gate baselines.
 > **IMPORTANT NOTE:** This is NOT Kendall & Gal uncertainty weighting (which requires joint differentiable loss training that this decision-tree pipeline does not use).
 
 `composite_direction` is fixed as `"minimize_composite_distance"` — every term is already a "lower is better" distance, regardless of how many targets individually maximize or minimize.
