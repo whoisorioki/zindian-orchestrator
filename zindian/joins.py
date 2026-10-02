@@ -41,7 +41,18 @@ from typing import Sequence
 import pandas as pd
 
 
-__all__ = ["sorted_asof_join"]
+__all__ = ["sorted_asof_join", "RowAlignmentError"]
+
+
+class RowAlignmentError(AssertionError):
+    """Raised when per-row artifacts cannot be proven to share row order.
+
+    Distinct from ordinary IO/config failures: this is always a hard stop.
+    Callers that guard optional writes with a broad ``except Exception`` must
+    re-raise this type, or the alignment guarantee silently degrades back to
+    a warning — which is precisely the failure mode that let the
+    ``merge_asof`` permutation go unnoticed.
+    """
 
 
 def _validate_unique_ids(df: pd.DataFrame, id_col: str, role: str) -> None:

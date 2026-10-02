@@ -41,6 +41,7 @@ from sklearn.preprocessing import LabelEncoder
 
 from zindian.config import ChallengeConfig, get_seed
 from zindian.cv import load_explicit_cv_splits
+from zindian.joins import RowAlignmentError
 from zindian.state import (
     resolve_active_cv_strategy_id,
     write_oof_record,
@@ -2200,11 +2201,75 @@ def run(
         train_feat.to_csv(proc_dir / f"features_train_{variant_name}.csv", index=False)
         test_feat.to_csv(proc_dir / f"features_test_{variant_name}.csv", index=False)
 
-        raw_tr = pd.read_csv(paths.data_raw_dir / config.get("input_files", {}).get("train", "Train.csv")) if id_col not in train_feat else None
-        raw_te = pd.read_csv(paths.data_raw_dir / config.get("input_files", {}).get("test", "Test.csv")) if id_col not in test_feat else None
+        # OOF/test probability artifacts must carry identifiers that are
+        # PROVABLY the rows the predictions belong to.
+        #
+        # Previously, if a plugin dropped `id_col` (both extractors did),
+        # this silently fell back to the RAW id column and zipped it onto
+        # `result["oof_probs"]`. Those probabilities were computed over the
+        # plugin's own -- possibly row-permuted -- feature frame, so the raw
+        # IDs were attached to foreign predictions. Nothing detected it: the
+        # ID set was complete and the count matched. That silent re-attachment
+        # is the reason this defect class was undetectable.
+        #
+        # S-3 makes the identifier mandatory; S-4 requires comparing the ID
+        # SEQUENCE, not just membership, because a whole-row permutation
+        # preserves set membership exactly.
+        train_file = config.get("input_files", {}).get("train", "Train.csv")
+        test_file = config.get("input_files", {}).get("test", "Test.csv")
 
-        train_id_series = train_feat[id_col] if id_col in train_feat else raw_tr[id_col]
-        test_id_series = test_feat[id_col] if id_col in test_feat else raw_te[id_col]
+        for side, feat, fname in (
+            ("train", train_feat, train_file),
+            ("test", test_feat, test_file),
+        ):
+            if id_col not in feat.columns:
+                raise RowAlignmentError(
+                    f"Feature matrix for variant '{variant_name}' is missing "
+                    f"the identifier column {id_col!r} ({side} side). Refusing "
+                    f"to write {side} probabilities by re-attaching raw IDs from "
+                    f"{fname}: the predictions were computed over this frame, "
+                    f"so raw IDs may not correspond to them. This is the "
+                    f"merge_asof row-permutation defect. Fix the responsible "
+                    f"plugin to retain {id_col!r} (SoT S-3) rather than "
+                    f"patching around it here."
+                )
+
+        raw_train_ids = pd.read_csv(
+            paths.data_raw_dir / train_file, usecols=[id_col]
+        )[id_col]
+        raw_test_ids = pd.read_csv(
+            paths.data_raw_dir / test_file, usecols=[id_col]
+        )[id_col]
+
+        # Order assertion: a permutation preserves set membership, so compare
+        # the SEQUENCE (S-4). Mismatch means the feature rows are not in raw
+        # order and any positional join downstream would be silently wrong.
+        for side, feat_ids, raw_ids, fname in (
+            ("train", train_feat[id_col], raw_train_ids, train_file),
+            ("test", test_feat[id_col], raw_test_ids, test_file),
+        ):
+            if len(feat_ids) != len(raw_ids):
+                raise RowAlignmentError(
+                    f"{side} feature rows ({len(feat_ids)}) do not match "
+                    f"{fname} ({len(raw_ids)}). Cannot align probabilities."
+                )
+            if not feat_ids.reset_index(drop=True).equals(
+                raw_ids.reset_index(drop=True)
+            ):
+                n_diff = int(
+                    (feat_ids.reset_index(drop=True) != raw_ids.reset_index(drop=True)).sum()
+                )
+                raise RowAlignmentError(
+                    f"{side} feature IDs for variant '{variant_name}' are out "
+                    f"of order relative to {fname} ({n_diff} positions differ). "
+                    f"The ID SET matches, so a membership check would pass -- "
+                    f"but the rows are permuted, and every positional consumer "
+                    f"(CV splits, OOF vectors, submission row order) would be "
+                    f"silently misaligned. Refusing to continue (SoT S-4)."
+                )
+
+        train_id_series = train_feat[id_col]
+        test_id_series = test_feat[id_col]
 
         oof_df = pd.DataFrame(
             {id_col: train_id_series, "oof_prob": np.asarray(result["oof_probs"])}
@@ -2215,6 +2280,13 @@ def run(
         )
         test_df_out.to_csv(proc_dir / f"test_probs_{variant_name}.csv", index=False)
         print("  [OK] Saved OOF / test probs and feature matrices")
+    except RowAlignmentError:
+        # Never downgrade an alignment failure to a warning. This block is
+        # otherwise best-effort (a failed optional write is tolerable), but a
+        # mis-aligned write is not: the OOF/test artifacts would carry IDs
+        # that do not correspond to their predictions, and every downstream
+        # positional consumer would inherit the corruption silently.
+        raise
     except Exception as e:
         print(f"  [WARN]  Failed to save OOF/test probs: {e}")
 

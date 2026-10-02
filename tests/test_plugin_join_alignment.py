@@ -241,3 +241,149 @@ def test_both_plugins_use_safe_join_and_keep_id():
         assert "[c for c in [id_col] + banned" not in text, (
             f"{name} still drops id_col from its output"
         )
+
+
+# -- Phase 4: skill_07 must refuse to re-attach raw IDs ----------------
+
+
+def _assert_permuted_ids_rejected(train_feat_ids, raw_ids, variant="v"):
+    """Mirror of skill_07's Phase D guard, exercised directly.
+
+    Extracted so the guard's logic is testable without standing up the whole
+    skill. Returns the number of differing positions, or raises.
+    """
+    from zindian.joins import RowAlignmentError
+
+    feat_ids = pd.Series(train_feat_ids)
+    if len(feat_ids) != len(raw_ids):
+        raise RowAlignmentError("length mismatch")
+    if not feat_ids.reset_index(drop=True).equals(pd.Series(raw_ids).reset_index(drop=True)):
+        n_diff = int((feat_ids.reset_index(drop=True) != pd.Series(raw_ids).reset_index(drop=True)).sum())
+        raise RowAlignmentError(f"{n_diff} positions differ")
+    return 0
+
+
+def test_guard_rejects_equal_length_permutation():
+    """The core Phase 4 requirement: same length, different order -> REJECT.
+
+    A length check passes here by construction, so this is the only assertion
+    that can catch the defect class.
+    """
+    ids = [f"ID_{i:05d}" for i in range(50)]
+    permuted = ids[10:] + ids[:10]  # rotation: same set, same length
+
+    assert set(permuted) == set(ids), "precondition: sets must match"
+    assert len(permuted) == len(ids), "precondition: lengths must match"
+
+    with pytest.raises(Exception) as ei:
+        _assert_permuted_ids_rejected(permuted, ids)
+    assert "positions differ" in str(ei.value)
+
+
+def test_guard_accepts_correct_order():
+    ids = [f"ID_{i:05d}" for i in range(50)]
+    assert _assert_permuted_ids_rejected(ids, ids) == 0
+
+
+def test_skill07_no_longer_silently_reattaches_raw_ids():
+    """The raw-ID fallback must be gone from skill_07's source."""
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "zindian/skills/skill_07_features.py"
+    ).read_text()
+    # The exact dangerous expression must be gone. Note `raw_tr` is NOT a
+    # valid substring to search: `raw_train` appears legitimately elsewhere.
+    assert 'if id_col in train_feat else raw_tr[id_col]' not in src, (
+        "skill_07 still falls back to re-attaching raw IDs to foreign predictions"
+    )
+    assert 'if id_col in test_feat else raw_te[id_col]' not in src, (
+        "skill_07 still falls back to re-attaching raw IDs on the test side"
+    )
+    assert "raw_tr[" not in src and "raw_te[" not in src, (
+        "raw_tr/raw_te indexing should be fully removed"
+    )
+    # And the guard must not be swallowed by the best-effort writer.
+    assert "except RowAlignmentError:" in src, (
+        "alignment failures must re-raise, not degrade to a warning"
+    )
+
+
+# -- Phase 6a: fusion labels must come from raw, joined by ID ----------
+
+
+def _fusion_fixture(tmp_path, n=60):
+    """Raw Train.csv with IDs and a target, plus a matching feature frame."""
+    ids = [f"ID_{i:05d}" for i in range(n)]
+    raw = pd.DataFrame({"ID": ids, "target": [i % 2 for i in range(n)]})
+    raw.to_csv(tmp_path / "Train.csv", index=False)
+    return raw, pd.DataFrame({"ID": ids, "f1": np.arange(n, dtype=float)})
+
+
+def test_fusion_labels_joined_by_id(tmp_path):
+    from zindian.oracle_fusion_core import _raw_labels_by_id
+
+    raw, feat = _fusion_fixture(tmp_path)
+    cfg = {"input_files": {"train": "Train.csv"}}
+
+    y = _raw_labels_by_id(cfg, tmp_path, "target", feat, "classification", "ID")
+    assert len(y) == len(raw)
+    assert list(y) == list(raw["target"].values), (
+        "labels must come from raw, in the feature frame's row order"
+    )
+
+
+def test_fusion_refuses_permuted_feature_frame(tmp_path):
+    """The corruption case: feature rows permuted, ID set identical."""
+    from zindian.joins import RowAlignmentError
+    from zindian.oracle_fusion_core import _raw_labels_by_id
+
+    _raw, feat = _fusion_fixture(tmp_path)
+    permuted = pd.concat([feat.iloc[10:], feat.iloc[:10]])
+    cfg = {"input_files": {"train": "Train.csv"}}
+
+    with pytest.raises(RowAlignmentError):
+        _raw_labels_by_id(cfg, tmp_path, "target", permuted, "classification", "ID")
+
+
+def test_fusion_refuses_feature_frame_without_id(tmp_path):
+    """S-3: no identifier means no ID join is possible; refuse, do not guess."""
+    from zindian.joins import RowAlignmentError
+    from zindian.oracle_fusion_core import _raw_labels_by_id
+
+    _raw, feat = _fusion_fixture(tmp_path)
+    no_id = feat.drop(columns=["ID"])
+    cfg = {"input_files": {"train": "Train.csv"}}
+
+    with pytest.raises(RowAlignmentError):
+        _raw_labels_by_id(cfg, tmp_path, "target", no_id, "classification", "ID")
+
+
+def test_fusion_no_longer_concats_labels_positionally():
+    """No executable positional concat of raw labels onto the feature frame.
+
+    Matched line-wise and comment-stripped, because the explanatory comment
+    documenting the removal quotes the old expression verbatim.
+    """
+    import ast
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "zindian/oracle_fusion_core.py"
+    ).read_text()
+
+    # Strip comments by parsing: only executable code can call pd.concat.
+    code_calls = set()
+    for node in ast.walk(ast.parse(src)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "concat"
+        ):
+            code_calls.add(node.lineno)
+    assert not code_calls, (
+        f"oracle_fusion_core still calls .concat() at lines {sorted(code_calls)}; "
+        "positional label alignment is prohibited (SoT S-2)"
+    )

@@ -34,6 +34,80 @@ from zindian.state import SkillStateStore
 TOP_N = 3  # Number of variants to blend
 
 
+def _raw_labels_by_id(
+    config_obj: Any,
+    raw_dir: Path,
+    target_name: str,
+    feature_frame: pd.DataFrame,
+    task_type: str,
+    id_col: str,
+) -> np.ndarray:
+    """Source ``y_true`` from raw Train.csv, joined by ID — never positionally.
+
+    SoT S-2: a feature file may never supply the target. The fusion member
+    verification scoring and the residual collinearity pruning both consume
+    ``y_true``, so reading it from a feature file meant scoring every candidate
+    against whatever labels happened to sit at that position. After the
+    merge_asof permutation those labels were shifted, and nothing detected it.
+
+    Returns the label vector in ``feature_frame``'s row order. Raises
+    :class:`RowAlignmentError` if the raw IDs cannot be shown to correspond to
+    the feature rows, rather than falling back to positional alignment.
+    """
+    from zindian.joins import RowAlignmentError
+
+    input_files = config_obj.get("input_files", {}) or {}
+    train_file = input_files.get("train", "Train.csv")
+    raw_path = raw_dir / train_file
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Raw train file not found: {raw_path}")
+
+    raw = pd.read_csv(raw_path)
+    if target_name not in raw.columns:
+        raise KeyError(
+            f"Target {target_name!r} is not present in raw {train_file}. "
+            f"Available: {list(raw.columns)}"
+        )
+    if id_col not in raw.columns:
+        raise KeyError(f"Raw {train_file} has no identifier column {id_col!r}")
+
+    if id_col not in feature_frame.columns:
+        # S-3: the feature frame must carry the identifier for an ID join to
+        # be possible at all. Aligning by position here is what caused the
+        # corruption, so refuse rather than guess.
+        raise RowAlignmentError(
+            f"Feature frame has no {id_col!r} column, so labels cannot be "
+            f"joined by ID from {train_file}. Refusing to align by position "
+            f"(SoT S-2/S-3). Regenerate the branch with a plugin that retains "
+            f"the identifier."
+        )
+
+    feat_ids = feature_frame[id_col].reset_index(drop=True)
+    raw_ids = raw[id_col].reset_index(drop=True)
+
+    if len(feat_ids) != len(raw_ids):
+        raise RowAlignmentError(
+            f"Feature frame has {len(feat_ids)} rows but {train_file} has "
+            f"{len(raw_ids)}; cannot join labels by ID."
+        )
+    if not feat_ids.equals(raw_ids):
+        n_diff = int((feat_ids != raw_ids).sum())
+        raise RowAlignmentError(
+            f"Feature frame IDs are out of order relative to {train_file} "
+            f"({n_diff} positions differ). The ID SET matches, so a membership "
+            f"check would pass -- but joining labels positionally here would "
+            f"score candidates against shifted labels. Refusing (SoT S-2/S-4)."
+        )
+
+    values = raw[target_name].values
+    if task_type == "classification" and values.dtype.kind in ("U", "S", "O"):
+        # Match the encoding used by skill_07/skill_08 multi-target paths.
+        return np.asarray(pd.factorize(values)[0], dtype=np.int32)
+    if task_type == "classification":
+        return np.asarray(values, dtype=np.int32)
+    return np.asarray(values, dtype=np.float64)
+
+
 def _resolve_target_col(config: ChallengeConfig, train: pd.DataFrame) -> str:
     target_col = config.get("target_col") or config.get("target_column")
     if target_col and target_col in train.columns:
@@ -529,32 +603,14 @@ def _run_multi_target_fusion(
         return {"status": "FAILED", "reason": "Train file missing"}
     train = pd.read_csv(train_path)
 
-    # Load raw train for target columns (merge by index since features are encoded)
-    raw_train_path = raw_dir / "Train.csv"
-    if raw_train_path.exists():
-        raw_train = pd.read_csv(raw_train_path)
-        # Merge by index since features_train is label-encoded
-        _targets_to_merge = []
-        for target_spec in targets:
-            target_name = target_spec["name"]
-            if target_name not in raw_train.columns or target_name in train.columns:
-                continue
-            target_values = raw_train[target_name].values
-            # Encode categorical targets using pd.factorize
-            # to match the encoding used by skill_07 and skill_08 multi-target paths.
-            if (
-                target_spec["task_type"] == "classification"
-                and target_values.dtype == object
-            ):
-                target_values = pd.factorize(target_values)[0]
-            _targets_to_merge.append(target_name)
-            raw_train[target_name] = target_values
-        if _targets_to_merge:
-            train = pd.concat(
-                [train, raw_train[_targets_to_merge].reset_index(drop=True)],
-                axis=1,
-            )
-
+    # NOTE (S-2): raw labels are NOT merged into the feature frame here.
+    # This block previously did `pd.concat([train, raw_train[targets]], axis=1)`,
+    # which aligns by POSITION. That is the same defect class as the merge_asof
+    # permutation: the feature rows may be permuted relative to raw, so the
+    # target column landed on the wrong rows, and every downstream consumer of
+    # `train[target_name]` was scored against shifted labels. Labels are now
+    # resolved per-target by `_raw_labels_by_id`, which joins on `id_col` and
+    # refuses if the order cannot be proven.
     fusion_results = {}
     submission_columns = {}
 
@@ -713,7 +769,16 @@ def _run_single_target_fusion(
         state_obj.get("pseudo_label_result", {}).get("retraining_required", False)
     )
 
-    if task_type == "classification":
+    # S-2: y_true comes from raw Train.csv joined by ID, NEVER from the feature
+    # frame. It drives both member verification scoring and the residual
+    # collinearity pruning below, so a positionally-shifted label vector here
+    # silently corrupts which candidates survive into the blend.
+    if target_name:
+        id_col = str(config_obj.get("id_col") or "ID")
+        y_true = _raw_labels_by_id(
+            config_obj, raw_dir, target_name, train, task_type, id_col
+        )
+    elif task_type == "classification":
         target_values = train[target_col].values
         if target_values.dtype.kind in ("U", "S", "O"):
             # Encode string labels with pd.factorize to match training pipeline
