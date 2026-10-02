@@ -815,6 +815,41 @@ def verify_section_1_assumptions(
                     )
                 ok(f"A12 check: Multi-target recombination policy present: '{policy}'")
 
+    # A13 - OOF row-identity fingerprint (SoT S-4), WARN-ONLY during migration.
+    #
+    # Deliberately a warning, not a failure: every OOF record written before
+    # the S-4 schema lacks an id_order_hash, so failing here would block the
+    # run on stale-but-not-necessarily-wrong artifacts and prevent the very
+    # regeneration that would clear them. Tighten to fail() once Phase 7 has
+    # regenerated every branch.
+    #
+    # A7 already checks COUNT and cv_strategy_id. Neither can detect a
+    # whole-row permutation, which preserves both exactly. This check exists
+    # to surface which branches are still unverifiable.
+    oof_keys_a13 = sorted(
+        k for k in state if k.startswith("branch_") and k.endswith("_oof")
+    )
+    unverified = []
+    for k in oof_keys_a13:
+        rec = state.get(k)
+        if not isinstance(rec, dict) or rec.get("id_order_hash") is None:
+            unverified.append(k)
+    if unverified:
+        print(
+            f"WARNING [A13 Row-Identity] {len(unverified)} of {len(oof_keys_a13)} "
+            f"OOF records carry no id_order_hash, so their row order cannot be "
+            f"verified (SoT S-4). Length and set-membership checks cannot "
+            f"substitute: a whole-row permutation preserves both. Affected: "
+            f"{', '.join(unverified[:8])}"
+            f"{' ...' if len(unverified) > 8 else ''}. Regenerate these branches "
+            f"(Phase 7) before trusting any re-gate."
+        )
+    else:
+        ok(
+            "A13 check: every OOF record carries an id_order_hash row-identity "
+            "fingerprint"
+        )
+
 
 def main():
     import os
