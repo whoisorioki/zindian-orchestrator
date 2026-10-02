@@ -1087,17 +1087,23 @@ def _dispatch_variant_training(
         print(f"    Fold {fold + 1}: ROC-AUC={fold_scores_list[-1]:.5f}")
 
     oof_auc = roc_auc_score(y, oof_probs)
-    thresholds = np.arange(0.3, 0.7, 0.01)
-    best_t = max(thresholds, key=lambda t: f1_score(y, (oof_probs >= t).astype(int)))
-    oof_f1 = f1_score(y, (oof_probs >= best_t).astype(int))
-    delta = oof_f1 - baseline_score
+    # Compliance: F1 must be computed at the fixed 0.5 threshold per competition rules.
+    # No threshold sweeping — that would inflate F1 and violate the rules-compliance contract.
+    compliance_threshold = 0.5
+    oof_f1 = f1_score(y, (oof_probs >= compliance_threshold).astype(int))
+    # Gate on the leaderboard composite formula so the comparison is apples-to-apples
+    # with the composite baseline (anchor_oof_score = 0.6*F1 + 0.4*AUC).
+    from zindian.metrics import composite_metric
+    variant_composite = composite_metric(oof_f1, oof_auc)
+    delta = variant_composite - baseline_score
     gate = "PASS" if delta >= gate_margin else "PRUNE"
     return {
         "variant": variant_name,
         "features": len(feature_cols) if feature_cols else X.shape[1],
         "oof_auc": float(oof_auc),
         "oof_f1": float(oof_f1),
-        "threshold": float(best_t),
+        "oof_composite": float(variant_composite),
+        "threshold": float(compliance_threshold),
         "delta": float(delta),
         "gate": gate,
         "oof_probs": oof_probs,
