@@ -883,11 +883,19 @@ def main():
             sys.exit(0)
 
     # 1. Resolve competition path
+    #
+    # NOTE: resolution must go through the module attribute, not a
+    # function-local import. A local `from zindian.paths import
+    # resolve_competition_paths` rebinds the name at call time and so
+    # ignores any monkeypatch applied to zindian.paths by tests — which
+    # caused the suite to write SKILL_STATE.json and scores/*.json into
+    # the LIVE competition tree (see tests/conftest.py
+    # _forbid_live_competition_writes).
     comp_path: Path | None = None
     try:
-        from zindian.paths import resolve_competition_paths
+        from zindian import paths as _zindian_paths
 
-        comp_paths = resolve_competition_paths(
+        comp_paths = _zindian_paths.resolve_competition_paths(
             args.competition, require_competition=False
         )
         comp_path = comp_paths.competition_dir
@@ -1337,6 +1345,22 @@ PREFLIGHT RESULT: {result_status}
                     )
                 else:
                     state["preflight_confirmed"] = True
+                # Test-safety: refuse to mutate the live competition tree.
+                # resolve_competition_paths may be monkeypatched to a
+                # MagicMock (or fail outright), in which case comp_path
+                # silently falls back to a real competitions/<slug>
+                # directory. Guard the WRITE, not the resolution, so every
+                # path reaching this line is covered.
+                _live = (root / "competitions").resolve()
+                _target = comp_path.resolve()
+                if (_live == _target or _live in _target.parents) and not os.environ.get(
+                    "ZINDIAN_TEST_ALLOW_LIVE"
+                ):
+                    print(
+                        "ERROR: refusing to write SKILL_STATE.json into the LIVE "
+                        f"competition tree ({comp_path})."
+                    )
+                    sys.exit(1)
                 state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
                 sys.exit(0)
         elif choice == "2":
@@ -1379,6 +1403,17 @@ PREFLIGHT RESULT: {result_status}
             else:
                 state["preflight_confirmed"] = True
                 state["preflight_override_reason"] = reason
+            # Test-safety: same live-tree guard as the PROCEED branch above.
+            _live = (root / "competitions").resolve()
+            _target = comp_path.resolve()
+            if (_live == _target or _live in _target.parents) and not os.environ.get(
+                "ZINDIAN_TEST_ALLOW_LIVE"
+            ):
+                print(
+                    "ERROR: refusing to write SKILL_STATE.json into the LIVE "
+                    f"competition tree ({comp_path})."
+                )
+                sys.exit(1)
             state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
             sys.exit(0)
         else:

@@ -54,6 +54,60 @@ def store_tmp_path(request):
 # Store the original path resolver
 _orig_resolve = zindian.paths.resolve_competition_paths
 
+# The live competition tree. Tests must never write into it.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_LIVE_COMPETITIONS = (_REPO_ROOT / "competitions").resolve()
+
+
+def _assert_not_live(paths, context: str = "") -> None:
+    """Fail loudly if a resolution points into the real competitions tree.
+
+    A silent redirect would hide the next offender; the point is to make any
+    write into the live tree a test failure.
+    """
+    comp_dir = getattr(paths, "competition_dir", None)
+    if comp_dir is None:
+        return
+    try:
+        resolved = Path(comp_dir).resolve()
+    except Exception:  # pragma: no cover - defensive
+        return
+    if resolved == _LIVE_COMPETITIONS or _LIVE_COMPETITIONS in resolved.parents:
+        raise RuntimeError(
+            f"TEST SAFETY: {context or 'resolve_competition_paths'} resolved into "
+            f"the LIVE competition tree ({resolved}). Tests must not read or "
+            f"write real competition artifacts. Use tmp_path, or pass explicit "
+            f"paths. Set ZINDIAN_TEST_ALLOW_LIVE=1 to override deliberately."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_competition_writes(request):
+    """Autouse guard: fail any test that resolves into the live tree.
+
+    Regression test for a real incident — the suite re-serialised
+    scores/*.json, SKILL_STATE.json, reports/summaries/*, logs/* and
+    experiments.db inside competitions/climate-risk-health-prediction-challenge
+    on 2026-10-02, destroying evidence for the L1 investigation.
+    """
+    if os.environ.get("ZINDIAN_TEST_ALLOW_LIVE"):
+        yield
+        return
+
+    resolved_paths = []
+
+    def guarded(slug=None, **kwargs):
+        paths = wrapped_resolve_competition_paths(slug, **kwargs)
+        resolved_paths.append(paths)
+        _assert_not_live(paths, f"resolve_competition_paths(slug={slug!r})")
+        return paths
+
+    zindian.paths.resolve_competition_paths = guarded
+    try:
+        yield
+    finally:
+        zindian.paths.resolve_competition_paths = wrapped_resolve_competition_paths
+
 
 def wrapped_resolve_competition_paths(slug=None, **kwargs):
     global _CURRENT_TMP_PATH

@@ -850,9 +850,15 @@ def run_phase(
     try:
         from .config import ChallengeConfig
         from .state import SkillStateStore
-        from .paths import resolve_competition_paths
+        from . import paths as _paths_mod
 
-        paths = resolve_competition_paths(require_competition=False)
+        # Resolve through the module attribute, not a function-local
+        # `from .paths import resolve_competition_paths`. A local import
+        # rebinds the name at call time and therefore ignores any patch
+        # applied to zindian.paths by tests, which caused run_phase to
+        # build a SkillStateStore against the LIVE competition and rewrite
+        # SKILL_STATE.json plus every scores/*.json sidecar.
+        paths = _paths_mod.resolve_competition_paths(require_competition=False)
         config = ChallengeConfig.load()
         store = SkillStateStore(paths.state_path)
         state = store.read()

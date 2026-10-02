@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -16,7 +17,40 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def _assert_not_live_competition(path: Path) -> None:
+    """Refuse to write into the repo's live ``competitions/`` tree during tests.
+
+    Every ``SkillStateStore`` write funnels through ``_atomic_write_json``,
+    which also re-serialises every large payload into ``scores/*.json``.
+    Guarding here covers all call sites at once — patching individual
+    call sites proved insufficient because several modules resolve paths via
+    a *function-local* import, which rebinds the name and silently ignores
+    any monkeypatch applied to ``zindian.paths``.
+
+    On 2026-10-02 the test suite rewrote SKILL_STATE.json, 26 files under
+    ``scores/``, six phase summaries, six log files and the DuckDB ledger of
+    the real competition, destroying evidence for an open investigation.
+    """
+    if os.environ.get("ZINDIAN_TEST_ALLOW_LIVE"):
+        return
+    if "pytest" not in sys.modules:
+        return
+    try:
+        resolved = Path(path).resolve()
+    except Exception:  # pragma: no cover - defensive
+        return
+    repo_root = Path(__file__).resolve().parent.parent
+    live = (repo_root / "competitions").resolve()
+    if resolved == live or live in resolved.parents:
+        raise RuntimeError(
+            f"TEST SAFETY: refusing to write {resolved} into the LIVE "
+            f"competition tree. Tests must use tmp_path or pass explicit "
+            f"paths. Set ZINDIAN_TEST_ALLOW_LIVE=1 to override deliberately."
+        )
+
+
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
+    _assert_not_live_competition(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # Externalize large payloads if this is SKILL_STATE.json

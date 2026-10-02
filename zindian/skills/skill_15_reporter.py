@@ -106,7 +106,15 @@ def run(
         Status dict with paths and counts.
     """
     try:
-        paths = resolve_competition_paths()
+        # Resolve the competition ONLY when the caller has not supplied
+        # explicit paths. Falling back unconditionally (previous behaviour)
+        # meant a test or ad-hoc call with no arguments resolved against the
+        # real competition directory and wrote to it — see the conftest guard
+        # in tests/conftest.py, which fails any resolution into the live tree.
+        if ledger_path is None or state_path is None or config_path is None:
+            paths = resolve_competition_paths()
+        else:
+            paths = None
         ledger_path = ledger_path or str(paths.reports_dir / "experiments.db")
         state_path = state_path or str(paths.state_path)
         config_path = config_path or str(paths.config_path)
