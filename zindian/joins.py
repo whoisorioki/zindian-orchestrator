@@ -16,9 +16,14 @@ attached to the
 wrong feature values while every row count and every file-level ID check
 still passes.
 
-This happened for real: a left-side date tie across 56 duplicate
-``(date, lat, lon)`` keys scrambled 368 of 2505 training rows in one
-competition, corrupting 14 downstream branches.
+This happened for real. A backward as-of join on ``(date, latitude, longitude)``
+against a climate-proxy reference frame silently permuted whole rows of a
+4,371-row training set, corrupting 14 downstream branches. Because the
+permutation moved entire rows rather than individual values, within-file
+feature/label pairs stayed intact and every file-level check passed: the ID
+set was complete, row counts matched, and each row was internally consistent.
+The damage surfaced only when artifacts were compared against each other **by
+position** -- CV splits, anchor-OOF pairing, and test-probability IDs.
 
 The fix used here is to make row order **irrelevant** to correctness. The
 left frame's identifier is carried through the join and the result is

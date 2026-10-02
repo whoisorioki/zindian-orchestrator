@@ -1,7 +1,11 @@
 """Macro Stress Feature Extractor Plugin (SPEI-6 & VIIRS).
 
 Extracts and joins SPEI-6 drought/water balance metrics and VIIRS nighttime lights
-luminosity proxies via pd.merge_asof(direction="backward") to ensure zero target leakage.
+luminosity proxies via an order-safe backward as-of join, ensuring zero target leakage.
+
+The join is `zindian.joins.sorted_asof_join`, not a bare `pd.merge_asof` plus
+`.loc[df.index]` restore. See `zindian/joins.py` for why that restore scrambles
+rows whenever the join key contains ties.
 
 Fully compliant with Rule A5 (Zero Hardcoded String Literals).
 """
@@ -14,6 +18,7 @@ import pandas as pd
 import numpy as np
 
 from plugins.base_extractor import FeatureExtractor
+from zindian.joins import sorted_asof_join
 
 
 class Extractor(FeatureExtractor):
@@ -61,38 +66,48 @@ class Extractor(FeatureExtractor):
         
         ext_df = pd.read_parquet(data_path)
         
-        # Ensure datetime sorting for merge_asof
+        # Ensure datetime dtypes for the as-of join
         train[date_col] = pd.to_datetime(train[date_col])
         test[date_col] = pd.to_datetime(test[date_col])
         ext_df[date_col] = pd.to_datetime(ext_df[date_col])
 
-        train_sorted = train.sort_values(by=date_col).copy()
-        test_sorted = test.sort_values(by=date_col).copy()
-        ext_sorted = ext_df.sort_values(by=date_col).copy()
-
         # Identify external feature columns to join
         ext_feature_cols = [c for c in ext_df.columns if c not in (lat_col, lon_col, date_col)]
 
-        # Execute merge_asof with backward direction (zero future leakage)
-        train_merged = pd.merge_asof(
-            train_sorted,
-            ext_sorted,
-            on=date_col,
-            by=[lat_col, lon_col],
+        # Point-in-time backward join, order-safe.
+        #
+        # The previous form sorted, merged, then did
+        # `train_merged.loc[train.index]`. `merge_asof` returns a FRESH
+        # RangeIndex, so `.loc[RangeIndex]` restores positionally, not by
+        # identity -- under a date tie that silently attached the wrong macro
+        # values to the wrong rows while every row count and every file-level
+        # ID check still passed. `sorted_asof_join` carries `id_col` through
+        # and restores by ID, so row order cannot affect correctness.
+        #
+        # `allow_unmatched=True` matches the plugin's existing behaviour: rows
+        # whose location has no earlier history arrive as NaN and are imputed
+        # by the spatial-median pass below. With `by=[lat, lon]`, per-location
+        # history starts later than the file minimum, so this is the common
+        # case, not an edge case (3056 of 4371 train rows here).
+        train_merged = sorted_asof_join(
+            train,
+            ext_df,
+            id_col=id_col,
+            date_col=date_col,
+            by_cols=[lat_col, lon_col],
             direction="backward",
-        )
-        
-        test_merged = pd.merge_asof(
-            test_sorted,
-            ext_sorted,
-            on=date_col,
-            by=[lat_col, lon_col],
-            direction="backward",
+            allow_unmatched=True,
         )
 
-        # Re-sort to original index
-        train_merged = train_merged.loc[train.index].copy()
-        test_merged = test_merged.loc[test.index].copy()
+        test_merged = sorted_asof_join(
+            test,
+            ext_df,
+            id_col=id_col,
+            date_col=date_col,
+            by_cols=[lat_col, lon_col],
+            direction="backward",
+            allow_unmatched=True,
+        )
 
         # Non-linear heat-stress & demographic vulnerability interaction features
         for df_m in (train_merged, test_merged):
@@ -125,9 +140,20 @@ class Extractor(FeatureExtractor):
                 train_merged[col] = train_merged[col].fillna(median_val)
                 test_merged[col] = test_merged[col].fillna(median_val)
 
-        # Drop ID and banned columns
-        drop_cols_train = list(set([c for c in [id_col] + banned if c in train_merged.columns]))
-        drop_cols_test = list(set([c for c in [id_col] + banned if c in test_merged.columns]))
+        # Drop banned columns. `id_col` is RETAINED deliberately.
+        #
+        # It used to be dropped here, which is why
+        # `features_train_catboost-climate-interactions.csv` has no ID column
+        # and could not be verified by ID at all. Keeping it makes every
+        # feature file independently checkable against raw `Train.csv`, and
+        # downstream skills key off it. A5: id_col is read from config, never
+        # a literal.
+        drop_cols_train = list(
+            set(c for c in banned if c in train_merged.columns)
+        )
+        drop_cols_test = list(
+            set(c for c in banned if c in test_merged.columns)
+        )
 
         train_feat = train_merged.drop(columns=drop_cols_train, errors="ignore") if drop_cols_train else train_merged
         test_feat = test_merged.drop(columns=drop_cols_test, errors="ignore") if drop_cols_test else test_merged

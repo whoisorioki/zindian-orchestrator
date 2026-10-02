@@ -65,4 +65,24 @@ def test_macro_stress_extractor_end_to_end(tmp_path):
     assert "viirs_radiance_lag1m" in tr_out.columns
     assert "spei_6_is_imputed" in tr_out.columns
     assert "viirs_radiance_lag1m_is_imputed" in tr_out.columns
-    assert "ID" not in tr_out.columns
+
+    # id_col is RETAINED as of the merge_asof remediation. It used to be
+    # dropped here, which left feature files with no identifier and made them
+    # impossible to verify against raw Train.csv by ID.
+    assert config["id_col"] in tr_out.columns
+    assert config["id_col"] in te_out.columns
+    assert tr_out[config["id_col"]].is_unique, "retained id_col must be unique"
+
+    # The IDs must appear in the SAME ORDER as the raw input frame. This is the
+    # property the old `.loc[df.index]` restore broke: it permuted 387
+    # positions while leaving every ID present and every row internally
+    # consistent. Order is the only thing that caught it.
+    raw_train = pd.read_csv(paths.data_raw_dir / "Train.csv")
+    assert list(tr_out[config["id_col"]]) == list(raw_train[config["id_col"]]), (
+        "plugin output ID order diverges from raw Train.csv -- the join "
+        "permuted rows"
+    )
+    raw_test = pd.read_csv(paths.data_raw_dir / "Test.csv")
+    assert list(te_out[config["id_col"]]) == list(raw_test[config["id_col"]]), (
+        "plugin test-side output ID order diverges from raw Test.csv"
+    )

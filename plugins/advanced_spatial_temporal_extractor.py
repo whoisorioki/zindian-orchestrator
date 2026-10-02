@@ -7,7 +7,11 @@ Implements the "Boost-then-Convolve" Spatial-Temporal Architecture:
    - Built strictly on TRAIN location centroids to prevent test location graph leakage.
    - Strict fold-restricted historical target risk calculation (Approach A).
    - Distance threshold (>150km) fallback to fold global mean.
-3. Zero-leakage merge using pd.merge_asof(direction="backward").
+3. Zero-leakage merge using an order-safe backward as-of join
+   (`zindian.joins.sorted_asof_join`), not a bare `pd.merge_asof` -- the
+   `.loc[df.index]` restore that followed a plain merge_asof is positional,
+   not identity-based, and silently scrambles rows whenever the join key
+   contains ties.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import numpy as np
 from sklearn.neighbors import BallTree
 
 from plugins.base_extractor import FeatureExtractor
+from zindian.joins import sorted_asof_join
 
 
 class Extractor(FeatureExtractor):
@@ -206,7 +211,7 @@ class Extractor(FeatureExtractor):
     def extract(
         self, paths, data_path: Path, config, branch_name: str | None = None
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Extract features, build DLNM lags, compute OOF spatial risk, and perform merge_asof."""
+        """Extract features, build DLNM lags, compute OOF spatial risk, and perform the order-safe backward as-of join."""
         input_files = config.get("input_files", {}) or {}
         train_file = input_files.get("train", "Train.csv")
         test_file = input_files.get("test", "Test.csv")
@@ -250,34 +255,44 @@ class Extractor(FeatureExtractor):
         train_dlnm["spatial_smooth_risk"] = train_spatial_risk.values
         test_dlnm["spatial_smooth_risk"] = test_spatial_risk.values
 
-        # 3. Point-in-time backward join via pd.merge_asof
+        # 3. Point-in-time backward join, order-safe.
+        #
+        # The previous form sorted, merged, then restored with
+        # `train_sorted.loc[train.index]`. `merge_asof` returns a FRESH
+        # RangeIndex, so that restore is positional, not by identity -- under a
+        # date tie it attached the wrong proxy values to the wrong rows while
+        # every row count and every file-level ID check still passed.
+        # `sorted_asof_join` carries `id_col` through and restores by ID.
+        #
+        # `allow_unmatched=True` preserves the prior behaviour: rows whose
+        # location has no earlier history arrive as NaN and are imputed by the
+        # median pass below. With `by=[lat, lon]` this is the common case.
         if data_path.suffix == ".parquet" and data_path.exists():
             ext_df = pd.read_parquet(data_path)
             if date_col in ext_df.columns:
                 ext_df[date_col] = pd.to_datetime(ext_df[date_col])
-                ext_df = ext_df.sort_values(by=date_col)
-                train_sorted = train_dlnm.sort_values(by=date_col)
-                test_sorted = test_dlnm.sort_values(by=date_col)
 
                 # Merge external proxy columns backward
                 ext_cols = [c for c in ext_df.columns if c not in (lat_col, lon_col, date_col)]
                 if ext_cols:
-                    train_sorted = pd.merge_asof(
-                        train_sorted,
+                    train_dlnm = sorted_asof_join(
+                        train_dlnm,
                         ext_df[[date_col, lat_col, lon_col] + ext_cols],
-                        on=date_col,
-                        by=[lat_col, lon_col],
+                        id_col=id_col,
+                        date_col=date_col,
+                        by_cols=[lat_col, lon_col],
                         direction="backward",
+                        allow_unmatched=True,
                     )
-                    test_sorted = pd.merge_asof(
-                        test_sorted,
+                    test_dlnm = sorted_asof_join(
+                        test_dlnm,
                         ext_df[[date_col, lat_col, lon_col] + ext_cols],
-                        on=date_col,
-                        by=[lat_col, lon_col],
+                        id_col=id_col,
+                        date_col=date_col,
+                        by_cols=[lat_col, lon_col],
                         direction="backward",
+                        allow_unmatched=True,
                     )
-                train_dlnm = train_sorted.loc[train.index]
-                test_dlnm = test_sorted.loc[test.index]
 
         # Impute missing feature values
         feature_cols = [
@@ -292,9 +307,10 @@ class Extractor(FeatureExtractor):
                 train_dlnm[col] = train_dlnm[col].fillna(med_val)
                 test_dlnm[col] = test_dlnm[col].fillna(med_val)
 
-        # Drop ID and banned columns
-        drop_cols_tr = list(set([c for c in [id_col] + banned if c in train_dlnm.columns]))
-        drop_cols_te = list(set([c for c in [id_col] + banned if c in test_dlnm.columns]))
+        # Drop banned columns. `id_col` is RETAINED so the output can be verified
+        # against raw `Train.csv` by ID. A5: id_col comes from config.
+        drop_cols_tr = list(set(c for c in banned if c in train_dlnm.columns))
+        drop_cols_te = list(set(c for c in banned if c in test_dlnm.columns))
 
         train_feat = train_dlnm.drop(columns=drop_cols_tr, errors="ignore")
         test_feat = test_dlnm.drop(columns=drop_cols_te, errors="ignore")
