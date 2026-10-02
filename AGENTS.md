@@ -5,8 +5,8 @@ or any agentic coding session implementing or modifying Zindian
 skills.
 **Paired document:** `docs/source_of_truth.md` — confirm the exact
 version string at the top of that file before relying on any
-version-specific claim below. This document is aligned with SoT version **v2.9**.
-**Last updated:** September 2026
+version-specific claim below. This document is aligned with SoT version **v2.10**.
+**Last updated:** October 2026
 **Verification status of this document:** see the dedicated section
 below before trusting any specific claim in the Repository Ground
 Truth table.
@@ -102,6 +102,7 @@ rediscover.
 | Feature engine 3-stage execution pipeline | `zindian/skills/skill_07_features.py` | [CONFIRMED — stage 1 (date_decomposition, rolling_aggregates, static_bins) runs before stage 2 (polynomials, interactions, ratios, conditions) to enable cascaded feature engineering.] |
 | Zindi platform endpoint normalization & timeout patch | `zindian/zindi_client.py` | [CONFIRMED — normalizes `api.zindi.africa` to `api.zindi.world` and applies explicit HTTP timeout tuple `(30.0, 300.0)` on uploads.] |
 | Submission Audit Ledger & Manifest | `zindian/ledger.py` & `skill_16_submit.py` | [CONFIRMED — `submissions` table includes `lb_f1`, `lb_auc`, `zindi_id`; persisted via `show_submission_board()` and `submissions_manifest.json`.] |
+| Row-Alignment Contract (S-1–S-7) | `docs/source_of_truth.md` §7.1 | [CONFIRMED v2.10 — order-safe as-of joins mandatory (`zindian/joins.py::sorted_asof_join`); `pd.merge_asof` + `.loc[df.index]` prohibited; `id_col` retained in plugin output; gate baselines must share the scoring basis] |
 | Rules Compliance Cutoff (0.5) | `zindian/skills/skill_14_inference.py` | [CONFIRMED — classification hard labels strictly use 0.5 cutoff per competition rules.] |
 | Gate OOF Metric Key Resolution | `zindian/skills/skill_07_features.py` & `skill_11_gate.py` | [CONFIRMED — writes and resolves canonical `best_variant_oof_score` with fallback to composite 0.6 F1 + 0.4 AUC.] |
 | Pre-Fusion Isotonic Calibration | `zindian/oracle_fusion_core.py` | [CONFIRMED — candidate OOF/test probability vectors are calibrated via Isotonic Regression before ensembling.] |

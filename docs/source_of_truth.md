@@ -1,9 +1,9 @@
 # Zindian Orchestrator — Source of Truth Document
 
-**Version:** v2.9
+**Version:** v2.10
 **Status:** CURRENT
 **Scope:** Zindi tabular competitions (standard, spatial, temporal, grouped)
-**Last updated:** September 2026 (v2.9: BufferedSpatialCV strategy support, 3-stage feature engineering pipeline with rolling_aggregates/static_bins, zindi.world endpoint normalization and upload timeout hardening)
+**Last updated:** October 2026 (v2.10: Row-Alignment Contract S-1–S-7 — §7.1. Order-safe as-of joins mandatory, `id_col` retained in plugin output, position is load-bearing for CV/OOF/submission artifacts, gate baselines must share the scoring basis)
 
 ---
 
@@ -2545,7 +2545,86 @@ requires explicit hardware_type = "gpu" in config.
 
 This section documents every confirmed discrepancy between the SoT
 contract and the current codebase. Items are tracked by severity.
-Last verified: August 2026 (v2.6 audit — S2 pinpointed to skill_08_anchor.py L521–535).
+Last verified: October 2026 (v2.10 — S-1–S-7 added; see §7.1).
+
+---
+
+### 7.1 Row-Alignment Contract (S-1 – S-7) — v2.10
+
+Added after the `merge_asof` incident in which 14 downstream branches were
+silently corrupted. These are **hard contracts**, not guidance.
+
+**The failure mode, stated precisely.** `pd.merge_asof` requires the left
+frame sorted on the join key. The conventional pattern is sort → merge →
+restore with `.loc[df.index]`. That restore is **positional, not
+identity-based**, because `merge_asof` returns a fresh `RangeIndex`. Under a
+tied join key it therefore reorders rows without changing any value.
+
+Measured on the reference competition (pandas 3.0.3, full 3146-row
+`Train.csv`, dense 305,360-row reference frame):
+
+| Property | Result |
+|---|---|
+| Macro values correct per ID | **Yes — 0 mismatches** |
+| IDs present, count preserved | **Yes** |
+| Within-file feature/label pairs intact | **Yes** |
+| Row order vs `Train.csv` | **387 positions permuted** |
+
+Rows move as whole units. Consequence: **no value-level or ID-set check can
+detect this.** A raw-column ID join against the source is a tautology here,
+not a check. Detection requires comparing artifacts **by position**.
+
+**S-1 — Order-safe joins are mandatory.** Every as-of join must use
+`zindian.joins.sorted_asof_join`, which snapshots the left identifier vector
+before sorting and restores via `reindex` on that label. Direct
+`pd.merge_asof` followed by `.loc[df.index]` is prohibited in any plugin or
+skill.
+
+**S-2 — Position is load-bearing.** Any artifact consumed positionally
+against another artifact (CV split indices, OOF vectors, test-probability
+ordering, submission row order) must derive from a single ordering source.
+Fusion must read `y_true` from raw `Train.csv` joined by `id_col`, never from
+a feature file, so that member scoring and collinearity pruning cannot be
+computed against shifted labels.
+
+**S-3 — `id_col` is retained in plugin output.** Feature extractors must not
+drop the identifier. A feature file without an ID column cannot be verified
+against raw data by ID, and its positional correctness cannot be established
+at all. (This is what left `features_train_catboost-climate-interactions.csv`
+unverifiable.)
+
+**S-4 — Order assertions accompany regeneration.** Regenerated feature files
+must be verified by comparing the `id_col` **sequence** against raw
+`Train.csv` / `Test.csv`, not merely the set. A set comparison passes under
+whole-row permutation by construction.
+
+**S-5 — Re-derivation must reproduce `allow_unmatched`.** Under
+`by=[latitude, longitude]`, a row requires a matching location *and* a date
+at or before it. Per-location history starts later than the file minimum, so
+unmatched rows are the common case, not an edge case (3,056 of 4,371 train
+rows in the reference competition). Any independent re-derivation must apply
+the same imputation policy or its result is not comparable.
+
+**S-6 — Gate baselines must share the scoring basis.** A baseline produced by
+a threshold sweep is not comparable to candidates scored at a fixed cutoff.
+Where the scoring basis changed, the baseline must be recomputed from the
+current vector **after** it is regenerated, before any candidate is re-gated.
+A baseline computed from a superseded vector is discarded by the regeneration
+that precedes it and must not be reused as a prerequisite.
+
+**S-7 — Tests must reproduce the real tie structure.** A regression test for
+S-1 is vacuous unless its fixture actually contains tied join keys, and a
+sparse reference frame (one row per group) makes permuted rows
+indistinguishable — every row in a group receives the same value regardless of
+position. Tests must use the real `Train.csv` / `Test.csv` tie structure and a
+sufficiently dense reference frame, and must assert on **order** where the
+defect manifests as order.
+
+**Provenance.** Full investigation, per-file corruption verdicts, and the
+branch regeneration list: **[`docs/merge_asof_remediation_plan.md`](file:///home/adrian/Projects/zindian-orchestrator/docs/merge_asof_remediation_plan.md)**.
+Note that a raw-column ID join **cannot** clear or condemn any branch here
+(see S-4); branches with no exogenous join in their path are clean by
+construction, and that is the reason to record for them.
 
 ---
 
@@ -2571,5 +2650,6 @@ Severity:       Low — interaction-based leakage is rare in standard tabular
 ```
 
 ---
-*Version: v2.8 — OPEN (GAP-3 deferred to v3.0)*
+*Version: v2.10 — Row-Alignment Contract S-1–S-7 in force (§7.1)*
+*Open: GAP-3 deferred to v3.0 (SHAP interaction effects)*
 *Next: v3.0 — deferred items: GAP-3 (SHAP interaction effects)*
