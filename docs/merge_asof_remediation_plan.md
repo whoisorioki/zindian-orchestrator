@@ -1,7 +1,7 @@
 # `merge_asof` Row-Scrambling Remediation Plan
 
-**Status:** IN PROGRESS — Phases 0, 1, 2 and the test-safety work complete; Phase 3 awaiting review.
-**Date:** 2026-10-02 (rev 2 — after the first two review rounds; see §0.1)
+**Status:** IN PROGRESS — Phases 0–6a code-complete and committed (see table below); Phase 7 (regeneration) not started. Misaligned-output archive complete (102 files, manifest-verified). SoT v2.10 (§7.1, S-1–S-7) in force.
+**Date:** 2026-10-02 (rev 3 — post-Phases 4/5/6/6a + archive; Phase 7 execution is the remaining work)
 **Competition:** `climate-risk-health-prediction-challenge`
 **Branch:** `anchor-baseline`
 **Predecessor doc:** [`competition_state_audit_climate_risk_health_2026-09-20.md`](competition_state_audit_climate_risk_health_2026-09-20.md) (§12 Round 3)
@@ -213,8 +213,8 @@ for this question.
   md5 is unchanged across test runs, and the vector values are identical to
   those read hours earlier.
 
-**L1 remains open, and is now narrower — it has no lead.** The only surviving
-bracket is artifact mtimes, and none of them can date the value change:
+**L1 — the artifact bracket.** Artifact mtimes cannot date the value change
+(a previous draft recorded only a bracket, no lead):
 
 ```
 2026-09-01 21:46:48  data/raw/oof_anchor.csv                  <- last real anchor run
@@ -225,21 +225,52 @@ bracket is artifact mtimes, and none of them can date the value change:
 ```
 
 **L1 open question:** which write placed a different vector into the state
-key between the Sep 1 21:46 run and now. There is no forensic route to it —
-the competition tree is **gitignored** (`.gitignore:37`), so no history
-exists to diff.
+key. The competition tree is **gitignored** (`.gitignore:37`), so no history
+exists to diff — but the *effect* is now measured (below), and the mechanism
+is identified: fusion repoints `anchor_git_branch`, and the anchor's
+feature source therefore became a file with no identifier.
 
-**Therefore L1 is resolved by experiment, not forensics.** See Phase 7: the
-re-anchor is run first in a scratch copy and checked against the Sep 1
-vector. If it reproduces AUC 0.813342 and the `oof_anchor.csv` values, the
-pipeline is deterministic and the state vector came from some other write.
-If it does not, September was never reproducible and the "baseline" is not a
-baseline at all.
+**L1 — MEASURED FINDING (2026-10-02, after Phase 5/6).** The two artifacts
+in state describe **different models**. This is no longer an inference:
+
+| Vector | best F1 | AUC | F1@0.5 |
+|---|---|---|---|
+| **Stored scalars** (`anchor_oof_f1` / `anchor_oof_auc`) | `0.8171950` | `0.8133420` | — |
+| `data/raw/oof_anchor.csv` (Sep 1 21:46, **in raw Train order**) | `0.8171950` | `0.8133417` | `0.8029370` |
+| `branch_anchor-baseline_oof` (current state vector) | `0.8075420` | **`0.7663811`** | `0.8058161` |
+
+Four measured conclusions:
+
+1. The **scalars match `oof_anchor.csv` exactly** (F1 diff `0.0000000`,
+   AUC diff `0.0000003`). The stored metrics are faithful to the Sep 1 run.
+2. The **stored OOF vector does not match them.** It scores AUC `0.766`
+   against raw labels while state records `0.813` for it — a `0.047`
+   internal contradiction. State holds **two different truths**: scalars
+   from run A, vector from run B.
+3. It is **not a permutation** of `oof_anchor.csv` — sorted max diff
+   `0.119300`, all 3146 entries differ. So it is not "the same model
+   reordered"; it holds genuinely different values.
+4. It is **not a copy of any sibling branch** either. Against all 18
+   archived `branch_*_oof.json`, the closest match is
+   `macro-stress-geofence-refit` at max diff `0.410557`; nothing matches.
+
+**Why it cannot be pinned further — and this is the mechanism:**
+`anchor_git_branch = 'ensemble'`, written by `oracle_fusion_core.py`
+(L558/570/722/728) on every fusion run. `skill_08` reads
+`features_train_{anchor_git_branch}.csv`, so the anchor's feature source
+became `features_train_ensemble.csv` — a file with **no ID column at all**.
+Its row order cannot be established, so the vector's order is unrecoverable
+by construction. That is SoT S-3 being violated, and it is why this lead
+ends forensically rather than being closed.
+
+**Consequence for gating:** `skill_11` compares candidates against the
+`anchor_oof_score` scalar (correct, from Sep 1) while OOF consumers read the
+vector (misaligned). Any comparison mixing the two is invalid — which is
+precisely why Phase 7 must re-anchor before any re-gate.
 
 **Note on the snapshot:** the locked copy at `~/snapshots/climate-2026-10-02`
 preserves current state, not September's — it was taken after earlier test runs
 had already re-serialised `scores/`.
-preserves current state, not September's.
 
 ### 1.3a The gate baseline is on the wrong basis — VERIFIED, 0.0086 bias
 
@@ -437,11 +468,29 @@ changes model inputs.
 
 ## 2. Implementation plan
 
+> **Completion ledger (2026-10-02).** Code phases are committed on
+> `anchor-baseline`; execution phases are not started.
+
+| Phase | State | Commit / evidence |
+|---|---|---|
+| 0 — Unblock test suite | **DONE** | baseline 404 passed, 6 skipped |
+| 1 — `zindian/joins.py` | **DONE** (code) | `RowAlignmentError` + `sorted_asof_join` |
+| 2 — Regression tests | **DONE** | `test_sorted_asof_join.py` 12 pass |
+| 3 — Refactor both plugins | **DONE** (code) | `4e41d90` |
+| 4 — Remove ID re-attachment | **DONE** (code) | `6c9d45d` |
+| 5 — OOF row-identity schema + guards | **DONE** (code) | `a6d7a92` (+ A13 warn-only `eb26dff`) |
+| 6 — Single CV-split source | **DONE** (code) | `a6d7a92` |
+| 6a — Fusion labels from raw | **DONE** (code) | `6c9d45d` |
+| Archive misaligned outputs | **DONE** | `~/snapshots/misaligned-2026-10-02/` — 102 files, `MANIFEST.tsv` (102 data rows + header = 103 lines), `README.md` |
+| 7 — Regenerate 14 branches | **NOT STARTED** | blocked on human go-ahead (§3 Q1) |
+| 8 — Governance reconciliation | **NOT STARTED** | runs after 7 |
+| 9 — Verification gate | **NOT STARTED** | runs after 7–8; includes A13 tighten to fail |
+
 ### Phase 0 — Unblock the test suite — **DONE**
 1. ~~Fix the `SyntaxError` at `skill_07_features.py` L1317–1318.~~ Done.
 2. ~~Record the true baseline.~~ Recorded: **404 passed, 6 skipped**.
 
-### Phase 1 — Shared ID-asserting join utility
+### Phase 1 — Shared ID-asserting join utility — **DONE** (`zindian/joins.py`, SoT §7.1 S-1)
 New module `zindian/joins.py`:
 
 ```python
@@ -496,7 +545,7 @@ train.
 > mechanism could pass against the real bug is why the quicksort-guard test
 > is mandatory rather than incidental. It is the regression anchor.
 
-### Phase 3 — Refactor both culprit plugins
+### Phase 3 — Refactor both culprit plugins — **DONE** (`4e41d90`; SoT §7.1 S-1/S-3 in force)
 `plugins/macro_stress_extractor.py` and
 `plugins/advanced_spatial_temporal_extractor.py`:
 - replace the sort → `merge_asof` → positional-restore blocks with
@@ -507,14 +556,14 @@ train.
   `"precipitation"` / `"wbgt_approx"` / `"spei_12m"` fallbacks. All must be
   read from `challenge_config.json`.
 
-### Phase 4 — Stop the ID re-attachment in skill_07
+### Phase 4 — Stop the ID re-attachment in skill_07 — **DONE** (`6c9d45d`; `RowAlignmentError` re-raised through the `except Exception` guard)
 At `skill_07_features.py` L2274–2286 and L1682–1696, **delete** the
 `raw_tr`/`raw_te` positional ID fallback. If a feature file lacks `id_col`,
 raise a hard error naming the responsible plugin — never silently re-attach
 raw IDs to foreign predictions. This is the single change that makes the
 defect class detectable at all.
 
-### Phase 5 — ID-order guards (schema change first)
+### Phase 5 — ID-order guards (schema change first) — **DONE** (`a6d7a92`; schema `id_order_hash`/`id_count`/`alignment_verified` + `verify_oof_alignment()`; preflight A13 warn-only `eb26dff` — tighten to fail after Phase 7)
 
 **A length check cannot detect this defect class.** A permutation preserves
 length exactly, so a same-length misalignment passes every count-based
@@ -537,7 +586,7 @@ column, so a consumer has nothing to compare against.
 orders differ, and assert the guard **rejects** them. A test that passes on
 length alone is worthless.
 
-### Phase 6 — Single CV-split source
+### Phase 6 — Single CV-split source — **DONE** (`a6d7a92`; refit scripts fail hard on missing splits; `make_cv_splitter` raises `NotImplementedError`)
 - Fix both refit scripts to read the real path
   (`SkillStateStore(paths.state_path).read()["cv_split_indices"]`, or
   `scores/cv_split_indices.json`), and **fail hard** if absent rather than
@@ -547,7 +596,7 @@ length alone is worthless.
 - Both `macro-stress-geofence-refit` and `residual-dlnm-specialist` must be
   re-run after the fix, and their OOF provenance re-verified.
 
-### Phase 6a — Fusion must read labels from raw, not a feature file
+### Phase 6a — Fusion must read labels from raw, not a feature file — **DONE** (`6c9d45d`; single-target + multi-target positional joins removed)
 
 `oracle_fusion_core.py` currently sources `y_true` from
 `features_train_ensemble.csv` (L386–394 → L714–728), which drives member
@@ -558,7 +607,12 @@ joined by `id_col`, and stop opening the feature file for labels entirely.
 This is S-2's code half. Regenerating the file (Phase 7 step 4) does **not**
 discharge it.
 
-### Phase 7 — Regenerate the 14 corrupted branches
+### Phase 7 — Regenerate the 14 corrupted branches — **NOT STARTED (requires human go-ahead, §3 Q1)**
+
+> Preconditions now met: archive complete (102 files, manifest-verified);
+> SoT v2.10 in force; A13 confirms all 24 OOF records unfingerprinted;
+> `submissions_used_total=2`, `remaining_submissions=3` (budget is for
+> submissions, not local regen — regen itself costs no LB budget).
 
 Order matters — upstream first:
 
@@ -653,7 +707,7 @@ This resolves the reviewer's point 6: the earlier draft had dropped
 inference and added `shap_audit` unmeasured. Measurement puts both back in
 the clean set, and `shap_audit` is not a feature-file branch.
 
-### Phase 8 — Governance reconciliation
+### Phase 8 — Governance reconciliation — **NOT STARTED (runs after Phase 7)**
 - The fusion exclusion list is **stale**: it was frozen against 8 submissions,
   but 8 newer live submissions now exist.
 - `residual-dlnm-specialist` is **NOT** in `fusion_excluded_branches` — this
@@ -668,22 +722,29 @@ the clean set, and `shap_audit` is not a feature-file branch.
   call sites pass provenance**, so the LB-contamination guard is effectively
   inert.
 
-### Phase 9 — Verification gate
+### Phase 9 — Verification gate — **NOT STARTED (runs after Phases 7–8)**
 Do not declare this closed until:
 - `pytest tests/ -q` passes (baseline + new tests from Phase 2)
 - all 14 regenerated branches report 0/0/0/0 on the ID-based check
 - `preflight_enforce.py` passes, including the A7 OOF-completeness check
 - `skill_22` reproducibility audit agrees with the new fingerprints
 - fusion governance lock is regenerated from current live submissions
+- **A13 tightened from warn to fail** (it is warn-only `eb26dff` precisely
+  because pre-regen records lack `id_order_hash`; once every branch is
+  regenerated, the warning has served its purpose and must become a hard
+  gate — otherwise a future unfingerprinted record passes silently)
 
 ---
 
-## 2A. Required Source-of-Truth amendments
+## 2A. Required Source-of-Truth amendments — **LANDED as v2.10 §7.1 (commit `755e2fc`)**
+
+> This section is now historical. It records what was proposed; SoT v2.10
+> §7.1 (S-1–S-7) is what is in force. Kept so the rationale survives.
 
 Per the working rule — *a gap must be patched in the SoT before it is
-resolved in code* — this defect class is **not** currently covered by any SoT
-clause. The SoT mandates the OOF *schema* but says nothing about **row
-identity across artifacts**. These amendments target **v2.10**.
+resolved in code* — this defect class was **not** covered by any SoT
+clause at the time. The SoT mandated the OOF *schema* but said nothing about **row
+identity across artifacts**.
 
 | # | Amendment | SoT location | Why needed |
 |---|---|---|---|
@@ -760,10 +821,11 @@ Run `pytest tests/ -q` after **every** phase and report the delta against
 
 ## 3. Decisions resolved and outstanding
 
-**Resolved in this round:**
+**Resolved:**
 
-- **Rollout** — staged, as directed. Plugins, guards and tests land first and
-  are reviewed before any regeneration. Phase 3 is next.
+- **Rollout** — staged, as directed. Plugins, guards and tests landed first
+  and were committed (`4e41d90`, `6c9d45d`, `a6d7a92`, `eb26dff`) before any
+  regeneration. Phase 7 is next.
 - **Plugin ID retention** — carry `id_col` all the way through plugin output.
   The training paths already exclude `id_col` from the feature set, so keeping
   it is safe, and dropping it early would make S-1 and the Phase 4 hard error
@@ -774,27 +836,56 @@ Run `pytest tests/ -q` after **every** phase and report the delta against
   failures, `chmod -R a-w`), because L1 shows overwrites destroy evidence.
   The three untracked source files are copied to
   `~/snapshots/untracked-2026-10-02`.
+- **Misaligned-output archive before Phase 7** — required, and done.
+  102 derived artifacts moved out of the live tree to
+  `~/snapshots/misaligned-2026-10-02/` with `MANIFEST.tsv` (102 rows +
+  header, md5 per file) and `README.md` (rationale, per-file verdicts,
+  deliberately-not-archived list). Live tree now holds only the 7
+  verification-only branches' artifacts (32 files in `data/processed`;
+  7 OOF + 2 CV files in `scores/`); all 17 regen-target branches'
+  `scores_file` pointers dangle until Phase 7 rewrites them.
 - **Commit history** — `851428a` is on `origin/anchor-baseline`, so it is not
   rewritten; `acd260d` documents the behaviour change instead.
+- **SoT patch** — S-1–S-7 landed as v2.10 §7.1 (`755e2fc`) *before* the
+  Phase 4–6 code changes, per the working rule (§2A.2).
 
-**Still outstanding:**
+**Still outstanding — human decisions required:**
 
-1. **L1 (§1.3).** The anchor vector is provably a *different model*, not a
-   permutation (sorted values differ by up to 0.1193). Best lead: the
-   unexplained `0.651694` anchor ledger row alongside the `0.6533` submission
-   comment — two near-0.65 values suggesting a scoring path over misaligned
-   pairs. Read the full columns of both records. **Does not block Phases
-   3-6**; blocks Phase 7.
-2. **Second snapshot copy off-box.** The untracked sources are now copied, but
-   both snapshots live on the same disk. A copy to another disk or machine is
-   outstanding.
-3. **Re-verify audit findings sourced from test-written files.** The mutation
+1. **Q1 — Authorise Phase 7 execution?** Everything upstream is committed;
+   the archive is verified; the A13 warning confirms the regen set (17
+   dangling pointers + 7 verification-only re-runs to gain fingerprints).
+   Phase 7 re-runs feature extraction + OOF training for 14 branches and
+   rewrites `SKILL_STATE.json` scalars. This is the point of no return for
+   the live tree (the archive + pristine snapshot preserve the evidence).
+   **Decision: proceed with Phase 7 as specified (§Phase 7 steps 1–8), or
+   amend the branch list first?**
+2. **Q2 — >0.9 target vs current ceiling.** Best LB F1 ever `0.823798627`
+   (`sub_008_ensemble`); top-5 span `0.8220–0.8238`; 18 subs, mean ~0.816.
+   Remediation restores *trustworthy* scoring (≈0.82–0.84 expected post-regen),
+   it does not add modelling signal. **>0.9 needs new features/modelling
+   after the pipeline is clean — is that in scope for this competition
+   (closes 2026-10-18, 16 days), and if so, what is the modelling plan?**
+3. **Q3 — Submission budget.** `submissions_used_total=2`,
+   `remaining_submissions=3` in state vs 18 rows in the manifest and a
+   300-total/10-daily Zindi budget — the state counters look stale relative
+   to the manifest. Before any re-submit (Phase 7 step 8), reconcile: which
+   source is authoritative, and how many submits are actually left?
+   (Local regen costs nothing; only LB submits consume budget.)
+4. **L1 (§1.3) — partially answered, forensically closed.** The state vector
+   is provably a *different model* (not a permutation, not a sibling copy),
+   and the mechanism is identified (fusion repointed `anchor_git_branch` to
+   an ID-less feature file). No further forensic route exists. **Phase 7
+   step 1 (scratch re-anchor vs Sep-1 AUC 0.813342) is the remaining
+   empirical answer — fold into Q1's go-ahead.**
+5. **Second snapshot copy off-box.** Both snapshots live on the same disk.
+   A copy to another disk or machine is outstanding.
+6. **Re-verify audit findings sourced from test-written files.** The mutation
    set includes the phase summaries, diagnostics, session log, feature policy
    and the ledger, and earlier suite runs did the same. Any finding drawn from
    those — e.g. the `phase_4` summary metadata showing an F1 value under
    `anchor_oof_score` — must be re-verified against something tests do not
    write, or against the snapshot's oldest surviving copy.
-4. **Phase 9 `skill_22` audit must run against the frozen snapshot**, never the
+7. **Phase 9 `skill_22` audit must run against the frozen snapshot**, never the
    live tree: `test_skill22_audit.py` was one of the four mutating tests, so
    any earlier skill_22 agreement result was produced against a directory the
    suite was rewriting.
