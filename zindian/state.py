@@ -30,6 +30,24 @@ def _assert_not_live_competition(path: Path) -> None:
     On 2026-10-02 the test suite rewrote SKILL_STATE.json, 26 files under
     ``scores/``, six phase summaries, six log files and the DuckDB ledger of
     the real competition, destroying evidence for an open investigation.
+
+    KNOWN LIMITATION — this guard is keyed on ``"pytest" in sys.modules``,
+    which does **not** reach a child process. A test that spawns a
+    subprocess importing :mod:`zindian.state` runs with no guard, because
+    pytest is not in that interpreter's ``sys.modules``. As of 2026-10-02 four
+    tests use ``subprocess`` and are therefore unprotected:
+
+        tests/test_gate_option_b.py
+        tests/test_regression_pipeline_integration.py
+        tests/test_shap_pca_exclusion.py
+        tests/test_skill11_gate.py
+
+    They currently run in-process (verified by passing the md5 integrity
+    check), so the gap is latent rather than active. Closing it properly means
+    an env-var or sentinel-file check that survives ``exec``, which is a
+    deliberate follow-up: a subprocess-wide guard must not fire during
+    genuine competition runs. ``ZINDIAN_TEST_ALLOW_LIVE`` is confirmed absent
+    from ``~/.bashrc``, ``~/.profile`` and ``~/.zshrc``, so the guard is armed.
     """
     if os.environ.get("ZINDIAN_TEST_ALLOW_LIVE"):
         return

@@ -195,24 +195,50 @@ for this question.
   `0.651694 / phase_4_inference_complete / 2026-09-02 21:33`; there is
   **no anchor training event after that**, yet the current vector differs.
 - No ledger rows exist after Sep 4.
-- The unexplained quantity is the **0.651694 anchor row**. Nothing in the
-  audit produces ~0.65 for this anchor. The audit also found `0.6533` in
-  `last_submission_comment` for sub_018 — two near-0.65 values on
-  different branches point to **a scoring path run over misaligned pairs**,
-  which is the best current lead and sits inside the bracket.
+- **The 0.65 "lead" is CLOSED — it was not a lead.** Reading the full ledger
+  columns shows the near-0.65 values are `notes` echoes of the submission
+  comment, not independent scorings:
+
+  ```
+  id 5  0.651300  phase_5_selection_complete  notes: branch:anchor-baseline|oof_score:0.6513|features:11|calib:none
+  id 7  0.649700  phase_5_selection_complete  notes: branch:anchor-baseline|oof_score:0.6497|features:11|calib:platt
+  id 8  0.651694  phase_4_inference_complete   notes: branch:anchor-baseline|oof_score:0.6517|features:5|calib:platt
+  ```
+
+  `0.651694` and the sub_018 `0.6533` are different numbers, on different
+  branches, in a comment field — **not the same scoring event**, and not
+  evidence of a misaligned scoring path. Earlier drafts called this "the best
+  current lead"; that was wrong and is retracted.
 - The Oct 2 events are re-serialisation only: `branch_anchor-baseline_oof.json`
   md5 is unchanged across test runs, and the vector values are identical to
   those read hours earlier.
 
-**L1 remains open, narrowed to:** which write placed a different vector into
-the state key between Sep 1 18:46 and Sep 2 21:33, and whether the 0.6517
-row and the 0.6533 submission comment share a misaligned scoring path.
+**L1 remains open, and is now narrower — it has no lead.** The only surviving
+bracket is artifact mtimes, and none of them can date the value change:
 
-Required before Phase 7: read the full columns of the `0.651694` and `0.6533`
-records, and identify the write. The competition tree is **gitignored**
-(`.gitignore:37`), so there is no version history to diff — the locked
-snapshot at `~/snapshots/climate-2026-10-02` is the only pristine copy and
-was taken *after* earlier test runs had already re-serialised state, so it
+```
+2026-09-01 21:46:48  data/raw/oof_anchor.csv                  <- last real anchor run
+2026-09-01 21:46:49  data/processed/features_train_anchor-baseline.csv
+2026-09-01 21:46:48  data/processed/test_probs_anchor-baseline.csv
+2026-10-02 12:54:22  scores/cv_split_indices.json           <- test re-serialisation
+2026-10-02 12:54:22  scores/branch_anchor-baseline_oof.json  <- test re-serialisation
+```
+
+**L1 open question:** which write placed a different vector into the state
+key between the Sep 1 21:46 run and now. There is no forensic route to it —
+the competition tree is **gitignored** (`.gitignore:37`), so no history
+exists to diff.
+
+**Therefore L1 is resolved by experiment, not forensics.** See Phase 7: the
+re-anchor is run first in a scratch copy and checked against the Sep 1
+vector. If it reproduces AUC 0.813342 and the `oof_anchor.csv` values, the
+pipeline is deterministic and the state vector came from some other write.
+If it does not, September was never reproducible and the "baseline" is not a
+baseline at all.
+
+**Note on the snapshot:** the locked copy at `~/snapshots/climate-2026-10-02`
+preserves current state, not September's — it was taken after earlier test runs
+had already re-serialised `scores/`.
 preserves current state, not September's.
 
 ### 1.3a The gate baseline is on the wrong basis — VERIFIED, 0.0086 bias
@@ -234,8 +260,15 @@ anchor is **0.8071**. Every candidate is penalised by ~0.0086. Saying
 "numbers either side of the commit are not comparable" is not sufficient
 while the baseline itself sits on the superseded basis.
 
-**Recomputing the anchor baseline at 0.5 on the ID-aligned vector is a
-Phase 7 prerequisite** (see Phase 7 step 0).
+**This 0.8070989 figure is a REFERENCE, not the Phase 7 baseline.** It is
+computed from the Sep 1 vector in `oof_anchor.csv`, which the re-anchor
+(step 3) *replaces*. Making it a "step 0 prerequisite" was wrong: it would
+measure a baseline that the next step discards.
+
+The real requirement is a **post-anchor recompute**: after step 3 produces a
+fresh anchor vector, recompute the baseline at fixed 0.5 from *that* vector
+and write it as the gate baseline before any candidate is re-gated. See
+Phase 7.
 
 ### 1.4 Why ID assertions alone cannot catch this — and where output is safe
 
@@ -527,34 +560,83 @@ discharge it.
 
 ### Phase 7 — Regenerate the 14 corrupted branches
 
-**Step 0 — prerequisite: recompute the anchor baseline on the 0.5 basis.**
-The stored `anchor_oof_score = 0.8156538` was produced by the old threshold
-sweep; candidates are now scored at fixed 0.5. Measured on the ID-aligned
-vector, the anchor at 0.5 is **0.8070989** — a **0.008555** penalty applied to
-every candidate. Re-derive the anchor on the ID-aligned vector at 0.5 and
-write that as the gate baseline *before* any candidate is re-gated. Until
-this is done, Phase 7's re-gate inherits the bias.
-
 Order matters — upstream first:
-1. Re-run both plugins' feature extraction for all 14 branches.
-2. Verify each with an **ID-based** restore against real `Train.csv`:
-   expect **0/0/0/0** (coord match / label match / test / count).
-3. Re-anchor: re-run the anchor OOF on the 0.5 basis (step 0), then re-gate.
-4. `features_train_ensemble.csv` is **load-bearing** — `oracle_fusion_core.py`
+
+1. **L1 experiment, in a scratch copy — before anything else.** Re-run the
+   anchor in an isolated copy and compare to the Sep 1 vector: does it
+   reproduce **AUC 0.813342** and the `data/raw/oof_anchor.csv` values? If
+   yes, the pipeline is deterministic and the state vector came from some
+   other write, which answers L1. If no, September was never reproducible and
+   the "baseline" is not a baseline. This is the only route to closing L1,
+   since no forensic history exists (§1.3).
+2. Re-run both plugins' feature extraction for all 14 branches.
+3. Verify each with an **ID-based** re-derivation against real `Train.csv`:
+   expect **0 mismatches on every macro column** (`test_feature_regeneration_alignment.py`).
+4. Re-anchor: re-run the anchor OOF.
+5. **Post-anchor baseline recompute — the actual gate prerequisite.** Compute
+   the anchor composite at fixed 0.5 from the *newly produced* vector and
+   write that as the gate baseline. The `0.8070989` in §1.3a is a reference
+   figure from the Sep 1 vector and is **not** this value; using it as a
+   "step 0" would measure a baseline the re-anchor has just replaced.
+6. Re-gate all candidates against that baseline.
+7. `features_train_ensemble.csv` is **load-bearing** — `oracle_fusion_core.py`
    L386–394 reads it for `y_true` (L714–728), which drives member verification
    scoring *and* collinearity pruning. It must be regenerated before
    `sub_008` or any fusion governance is re-evaluated. Round 3 found `sub_008`
    exposed through exactly this 3-layer chain (scrambled member vectors →
    verification/pruning scored against 168 shifted labels → blend locked into
    slot 2). Phase 6a then removes the label dependency entirely.
-5. Re-run fusion governance, then re-submit only after Gate 4 re-approval.
+8. Re-run fusion governance, then re-submit only after Gate 4 re-approval.
 
-**Clean, confirmed by ID-join against raw (not by mtime):**
-`anchor-baseline`, `ai4eac-longmemory-cohorts`, `climate-interactions`,
-`climate-longmemory-only`, `cohort-only`, `seasonal-deathdate`,
-`temporal-anomaly-only` — all 0 label and 0 coordinate mismatches under an
-ID join. `shap_audit` has **no feature file** and is not a regeneration
-target at all. Do not regenerate these.
+**Clean — and the reason matters, because a raw-column ID join cannot prove it:**
+
+| Branch | Basis for cleanliness |
+|---|---|
+| `anchor-baseline` | No plugin join in its path. ID-restored, 0/0. |
+| `ai4eac-longmemory-cohorts` | No plugin join in its path. ID-restored, 0/0. |
+| `climate-longmemory-only` | No plugin join in its path. ID-restored, 0/0. |
+| `cohort-only` | No plugin join in its path. ID-restored, 0/0. |
+| `temporal-anomaly-only` | No plugin join in its path. ID-restored, 0/0. |
+| `climate-interactions` | **No exogenous join in its path** — see below. |
+| `seasonal-deathdate` | **No exogenous join in its path** — see below. |
+
+`shap_audit` has **no feature file** and is not a regeneration target at all.
+
+**The two macro branches are clean because they never call a macro join — not
+because an ID join returned 0/0.** An earlier draft of this plan recorded them
+as "confirmed by ID-join against raw (0/0)". That was an inference dressed as
+a measurement: the check compared only *raw* columns, which row permutation
+does not touch, so it was structurally incapable of detecting the defect in
+*any* branch. It was a tautology, not a check.
+
+The proper check re-derives the macro columns from source and compares **by
+ID** (`test_feature_regeneration_alignment.py`, §2B). Running it:
+
+```
+climate-interactions            : NO macro-derived columns -> cannot clear or condemn
+seasonal-deathdate              : NO macro-derived columns -> cannot clear or condemn
+macro-environmental-specialist  : 9 macro cols, 3056 mismatches each (27,504 total)
+catboost-climate-interactions   : no ID column -> positional compare not possible
+```
+
+Two conclusions:
+
+- **The method works and it convicts a file.** `macro-environmental-specialist`
+  is confirmed corrupted on its macro columns — a verdict the raw-column ID
+  join could never have produced.
+- **`climate-interactions` and `seasonal-deathdate` carry no macro columns at
+  all.** They were never macro-joined, which is the actual reason they are
+  clean. The re-derivation check cannot clear or condemn them; it records only
+  that there is nothing to compare. Their cleanliness rests on the **absence
+  of a plugin join in their path**, verified by column inspection, and must be
+  recorded that way rather than as a 0/0 result.
+
+**Consequence for any re-derivation:** reproduce the plugin's `allow_unmatched`
+behaviour. Under `by=[lat, lon]` a row needs a matching location *and* a date
+at or before it, and per-location history starts later than the file minimum —
+3,056 of 4,371 train rows have no preceding history for their location. A
+strict re-derivation rejects them; the plugin imputes. Match that, or the check
+is not comparable.
 
 Re-derived in a scratch dir outside the competition tree (2026-10-02):
 

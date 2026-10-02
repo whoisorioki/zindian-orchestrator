@@ -357,9 +357,19 @@ def run(
     except Exception as e:
         import traceback
 
-        # Log exception to session-scoped file if paths are available
+        # Log exception to session-scoped file if paths are available.
+        #
+        # This MUST NOT resolve the competition unconditionally. It did so
+        # until 2026-10-02, which meant any caller that passed explicit paths
+        # (every test) still wrote skill_15_error.jsonl into the live tree on
+        # the failure path — the same defect 42097d5 fixed in the happy path,
+        # left intact in the error path. Reuse the already-resolved `paths`
+        # when the caller supplied them; only fall back to the resolver when
+        # the failure happened before `paths` was bound at all.
         try:
-            _paths = resolve_competition_paths()
+            _paths = locals().get("paths")
+            if _paths is None:
+                _paths = resolve_competition_paths()
             _session_dir = _paths.reports_dir / "sessions"
             _session_dir.mkdir(parents=True, exist_ok=True)
             _error_log = _session_dir / "skill_15_error.jsonl"
