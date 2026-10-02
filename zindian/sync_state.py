@@ -97,7 +97,13 @@ def sync_leaderboard(client: ZindiClient, state: dict[str, Any]) -> dict[str, An
 
 def sync_all() -> dict[str, Any]:
     """Sync all dynamic state."""
-    paths = resolve_competition_paths()
+    # Resolve through the module attribute rather than the name imported at
+    # module load. The direct binding captured at import time ignores any
+    # monkeypatch applied to zindian.paths, which let callers (including
+    # tests) fall through to the LIVE competition and write to it.
+    import zindian.paths as _paths_mod
+
+    paths = _paths_mod.resolve_competition_paths()
     config = ChallengeConfig.load()
     store = SkillStateStore(paths.state_path)
     state = store.read()

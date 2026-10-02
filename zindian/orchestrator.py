@@ -1096,9 +1096,12 @@ def run_phase(
                     train_path = paths.data_raw_dir / train_file
                     test_path = paths.data_raw_dir / test_file
                 else:
-                    from zindian.paths import resolve_competition_paths as _rcp
+                    # Module-attribute resolution, not a function-local
+                    # import: the local binding ignores patches applied to
+                    # zindian.paths and would resolve to the LIVE tree.
+                    from zindian import paths as _pmod
 
-                    _p = _rcp()
+                    _p = _pmod.resolve_competition_paths()
                     train_path = _p.data_raw_dir / train_file
                     test_path = _p.data_raw_dir / test_file
 

@@ -109,15 +109,47 @@ def run(
         # Resolve the competition ONLY when the caller has not supplied
         # explicit paths. Falling back unconditionally (previous behaviour)
         # meant a test or ad-hoc call with no arguments resolved against the
-        # real competition directory and wrote to it — see the conftest guard
-        # in tests/conftest.py, which fails any resolution into the live tree.
+        # real competition directory and wrote to it — see the guard in
+        # zindian/state.py::_assert_not_live_competition.
+        #
+        # The session log directory is derived from the resolved paths when
+        # available, else from the explicit state_path's parent, so a caller
+        # that supplies all three paths never touches the resolver.
+        reports_dir_override: str | None = kwargs.pop("reports_dir", None)
         if ledger_path is None or state_path is None or config_path is None:
             paths = resolve_competition_paths()
         else:
-            paths = None
+            # All three paths were supplied explicitly. Build a paths-like
+            # stand-in so the rest of this function (and run_phase_summary)
+            # can keep using `paths.*` without ever reaching the global
+            # resolver — which is what let tests write into the live tree.
+            from dataclasses import dataclass as _dc
+
+            @_dc
+            class _ExplicitPaths:
+                root: Path
+                competition_dir: Path
+                state_path: Path
+                config_path: Path
+                reports_dir: Path
+
+            _state_p = Path(state_path).resolve()
+            _comp_dir = _state_p.parent
+            paths = _ExplicitPaths(
+                root=_comp_dir,
+                competition_dir=_comp_dir,
+                state_path=_state_p,
+                config_path=Path(config_path).resolve(),
+                reports_dir=(
+                    Path(reports_dir_override).resolve()
+                    if reports_dir_override is not None
+                    else _comp_dir / "reports"
+                ),
+            )
         ledger_path = ledger_path or str(paths.reports_dir / "experiments.db")
         state_path = state_path or str(paths.state_path)
         config_path = config_path or str(paths.config_path)
+        reports_dir = paths.reports_dir
 
         phase_clean = str(phase).lower().strip().replace("phase_", "")
         if not phase_clean:
@@ -158,7 +190,7 @@ def run(
 
         # -- Session-scoped startup logging -------------------------
         # Route startup events to session-scoped files, NOT history_log.jsonl
-        session_dir = paths.reports_dir / "sessions"
+        session_dir = reports_dir / "sessions"
         session_dir.mkdir(parents=True, exist_ok=True)
 
         startup_event = {

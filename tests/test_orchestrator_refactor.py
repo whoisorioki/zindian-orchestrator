@@ -248,9 +248,46 @@ class TestPhaseArchitectureAlignment:
         assert "skill_21" in PHASE_3B_SKILLS
         assert "skill_22" in PHASE_4_SKILLS
 
-    def test_sub_phase_notation_supported(self):
+    def test_sub_phase_notation_supported(self, tmp_path, monkeypatch):
         """Orchestrator must accept sub-phase strings (1, 2A, 2B, 3A, 3B, 4)"""
         import pandas as pd
+
+        # Isolate: this test previously ran with no path patch at all and
+        # silently resolved into the LIVE competition, reading its raw data
+        # and writing its SKILL_STATE.json. Point the resolver at tmp_path.
+        comp_dir = tmp_path / "competitions" / "notation-comp"
+        for sub in ("data/raw", "data/processed", "reports", "notebooks"):
+            (comp_dir / sub).mkdir(parents=True, exist_ok=True)
+        (comp_dir / "challenge_config.json").write_text(
+            '{"slug": "notation-comp", "task_type": "classification", '
+            '"metric": "auc", "metric_direction": "maximize", "domain": "tabular"}',
+            encoding="utf-8",
+        )
+        (comp_dir / "SKILL_STATE.json").write_text(
+            '{"dag_phase": "phase_1_integrity_intake", "phase_1_complete": true}',
+            encoding="utf-8",
+        )
+        (comp_dir / "data" / "raw" / "Train.csv").write_text(
+            "ID,target\n1,0\n2,1\n", encoding="utf-8"
+        )
+        (comp_dir / "data" / "raw" / "Test.csv").write_text("ID\n3\n", encoding="utf-8")
+
+        from zindian.paths import CompetitionPaths
+
+        iso_paths = CompetitionPaths(
+            root=tmp_path,
+            competition_dir=comp_dir,
+            state_path=comp_dir / "SKILL_STATE.json",
+            config_path=comp_dir / "challenge_config.json",
+            data_raw_dir=comp_dir / "data" / "raw",
+            data_processed_dir=comp_dir / "data" / "processed",
+            reports_dir=comp_dir / "reports",
+            notebooks_dir=comp_dir / "notebooks",
+            submissions_dir=comp_dir / "submissions",
+        )
+        monkeypatch.setattr(
+            "zindian.paths.resolve_competition_paths", lambda *a, **k: iso_paths
+        )
 
         # Action: Call run_phase with string phases, mocking skill execution & pandas read_csv
         with patch("zindian.orchestrator.run_skill") as mock_run, patch(
