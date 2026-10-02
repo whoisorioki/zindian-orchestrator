@@ -540,6 +540,7 @@ def run(
                     store,
                     branch_name="ensemble",
                     scores=blend_probs.tolist(),
+                    id_order=list(raw_train[id_col].values),
                     cv_strategy_id=resolve_active_cv_strategy_id(
                         state_obj, config_obj._data
                     ),
@@ -698,6 +699,7 @@ def _run_multi_target_fusion(
                         store,
                         branch_name=f"ensemble_{target_name}",
                         scores=blend_probs.tolist(),
+                        id_order=list(raw_train[id_col].values),
                         cv_strategy_id=resolve_active_cv_strategy_id(
                             state_obj, config_obj._data
                         ),

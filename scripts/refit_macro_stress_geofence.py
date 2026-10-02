@@ -17,7 +17,11 @@ from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder
 
 from zindian.metrics import ScoreProvenance, composite_metric
-from zindian.state import SkillStateStore, write_oof_record
+from zindian.state import (
+    SkillStateStore,
+    resolve_active_cv_strategy_id,
+    write_oof_record,
+)
 
 COMP_DIR = Path("competitions/climate-risk-health-prediction-challenge")
 DATA_DIR = COMP_DIR / "data/processed"
@@ -75,18 +79,26 @@ for col in feature_cols:
 X = train[feature_cols].values.astype(np.float64)
 X_test = test[feature_cols].values.astype(np.float64)
 
-# CV splits
-cv_split_path = DATA_DIR / "cv_split_indices.json"
-if cv_split_path.exists():
-    with open(cv_split_path) as f:
-        cv_splits = json.load(f)
-    print(f"Using explicit CV splits: {len(cv_splits)} folds")
-else:
-    from sklearn.model_selection import KFold
-
-    kf = KFold(n_splits=5, shuffle=True, random_state=SEED)
-    cv_splits = [(t.tolist(), v.tolist()) for t, v in kf.split(X)]
-    print(f"Using KFold({len(cv_splits)})")
+# CV splits -- SoT S-3/S-5: provenance honesty.
+#
+# This block previously looked only in data/processed/ and silently fell back
+# to a shuffled KFold when the file was absent. The configured splits actually
+# live in scores/cv_split_indices.json, so the fallback ALWAYS fired: random
+# folds were computed and then written to SKILL_STATE tagged
+# "config:BufferedSpatialCV". Two branches therefore carried provenance for a
+# strategy they never used. A missing split file is now a hard stop.
+cv_split_path = COMP_DIR / "scores" / "cv_split_indices.json"
+if not cv_split_path.exists():
+    raise FileNotFoundError(
+        f"CV splits not found at {cv_split_path}. Refusing to fall back to a "
+        f"random KFold: doing so would write an OOF record tagged with the "
+        f"configured cv_strategy_id while using different folds (SoT S-5). "
+        f"Re-run the CV stage, or load splits via "
+        f"SkillStateStore(paths.state_path).read()['cv_split_indices']."
+    )
+with open(cv_split_path, encoding="utf-8") as f:
+    cv_splits = json.load(f)
+print(f"Using explicit CV splits from {cv_split_path}: {len(cv_splits)} folds")
 
 # Train LightGBM Regressor on residuals
 oof_res = np.zeros(len(train), dtype=np.float64)
@@ -180,7 +192,10 @@ write_oof_record(
     store=store,
     branch_name=variant_name,
     scores=oof_final.tolist(),
-    cv_strategy_id="config:BufferedSpatialCV",
+    id_order=list(train[ID_COL].values) if ID_COL in train.columns else None,
+    cv_strategy_id=resolve_active_cv_strategy_id(
+        store.read(), getattr(config, "_data", config)
+    ),
     seed=SEED,
     model_config={
         "feature_count": len(feature_cols),

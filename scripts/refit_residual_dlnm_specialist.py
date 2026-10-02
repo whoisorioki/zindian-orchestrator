@@ -107,15 +107,23 @@ for col in feature_cols:
 X = train[feature_cols].values.astype(np.float64)
 X_test = test[feature_cols].values.astype(np.float64)
 
-# Load CV splits
-cv_split_path = DATA_DIR / "cv_split_indices.json"
-if cv_split_path.exists():
-    with open(cv_split_path, encoding="utf-8") as f:
-        cv_splits = json.load(f)
-    print(f"Using explicit CV splits: {len(cv_splits)} folds")
-else:
-    kf = make_cv_splitter({"type": "kfold", "n_splits": 5}, random_seed=SEED)
-    cv_splits = [(t.tolist(), v.tolist()) for t, v in kf.split(X)]
+# CV splits -- SoT S-3/S-5: provenance honesty.
+#
+# Previously looked only in data/processed/ and fell back to a random splitter
+# when absent. The configured splits live in scores/cv_split_indices.json, so
+# that fallback ALWAYS fired, and the resulting folds were written to
+# SKILL_STATE under the configured cv_strategy_id. Missing splits are now a
+# hard stop rather than a silent strategy substitution.
+cv_split_path = COMP_DIR / "scores" / "cv_split_indices.json"
+if not cv_split_path.exists():
+    raise FileNotFoundError(
+        f"CV splits not found at {cv_split_path}. Refusing to fall back to a "
+        f"random splitter: doing so would write an OOF record tagged with the "
+        f"configured cv_strategy_id while using different folds (SoT S-5)."
+    )
+with open(cv_split_path, encoding="utf-8") as f:
+    cv_splits = json.load(f)
+print(f"Using explicit CV splits from {cv_split_path}: {len(cv_splits)} folds")
 
 from catboost import CatBoostRegressor
 
@@ -176,6 +184,7 @@ write_oof_record(
     state_store,
     branch_name=VARIANT_NAME,
     scores=oof_final.tolist(),
+    id_order=list(train[ID_COL].values) if ID_COL in train.columns else None,
     cv_strategy_id=cv_strategy_id,
     seed=SEED,
     model_config={

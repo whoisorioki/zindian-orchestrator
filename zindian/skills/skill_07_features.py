@@ -1571,6 +1571,7 @@ def _run_multi_target_variant(
             store,
             branch_name=branch_name,
             scores=oof_1d.tolist(),
+            id_order=list(raw_train[id_col].values),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=42,
             model_config={
@@ -2379,6 +2380,11 @@ def run(
                 else variant_name
             ),
             scores=np.asarray(result["oof_probs"], dtype=np.float64).tolist(),
+            id_order=(
+                list(train_feat[id_col].values)
+                if id_col in train_feat.columns
+                else None
+            ),
             cv_strategy_id=resolve_active_cv_strategy_id(state, config._data),
             seed=SEED,
             model_config={

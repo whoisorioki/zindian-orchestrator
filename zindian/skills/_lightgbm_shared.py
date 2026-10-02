@@ -272,7 +272,30 @@ def train_lightgbm_cv(
             split_iter.append((tr_idx_augmented, val_idx))
     else:
         if cv is None:
-            split_iter = get_cv_splits(X, y, random_seed=random_seed)
+            # Prefer the explicit splits skill_05 persisted for this
+            # competition. Falling straight through to get_cv_splits() reads
+            # the LIVE config, which for a spatial competition names
+            # BufferedSpatialCV -- a strategy this function cannot construct,
+            # and one it must not silently replace with random folds (SoT S-4).
+            _explicit = None
+            try:
+                from zindian.state import SkillStateStore
+                from zindian.paths import resolve_competition_paths
+
+                _paths = resolve_competition_paths()
+                _explicit = SkillStateStore(_paths.state_path).read().get(
+                    "cv_split_indices"
+                )
+            except Exception:
+                _explicit = None
+
+            if _explicit:
+                split_iter = [
+                    (np.asarray(tr, dtype=np.int64), np.asarray(va, dtype=np.int64))
+                    for tr, va in _explicit
+                ]
+            else:
+                split_iter = get_cv_splits(X, y, random_seed=random_seed)
         else:
             if hasattr(cv, "split"):
                 split_iter = getattr(cv, "split")(X, y)

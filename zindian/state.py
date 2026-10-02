@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict
 
+from .joins import RowAlignmentError
 from .schemas import skill_state_skeleton, validate_skill_state
 
 
@@ -329,6 +331,18 @@ def compute_secondary_metrics(
     return metrics
 
 
+def oof_id_order_hash(ids: Any) -> str:
+    """sha256 of the comma-joined ID order — the row-identity fingerprint.
+
+    A hash of the *ordered* sequence, not the set. A whole-row permutation
+    preserves set membership exactly, so any set-based check (or a length
+    check) passes while the artifact is misaligned. This is the only cheap
+    fingerprint that detects the defect class (SoT S-4).
+    """
+    parts = [str(v) for v in list(ids)]
+    return hashlib.sha256(",".join(parts).encode("utf-8")).hexdigest()
+
+
 def write_oof_record(
     store: SkillStateStore,
     *,
@@ -338,9 +352,25 @@ def write_oof_record(
     seed: int,
     model_config: dict[str, Any],
     secondary_metrics: dict[str, Any] | None = None,
+    id_order: Any = None,
     touch_timestamp: bool = True,
 ) -> dict[str, Any]:
-    """Persist a SoT-shaped OOF record under `branch_{branch_name}_oof`."""
+    """Persist a SoT-shaped OOF record under `branch_{branch_name}_oof`.
+
+    ``id_order`` (SoT S-1/S-4) is the ordered ID sequence corresponding to
+    ``scores``. When supplied, an ``id_order_hash`` fingerprint and
+    ``id_count`` are persisted so consumers can prove the vector still lines
+    up with the current training rows.
+
+    When omitted, the record is written with ``id_order_hash = None`` and
+    ``alignment_verified = False`` rather than being rejected. That keeps
+    existing call sites working during the migration, but the flag makes the
+    gap explicit and machine-checkable: ``verify_oof_alignment`` treats an
+    unverified record as a hard failure, and preflight check A9 fails on any
+    active branch still missing its hash. Silence was what allowed this
+    defect class to go unnoticed, so the default state is "unverified",
+    never "assumed fine".
+    """
     if isinstance(scores, (list, tuple)):
         score_list = [float(value) for value in scores]
     else:
@@ -355,6 +385,22 @@ def write_oof_record(
     }
     if secondary_metrics is not None:
         record["secondary_metrics"] = secondary_metrics
+
+    if id_order is None:
+        record["id_order_hash"] = None
+        record["id_count"] = len(score_list)
+        record["alignment_verified"] = False
+    else:
+        record["id_order_hash"] = oof_id_order_hash(id_order)
+        record["id_count"] = len(list(id_order))
+        record["alignment_verified"] = True
+        if record["id_count"] != len(score_list):
+            raise RowAlignmentError(
+                f"write_oof_record('{branch_name}'): id_order has "
+                f"{record['id_count']} entries but scores has "
+                f"{len(score_list)}. These describe different row sets, so the "
+                f"record would be internally inconsistent (SoT S-4)."
+            )
 
     state = store.read()
     retraining_active = bool(
@@ -378,6 +424,54 @@ def write_oof_record(
     state[key] = record
     store.write(state, touch_timestamp=touch_timestamp)
     return record
+
+
+def verify_oof_alignment(
+    record: dict[str, Any] | None,
+    expected_ids: Any,
+    *,
+    branch_name: str = "<unknown>",
+    context: str = "consumer",
+) -> bool:
+    """Prove an OOF record still aligns with the current training rows.
+
+    SoT S-4. Recomputes the ordered-ID fingerprint from ``expected_ids`` and
+    compares it to the record's persisted ``id_order_hash``.
+
+    A **length check is not a substitute**: a whole-row permutation preserves
+    length exactly, so length-based guards pass while the artifact is
+    misaligned. This is the check that would have caught the merge_asof
+    corruption, and it is a hard failure by design.
+
+    Raises :class:`RowAlignmentError` when the record is missing, carries no
+    fingerprint, or the fingerprint disagrees. Returns True on success.
+    """
+    if record is None:
+        raise RowAlignmentError(
+            f"[{context}] OOF record for branch '{branch_name}' is missing. "
+            f"Cannot prove row alignment (SoT S-4)."
+        )
+
+    stored_hash = record.get("id_order_hash")
+    if stored_hash is None:
+        raise RowAlignmentError(
+            f"[{context}] OOF record for branch '{branch_name}' has no "
+            f"id_order_hash, so its row order cannot be verified. This record "
+            f"predates the S-4 schema or was written without id_order. "
+            f"Regenerate the branch. Length alone is NOT sufficient: a "
+            f"permutation preserves length."
+        )
+
+    expected_hash = oof_id_order_hash(expected_ids)
+    if stored_hash != expected_hash:
+        raise RowAlignmentError(
+            f"[{context}] OOF row order for branch '{branch_name}' does not "
+            f"match the current training IDs. The score vector is permuted "
+            f"relative to the feature rows, so every positional consumer "
+            f"(gating, fusion, pruning) would be silently mis-scored. "
+            f"Refusing (SoT S-4)."
+        )
+    return True
 
 
 def is_anchor_challenge_active(state_obj: dict) -> bool:

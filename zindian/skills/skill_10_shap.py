@@ -788,6 +788,23 @@ def _run_pairwise_mi_audit(
     return flagged_pairs
 
 
+def _frame_id_order(frame: pd.DataFrame) -> list | None:
+    """Ordered IDs from `frame`, or None when it carries no identifier.
+
+    Feature frames reach skill_10 with or without an ID column depending on
+    which extractor produced them, so the fingerprint is best-effort here.
+    A record written without one is marked ``alignment_verified=False`` and
+    is rejected by ``verify_oof_alignment`` -- omission is visible rather
+    than silent (SoT S-4).
+    """
+    if frame is None or not isinstance(frame, pd.DataFrame):
+        return None
+    for cand in frame.columns:
+        if str(cand).strip().lower() in ("id", "id_col", "idcol"):
+            return list(frame[cand].values)
+    return None
+
+
 def _write_outputs(
     paths: CompetitionPaths, report: dict, summary_lines: Iterable[str]
 ) -> None:
@@ -936,6 +953,7 @@ def run(
             state_store,
             branch_name="shap_audit",
             scores=np.asarray(oof_probs, dtype=np.float64).tolist(),
+            id_order=_frame_id_order(frame),
             cv_strategy_id=cv_id,
             seed=_seed_val_sf,
             model_config={
@@ -1137,6 +1155,7 @@ def run(
         state_store,
         branch_name="shap_audit",
         scores=np.asarray(full_audit["oof_probs"], dtype=np.float64).tolist(),
+        id_order=_frame_id_order(frame),
         cv_strategy_id=cv_id,
         seed=int(seed if seed is not None else get_seed()),
         model_config={

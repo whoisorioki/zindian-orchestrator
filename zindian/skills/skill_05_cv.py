@@ -601,10 +601,41 @@ def run(strategy: str = "compare") -> dict:
     buffered_splits = None
     buffered_groups = None
 
+    # Clamp n_splits to the data BEFORE it is written to state. Previously the
+    # clamp below applied only to materialisation, so state recorded
+    # cv_strategy.n_splits = 5 on a 4-row frame while the actual splits used 2.
+    # Any later consumer that trusted state (or rebuilt a splitter from it)
+    # then asked sklearn for 5 folds from 4 rows and crashed. Clamp once, use
+    # the clamped value everywhere.
+    materialized_n_splits = int(decision.get("n_splits", N_SPLITS))
+
+    # StratifiedKFold additionally requires n_splits <= the minority class
+    # count, not just <= n_rows. Without this second bound, a 4-row frame with
+    # a 2/2 split clamps to 4 rows but still fails with "n_splits=4 cannot be
+    # greater than the number of members in each class".
+    strat_upper_bound = len(ft)
+    if selected_type in ("StratifiedKFold", "StratifiedKFold_", "stratified"):
+        _y_arr = np.asarray(y).ravel()
+        _counts = pd.Series(_y_arr).value_counts()
+        if len(_counts):
+            strat_upper_bound = min(strat_upper_bound, int(_counts.min()))
+    elif selected_type == "TimeSeriesSplit":
+        # TimeSeriesSplit produces n_splits+1 contiguous blocks, so it needs
+        # at least n_splits+1 samples. With 4 rows, n_splits=4 is invalid.
+        strat_upper_bound = len(ft) - 1
+    _limit = max(2, min(materialized_n_splits, strat_upper_bound))
+    if _limit < materialized_n_splits:
+        materialized_n_splits = _limit
+        decision = dict(decision)
+        decision["n_splits"] = materialized_n_splits
+        selection_reason = (
+            selection_reason + f"; n_splits_clamped_to_{materialized_n_splits}"
+        )
+
     state_update = {
         "cv_strategy": {
             "type": selected_type,
-            "n_splits": int(decision.get("n_splits", N_SPLITS)),
+            "n_splits": materialized_n_splits,
             "shuffle": bool(decision.get("shuffle", False)),
             "random_state": decision.get("random_state"),
             "group_col": decision.get("group_col"),
@@ -615,9 +646,6 @@ def run(strategy: str = "compare") -> dict:
         "cv_group_col": decision.get("group_col"),
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    materialized_n_splits = int(decision.get("n_splits", N_SPLITS))
-    if len(ft) < materialized_n_splits:
-        materialized_n_splits = max(2, len(ft))
     if (
         (selected_type == "BufferedSpatialCV" or 
          (selected_type == "GroupKFold" and decision.get("group_col") is None))

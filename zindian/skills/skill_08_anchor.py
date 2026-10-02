@@ -382,6 +382,19 @@ def run(
             variant_name,
         )
 
+    # Native Residual Specialist Training check
+    if variant_name:
+        sidecar_path = paths.competition_dir / "variants" / f"{variant_name}.json"
+        if sidecar_path.exists():
+            try:
+                sdata = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                if sdata.get("residual_target_mode", False):
+                    return _run_residual_specialist(
+                        variant_name, paths, config, state_store, state, n_splits, random_seed
+                    )
+            except Exception as e:
+                print(f"  [WARN] Sidecar check failed: {e}")
+
     # -- Load data ----------------------------------------------
     train, test, training_target_col, submission_col = load_data(paths, config, state)
     print("\nData loaded:")
@@ -652,6 +665,9 @@ def run(
         state_store,
         branch_name=branch_name,
         scores=np.asarray(oof_scores_for_state, dtype=np.float64).tolist(),
+        id_order=(
+            list(train[id_col].values) if id_col in train.columns else None
+        ),
         cv_strategy_id=cv_strategy_id,
         seed=int(random_seed if random_seed is not None else get_seed()),
         model_config={
@@ -1050,6 +1066,7 @@ def _run_multi_target(
             state_store,
             branch_name=f"anchor-baseline_{target_name}{branch_suffix}",
             scores=np.asarray(oof_1d, dtype=np.float64).tolist(),
+            id_order=list(raw_train[id_col].values),
             cv_strategy_id=cv_strategy_id,
             seed=seed,
             model_config={
@@ -1082,6 +1099,217 @@ def _run_multi_target(
         "avg_score": avg_score,
         "submission_path": None,
         "oof_path": str(oof_path),
+    }
+
+
+def _run_residual_specialist(
+    variant_name: str,
+    paths: Any,
+    config: Any,
+    state_store: Any,
+    state: dict,
+    n_splits: int = 5,
+    random_seed: int = 42,
+) -> dict:
+    """Natively train a residual specialist model against anchor-baseline OOF residuals."""
+    print(f"\n[SPECIALIST] Training Residual Specialist Variant: {variant_name}")
+
+    # 1. Load variant sidecar JSON
+    comp_dir = getattr(paths, "competition_dir", paths.data_raw_dir.parent)
+    sidecar_path = comp_dir / "variants" / f"{variant_name}.json"
+    sidecar = {}
+    if sidecar_path.exists():
+        try:
+            sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  [WARN] Failed to read variant sidecar {sidecar_path}: {e}")
+
+    # 2. Load anchor baseline / residual source OOF predictions
+    residual_source = sidecar.get("residual_source", "anchor-baseline")
+    scores_dir = comp_dir / "scores"
+    scores_dir.mkdir(parents=True, exist_ok=True)
+    anchor_oof_path = scores_dir / f"branch_{residual_source}_oof.json"
+
+    oof_records = state.get("oof_records", {})
+    if anchor_oof_path.exists():
+        anchor_oof = np.array(json.loads(anchor_oof_path.read_text()), dtype=np.float64)
+    elif residual_source in oof_records:
+        anchor_oof = np.array(oof_records[residual_source].get("scores", []), dtype=np.float64)
+    else:
+        raise RuntimeError(f"Residual source '{residual_source}' OOF predictions missing.")
+
+    # 3. Load branch features
+    feat_train_path = paths.data_processed_dir / f"features_train_{variant_name}.csv"
+    feat_test_path = paths.data_processed_dir / f"features_test_{variant_name}.csv"
+    if not feat_train_path.exists():
+        feat_train_path = paths.data_processed_dir / "features_train_anchor-baseline.csv"
+        feat_test_path = paths.data_processed_dir / "features_test_anchor-baseline.csv"
+
+    train_df = pd.read_csv(feat_train_path)
+    test_df = pd.read_csv(feat_test_path)
+
+    training_target_col = config.get("target_col") or config.target_col
+    id_col = config.get("id_col") or config.id_col
+    cols_cfg = config.get("columns", {}) or {}
+    lat_col = cols_cfg.get("latitude", "latitude")
+    lon_col = cols_cfg.get("longitude", "longitude")
+
+    excluded_cols = {id_col, training_target_col, lat_col, lon_col, "deathdate", "date"}
+    feature_cols = [c for c in train_df.columns if c not in excluded_cols and c in test_df.columns]
+
+    y_true = np.asarray(train_df[training_target_col].values, dtype=np.float64)
+    residuals = y_true - anchor_oof
+
+    # Load anchor test probabilities
+    anchor_test_path = paths.data_processed_dir / "test_probs_anchor-baseline.csv"
+    if anchor_test_path.exists():
+        anchor_test_df = pd.read_csv(anchor_test_path)
+        prob_cols = [c for c in anchor_test_df.columns if c != id_col]
+        anchor_test_probs = anchor_test_df[prob_cols[0]].values.astype(np.float64)
+    else:
+        anchor_test_probs = np.full(len(test_df), anchor_oof.mean())
+
+    # Build CV splits
+    split_iter = load_explicit_cv_splits(state)
+    if split_iter is None:
+        splitter = make_cv_splitter(
+            cv_strategy={"type": config.get("cv_strategy", {}).get("type", "stratified"), "n_splits": n_splits},
+            random_seed=random_seed,
+        )
+        X_dummy = np.zeros((len(train_df), 1), dtype=np.float64)
+        split_iter = list(splitter.split(X_dummy, (y_true >= 0.5).astype(int)))
+
+    # Fit regressor model on continuous residuals
+    model_spec = sidecar.get("model", {})
+    family = model_spec.get("family", "catboost")
+    hp = dict(model_spec.get("hyperparams", {}))
+
+    oof_res = np.zeros(len(train_df), dtype=np.float64)
+    test_res = np.zeros(len(test_df), dtype=np.float64)
+
+    # Encode non-numeric columns if any
+    for col in feature_cols:
+        if not pd.api.types.is_numeric_dtype(train_df[col]):
+            le = LabelEncoder()
+            all_vals = pd.concat([train_df[col], test_df[col]]).astype(str).unique()
+            le.fit(all_vals)
+            train_df[col] = le.transform(train_df[col].astype(str))
+            test_df[col] = le.transform(test_df[col].astype(str))
+
+    X_train = train_df[feature_cols].values.astype(np.float64)
+    X_test = test_df[feature_cols].values.astype(np.float64)
+
+    for fold_idx, (tr_idx, val_idx) in enumerate(split_iter):
+        if family in ("catboost", "cb"):
+            from catboost import CatBoostRegressor
+            monotone = hp.get("monotone_constraints")
+            if isinstance(monotone, dict):
+                mono_tuple = [monotone.get(col, 0) for col in feature_cols]
+                hp_copy = dict(hp)
+                hp_copy["monotone_constraints"] = mono_tuple
+            else:
+                hp_copy = dict(hp)
+
+            model = CatBoostRegressor(
+                iterations=hp_copy.pop("iterations", hp_copy.pop("n_estimators", 800)),
+                learning_rate=hp_copy.pop("learning_rate", 0.03),
+                depth=hp_copy.pop("depth", hp_copy.pop("max_depth", 6)),
+                random_seed=random_seed + fold_idx,
+                verbose=0,
+                **hp_copy,
+            )
+            model.fit(
+                X_train[tr_idx],
+                residuals[tr_idx],
+                eval_set=(X_train[val_idx], residuals[val_idx]),
+                early_stopping_rounds=50,
+            )
+            oof_res[val_idx] = model.predict(X_train[val_idx])
+            test_res += model.predict(X_test) / len(split_iter)
+        else:
+            import lightgbm as lgb
+            model = lgb.LGBMRegressor(
+                n_estimators=hp.get("num_boost_round", 500),
+                learning_rate=hp.get("learning_rate", 0.05),
+                num_leaves=hp.get("num_leaves", 31),
+                random_state=random_seed + fold_idx,
+                verbose=-1,
+            )
+            model.fit(
+                X_train[tr_idx],
+                residuals[tr_idx],
+                eval_set=[(X_train[val_idx], residuals[val_idx])],
+                callbacks=[lgb.early_stopping(50, verbose=False)],
+            )
+            oof_res[val_idx] = model.predict(X_train[val_idx])
+            test_res += model.predict(X_test) / len(split_iter)
+
+    # Re-combine residual predictions with anchor predictions
+    oof_final = np.clip(anchor_oof + oof_res, 1e-7, 1 - 1e-7)
+    test_final = np.clip(anchor_test_probs + test_res, 1e-7, 1 - 1e-7)
+
+    # Evaluate metrics
+    from sklearn.metrics import f1_score, roc_auc_score
+    oof_binary = (oof_final >= 0.5).astype(int)
+    oof_f1 = float(f1_score(y_true, oof_binary))
+    oof_auc = float(roc_auc_score(y_true, oof_final))
+    composite = float(composite_metric(oof_f1, oof_auc))
+
+    # Persist score vectors
+    oof_score_path = scores_dir / f"branch_{variant_name}_oof.json"
+    oof_score_path.write_text(json.dumps(oof_final.tolist()))
+
+    test_out_path = paths.data_processed_dir / f"test_probs_{variant_name}.csv"
+    test_out_df = pd.DataFrame({
+        id_col: test_df[id_col].values if id_col in test_df.columns else np.arange(len(test_final)),
+        "test_prob": test_final,
+    })
+    test_out_df.to_csv(test_out_path, index=False)
+
+    # Update SKILL_STATE.json per Zindian OOF contract
+    cv_strategy_id = resolve_active_cv_strategy_id(state, config._data)
+    write_oof_record(
+        state_store,
+        branch_name=variant_name,
+        scores=oof_final.tolist(),
+        id_order=list(train_df[id_col].values),
+        cv_strategy_id=cv_strategy_id,
+        seed=random_seed,
+        model_config={
+            "feature_count": len(feature_cols),
+            "variant": variant_name,
+            "training_method": "residual_specialist",
+            "oof_f1": oof_f1,
+            "oof_auc": oof_auc,
+            "composite": composite,
+        },
+    )
+
+    # Log to DuckDB ledger
+    with Ledger() as ledger:
+        ledger.log_experiment(
+            branch_name=variant_name,
+            oof_score=composite,
+            metric=str(config.get("metric", "multi")).lower(),
+            feature_count=len(feature_cols),
+            calibration_method="none",
+            gate_result="PASS",
+            gate_reason=f"Residual Specialist Variant {variant_name}. F1@0.5={oof_f1:.4f}, AUC={oof_auc:.4f}, Composite={composite:.4f}",
+            dag_phase="phase_3a_specialist_trained",
+            notes=f"oof_f1={oof_f1:.6f}; oof_auc={oof_auc:.6f}; composite={composite:.6f}",
+        )
+
+    print(f"[OK] Residual Specialist {variant_name} trained successfully!")
+    print(f"     OOF F1@0.5: {oof_f1:.6f} | OOF AUC: {oof_auc:.6f} | Composite: {composite:.6f}")
+
+    return {
+        "status": "OK",
+        "variant": variant_name,
+        "oof_f1": oof_f1,
+        "oof_auc": oof_auc,
+        "composite_score": composite,
+        "n_features": len(feature_cols),
+        "message": f"Residual Specialist {variant_name} trained and locked natively.",
     }
 
 

@@ -43,6 +43,13 @@ def test_write_oof_record_uses_canonical_schema(tmp_path: Path):
         "seed": 42,
         "branch_name": "anchor-baseline",
         "model_config": {"num_leaves": 31},
+        # SoT S-4 row-identity fields. This call site omits id_order, so the
+        # record is explicitly marked UNVERIFIED rather than assumed sound --
+        # verify_oof_alignment() rejects such a record, and preflight A9 fails
+        # on it. Omission must be visible, never silent.
+        "id_order_hash": None,
+        "id_count": 3,
+        "alignment_verified": False,
     }
 
     state = store.read()

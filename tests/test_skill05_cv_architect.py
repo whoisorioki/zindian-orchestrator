@@ -89,11 +89,21 @@ def test_skill05_deterministic_temporal_choice(tmp_path, monkeypatch):
     result = cv_architect.run(strategy="compare")
     assert result["status"] == "OK"
     assert result["strategy_chosen"] == "TimeSeriesSplit"
-    assert result["selection_reason"] == "temporal_index_confirmed"
+    # The fixture has fewer rows than the default fold count, so skill_05 now
+    # clamps n_splits and records that it did. Previously state advertised
+    # n_splits=4 on a 4-row frame, which no consumer could actually build.
+    assert result["selection_reason"].startswith("temporal_index_confirmed")
+    assert "n_splits_clamped_to_" in result["selection_reason"]
 
     written = json.loads(paths.config_path.read_text(encoding="utf-8"))
     assert written["cv_strategy"]["type"] == "TimeSeriesSplit"
-    assert written["cv_strategy"]["selection_reason"] == "temporal_index_confirmed"
+    assert written["cv_strategy"]["n_splits"] <= 3, (
+        "n_splits must be clamped to something TimeSeriesSplit can build "
+        f"from the fixture's row count, got "
+        f"{written['cv_strategy']['n_splits']}"
+    )
+    assert written["cv_strategy"]["selection_reason"].startswith("temporal_index_confirmed")
+    assert "n_splits_clamped_to_" in written["cv_strategy"]["selection_reason"]
 
 
 def test_skill05_spatial_choice_uses_group_col(tmp_path, monkeypatch):

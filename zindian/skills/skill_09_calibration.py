@@ -430,6 +430,9 @@ def run(
                         store,
                         branch_name=f"calibration_{candidate_branch}",
                         scores=np.asarray(calibrated_oof, dtype=np.float64).tolist(),
+                        id_order=(
+                            list(df[id_col].values) if id_col in df.columns else None
+                        ),
                         cv_strategy_id=cv_id,
                         seed=seed,
                         model_config={
@@ -676,6 +679,11 @@ def _run_multi_target(
                             store,
                             branch_name=f"calibration_{candidate_branch}_{target_name}",
                             scores=calibrated_oof_pred.tolist(),
+                            id_order=(
+                                list(oof_df[id_col].values)
+                                if id_col in oof_df.columns
+                                else None
+                            ),
                             cv_strategy_id=cv_id,
                             seed=seed,
                             model_config={
@@ -806,6 +814,9 @@ def _run_multi_target(
                     store,
                     branch_name=f"calibration_{candidate_branch}_{target_name}",
                     scores=calibrated_oof_pred.tolist(),
+                    id_order=(
+                        list(oof_df[id_col].values) if id_col in oof_df.columns else None
+                    ),
                     cv_strategy_id=cv_id,
                     seed=seed,
                     model_config={

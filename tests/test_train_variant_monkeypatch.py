@@ -28,6 +28,17 @@ def test_train_variant_calls_shared_trainer(monkeypatch):
 
     monkeypatch.setattr(features, "train_lightgbm_cv", fake_trainer)
 
+    # Supply explicit splits. Without this, make_cv_splitter() falls back to
+    # the LIVE competition config, whose strategy is BufferedSpatialCV. That
+    # now raises NotImplementedError by design (SoT S-4): the shared trainer
+    # cannot construct spatially buffered folds, so the caller must hand it
+    # the splits skill_05 already persisted.
+    monkeypatch.setattr(
+        features,
+        "load_explicit_cv_splits",
+        lambda _state: [(list(range(0, 2)), list(range(2, 4)))],
+    )
+
     res = features.train_variant(
         train,
         test,

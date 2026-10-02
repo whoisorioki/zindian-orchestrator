@@ -17,6 +17,7 @@ from sklearn.model_selection import (
     KFold,
     StratifiedKFold,
     GroupKFold,
+    TimeSeriesSplit,
 )
 
 from .config import ChallengeConfig, get_seed
@@ -46,7 +47,12 @@ def make_cv_splitter(
     Falls back to StratifiedKFold when unspecified.
     """
     strat = cv_strategy or _read_strategy(None)
-    ctype = strat.get("type", "stratified")
+    # Configs in the wild use both conventions -- "StratifiedKFold"/"GroupKFold"
+    # and "stratified"/"group" -- so normalise case before dispatch. Without
+    # this, class-style names fell through the branches below and reached the
+    # fail-loud path, which would break legitimate configs that used to work.
+    ctype = str(strat.get("type", "stratified")).strip()
+    ctype_norm = ctype.lower()
     n = n_splits or strat.get("n_splits", 5)
     # Resolve seed: prefer caller-provided `random_seed`, then strategy values,
     # finally fall back to the canonical `reproducibility.seed` via `get_seed()`.
@@ -57,11 +63,29 @@ def make_cv_splitter(
         val = strat.get("random_seed", strat.get("seed", None))
         seed = int(val) if val is not None else get_seed()
 
-    if ctype in ("stratified", "strat", "stratify"):
+    if ctype_norm in ("stratified", "strat", "stratify", "stratifiedkfold"):
         return StratifiedKFold(n_splits=int(n), shuffle=True, random_state=int(seed))
-    if ctype in ("group", "groupkfold"):
+    if ctype_norm in ("group", "groupkfold"):
         return GroupKFold(n_splits=int(n))
-    return KFold(n_splits=int(n), shuffle=True, random_state=int(seed))
+    if ctype_norm in ("kfold", "random", "timeseriessplit"):
+        if ctype_norm == "timeseriessplit":
+            return TimeSeriesSplit(n_splits=int(n))
+        return KFold(n_splits=int(n), shuffle=True, random_state=int(seed))
+
+    # SoT S-4: fail loud on an unhandled strategy. This previously fell
+    # through to a shuffled KFold for ANY unrecognised type -- including
+    # "BufferedSpatialCV" -- so a spatial competition silently ran random
+    # folds and wrote them tagged with the spatial cv_strategy_id. A silent
+    # substitution contradicts config and destroys provenance; there is no
+    # safe default, so refuse.
+    raise NotImplementedError(
+        f"Unsupported cv_strategy.type {ctype!r}. Known types: "
+        f"'stratified', 'group', 'kfold', 'TimeSeriesSplit'. Refusing to "
+        f"substitute a random KFold: doing so would record a different "
+        f"strategy than configured (SoT S-4/S-5). For spatially buffered CV, "
+        f"load the explicit splits persisted by skill_05 via "
+        f"load_explicit_cv_splits() rather than constructing a splitter here."
+    )
 
 
 def get_cv_splits(
