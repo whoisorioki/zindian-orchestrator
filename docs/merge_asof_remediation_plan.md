@@ -1,7 +1,7 @@
 # `merge_asof` Row-Scrambling Remediation Plan
 
-**Status:** PLAN — awaiting approval. No pipeline files mutated.
-**Date:** 2026-09-27
+**Status:** IN PROGRESS — Phases 0, 1, 2 and the test-safety work complete; Phase 3 awaiting review.
+**Date:** 2026-10-02 (rev 2 — after the first two review rounds; see §0.1)
 **Competition:** `climate-risk-health-prediction-challenge`
 **Branch:** `anchor-baseline`
 **Predecessor doc:** [`competition_state_audit_climate_risk_health_2026-09-20.md`](competition_state_audit_climate_risk_health_2026-09-20.md) (§12 Round 3)
@@ -29,64 +29,75 @@ corrected here rather than quietly dropped.
 
 | # | Reviewer challenge | Verdict | Correction |
 |---|---|---|---|
-| 1 | Stated mechanism (non-unique index) does not hold together | **Upheld — draft was wrong** | §1.1 gives the measured mechanism |
-| 2 | Are rows internally permuted, or are features detached from labels? | **Upheld — materially narrows the damage** | §1.2 — damage is *positional*, not internal |
-| 3 | L1 (anchor OOF value set differs) unexplained by the root cause | **Upheld — still open** | §1.3, now an explicit blocker |
-| 4 | L2 is the same bug seen from another side | **Upheld** | §1.4 |
-| 5 | L3 narrative overstated | **Upheld** | §1.5, rewritten |
-| 6 | `cv_split_indices` pointer / loader question | **Upheld as a real latent bug, but not currently firing** | §1.6 |
-| 7 | mtime-based cleanliness is a hypothesis | **Upheld** | §1.7 |
+| 1 | Stated mechanism (non-unique index) | **Upheld** | §1.1 — that claim *and* my first "correction" were both wrong |
+| 2 | Are rows internally permuted, or features detached from labels? | **Upheld** | §1.2 — damage is *positional*, not internal |
+| 3 | L1 unexplained by the root cause | **Upheld, twice** | §1.3 — still OPEN; now proven *not* a permutation |
+| 4 | L2 is the same bug from another side | **Upheld** | §1.5 |
+| 5 | L3 narrative overstated | **Upheld** | §1.6, rewritten |
+| 6 | `cv_split_indices` pointer / loader | **Upheld as latent, not firing** | §1.7 |
+| 7 | mtime-based cleanliness is a hypothesis | **Upheld** | §1.9, resolved by measurement in Phase 7 |
+| 8 | "Not tie-driven" / mergesort works by luck | **Upheld** | §1.1 — both files are pre-sorted by date; it *is* tie-driven |
+| 9 | Gate baseline on a different basis than candidates | **Upheld — verified 0.008555** | §1.3a, Phase 7 step 0 |
+| 10 | Test suite mutates the live competition | **Upheld — confirmed and fixed** | committed `42097d5` |
+| 11 | ID guard cannot work — records carry no IDs | **Upheld** | Phase 5 now leads with a schema change |
+| 12 | Labels still come from a feature file in fusion | **Upheld** | new Phase 6a |
+| 13 | Clean list doesn't match the audit | **Upheld** | resolved by ID-join measurement |
+| 14 | Test-side claim too soft | **Upheld** | §1.4 — restated as ~28 rows (2.7%) |
+| 15 | Encoder leak is category vocabulary, not labels | **Upheld** | §1.11 — low severity, deferred |
+| 16 | "314 never-trained rows" is about fold quality | **Upheld** | §1.8 reworded |
+| 17 | Commit 851428a carried a behaviour change | **Upheld** | already pushed, not rewritten; follow-up `acd260d` |
 
-The reviewer's central methodological point is adopted as a standing rule:
-**every claim must name the measurement that establishes it.** Where a
-mechanism is inferred rather than measured, this document says so.
+**Standing rule adopted:** every claim names the measurement that
+establishes it. Where a mechanism is inferred rather than measured, the
+document says so.
+
+**Standing operational rule adopted:** the test suite must never write to a
+live competition tree. Enforced at the write choke point and verified by
+before/after md5.
 
 ---
 
 ## 1. Round 4 Findings — train/test data flow + CV provenance
 
-### 1.1 The mechanism — measured, and the draft's stated cause was wrong
+### 1.1 The mechanism — measured, and both earlier drafts misattributed it
 
-**Correction to the previous draft.** That draft claimed `merge_asof`
-returns a *non-unique index* and that `.loc` then resolves several rows per
-label. This is wrong on two counts, and the reviewer was right to reject it:
+**Two corrections.** The first draft claimed `merge_asof` returns a
+*non-unique index* and `.loc` resolves several rows per label. That is
+contradictory (`.loc` on duplicate labels *changes length*, and the draft
+also asserted length was preserved) and false in fact: `merge_asof` returns
+a fresh `RangeIndex`, measured `unique? True`, `len == 3146`.
 
-- `.loc` with duplicate labels *changes the length* of the result. The draft
-  simultaneously asserted the frame length was preserved. Both cannot hold.
-- `pd.merge_asof` returns a fresh `RangeIndex`, which is unique by
-  construction. Measured directly on real data:
-  `merged index unique? True`, `len(merged) == 3146`.
-
-**The actual mechanism, established by experiment.** Reproduced end to end
-against the real `Train.csv` (3146 rows) and
-`macro_stress_proxies.parquet` (305,360 rows):
+The second draft then over-corrected to "not tie-driven" and "mergesort works
+by luck." **Both of those are also wrong.** The decisive measurement:
 
 ```
-kind=quicksort   (plugin's default, plugins/macro_stress_extractor.py:69)
-   merged index equals sorted index (order)?  False
-   plugin restore (.loc[original.index]) -> rows with wrong ID: 387
-
-kind=mergesort   (stable)
-   merged index equals sorted index (order)?  True
-   plugin restore -> rows with wrong ID: 0
+Train.csv deathdate : sorted=True, 1,609 rows in tied dates
+Test.csv  deathdate : sorted=True,   229 rows in tied dates
 ```
 
-So the trigger is that **`pd.merge_asof` does not preserve the left frame's
-index when the left frame is not already in join-key order.** With the
-default unstable `sort_values`, the sorted permutation is applied to the
-data but the returned index does not correspond back to it, so the
-subsequent positional `.loc[original.index]` picks the wrong rows.
+Both raw files are **already sorted by `deathdate`**. That is the key fact
+the second draft missed, and it makes the mechanism fully coherent:
 
-Two consequences the draft got backwards:
+1. The plugin sorts anyway (L69–71, default **unstable** quicksort).
+2. `merge_asof` receives a key-sorted left frame, so it never raises — it
+   returns a **fresh `0..n-1` index and discards the original labels**.
+3. `.loc[train.index]` then requests labels `0..n-1` of a frame that is
+   **already in sorted order** — it is a **no-op**. The output is permuted
+   whenever the sort moved any row.
 
-- It is **not** tie-driven. A stable sort (`mergesort`) fixes this data
-  precisely because it preserves the *pre-existing* row order — ties were
-  never the issue. The draft's "56 duplicate keys" framing was a
-  coincidence of this dataset, not the cause.
-- A stable sort is **not** a fix. It happened to work here; it is not a
-  guarantee. `merge_asof` makes no ordering promise, so relying on it is
-  exactly the fragility that caused this. The fix must not depend on sort
-  kind at all.
+So it **is** tie-driven: quicksort reorders only rows with *equal*
+`deathdate` (the sort key is the date alone, not the triple), which is why
+damage appears as short isolated windows with a longest run of 6, and why
+`mergesort` returns 0 — **not by luck, but because the file is pre-sorted
+and a stable sort therefore leaves it untouched.**
+
+```
+kind=quicksort (plugin default) : 387 rows with wrong ID
+kind=mergesort (stable)         :   0 rows with wrong ID
+```
+
+Corroborating: 1,609 train rows sit in tied dates, and Test.csv is also
+pre-sorted with 229 tied rows, consistent with the ~28 test rows affected.
 
 `plugins/macro_stress_extractor.py` L69–71 and L94–95, verbatim:
 
@@ -100,6 +111,19 @@ test_merged  = test_merged.loc[test.index].copy()      # L95  positional
 ```
 
 Both plugins carry this pattern; both scramble train *and* test.
+
+**The fix is unaffected** — restoring on `id_col` is correct regardless of
+sort kind. What changes is only the explanation, and it matters for the
+regression test: the fixture must use an **unsorted** left frame with **tied
+dates**, because a sorted input reproduces nothing.
+
+### 1.1a Independent confirmation — the pre-sorted-file prediction
+
+The mechanism predicts that damage only occurs where the sort can move rows.
+Both files being pre-sorted by date is consistent with everything measured;
+had `Test.csv` been unsorted, the test-side damage would have been far larger
+than the ~28 rows observed. Recorded as a checkable prediction, not an
+assumption.
 
 ### 1.2 The damage is positional, not internal — this narrows the blast radius
 
@@ -139,30 +163,79 @@ rows, the **spatial buffer guarantee was also voided**, because a row's
 coordinates travelled away from the location it was assigned to in the CV
 split. Buffer integrity and row integrity failed together.
 
-### 1.3 L1 — the anchor OOF was overwritten. Still unexplained. BLOCKER.
+### 1.3 L1 — the anchor vector is a different model, not a permutation. OPEN.
 
-**Upheld in full.** This is not explained by the scramble and must be
-resolved before any regeneration, or it will simply recur.
+**Upheld: L1 is NOT closed.** Two earlier claims here were wrong and are
+retracted.
 
-Measured facts:
+**Retracted claim 1 — "the Sep 3 10:34 event changed the values."** It did
+not. The September audit already measured AUC 0.766 on Sep 20, so the
+value change predates that. The Sep 3 burst (13:34:20–13:34:25, all
+`scores/` files within 5 s) has the same signature as a `SkillStateStore`
+write, not a model run: it records when `scores/` was last **re-serialised**,
+not when values were produced.
 
-- `scores/branch_anchor-baseline_oof.json` mtime is **2026-10-02 11:46:21**,
-  i.e. rewritten today. Nineteen sibling OOF files share that same
-  timestamp, so a single bulk run rewrote the whole `scores/` directory.
-- `branch_collapsed-catboost_oof.json` retains **2026-09-03** — it was *not*
-  touched by that run. The rewrite was selective.
-- The current anchor vector has a different value set from the one in the
-  September audit, correlates only ~0.80 with it, and scores AUC 0.766
-  against its own feature file.
+**Retracted claim 2 — "L1 might be a row-order change."** Settled by one
+measurement against the locked snapshot:
 
-**A row scramble cannot change prediction *values*.** Something regenerated
-a different model, or applied a different fold assignment, at 11:46. Until
-that is identified, the anchor baseline is not a stable reference and any
-regeneration run would be measured against a moving target.
+```
+state vector vs data/raw/oof_anchor.csv (Sep 1, 18:46)
+  len 3146 vs 3146
+  SORTED EQUAL : False
+  max sorted diff : 0.11930030388084334
+```
 
-Required before Phase 7: identify what wrote `scores/` at 11:46, determine
-whether an operator-approved run or an unintended side effect produced the
-current anchor record, and record the finding in this document.
+A permutation preserves the multiset of values. It does not. **L1 is a
+different model**, and the entire row-permutation explanation is ruled out
+for this question.
+
+**What is established, and what is not:**
+
+- The ledger brackets the change. The last anchor row is
+  `0.651694 / phase_4_inference_complete / 2026-09-02 21:33`; there is
+  **no anchor training event after that**, yet the current vector differs.
+- No ledger rows exist after Sep 4.
+- The unexplained quantity is the **0.651694 anchor row**. Nothing in the
+  audit produces ~0.65 for this anchor. The audit also found `0.6533` in
+  `last_submission_comment` for sub_018 — two near-0.65 values on
+  different branches point to **a scoring path run over misaligned pairs**,
+  which is the best current lead and sits inside the bracket.
+- The Oct 2 events are re-serialisation only: `branch_anchor-baseline_oof.json`
+  md5 is unchanged across test runs, and the vector values are identical to
+  those read hours earlier.
+
+**L1 remains open, narrowed to:** which write placed a different vector into
+the state key between Sep 1 18:46 and Sep 2 21:33, and whether the 0.6517
+row and the 0.6533 submission comment share a misaligned scoring path.
+
+Required before Phase 7: read the full columns of the `0.651694` and `0.6533`
+records, and identify the write. The competition tree is **gitignored**
+(`.gitignore:37`), so there is no version history to diff — the locked
+snapshot at `~/snapshots/climate-2026-10-02` is the only pristine copy and
+was taken *after* earlier test runs had already re-serialised state, so it
+preserves current state, not September's.
+
+### 1.3a The gate baseline is on the wrong basis — VERIFIED, 0.0086 bias
+
+`851428a` moved candidate scoring to a **fixed 0.5 threshold**, but the
+anchor baseline in state was produced by the **old threshold sweep**. The
+two are not comparable, and every candidate inherits the bias. Measured on
+the ID-aligned Sep-1 vector:
+
+```
+anchor @0.5            : F1=0.802937  AUC=0.813342  composite=0.8070989
+stored anchor_oof_score: 0.8156538   (old, swept basis)
+stored anchor_oof_f1   : 0.8171950   (swept F1, not the 0.5 F1)
+BIAS against candidates: 0.008555
+```
+
+So a variant must beat **0.8157** to pass, while on the same 0.5 basis the
+anchor is **0.8071**. Every candidate is penalised by ~0.0086. Saying
+"numbers either side of the commit are not comparable" is not sufficient
+while the baseline itself sits on the superseded basis.
+
+**Recomputing the anchor baseline at 0.5 on the ID-aligned vector is a
+Phase 7 prerequisite** (see Phase 7 step 0).
 
 ### 1.4 Why ID assertions alone cannot catch this — and where output is safe
 
@@ -184,11 +257,17 @@ The plugins drop the ID column, so this falls back to raw IDs zipped
 **positionally** onto predictions derived from a permuted matrix. This is
 how the corruption becomes invisible, not how it is caused.
 
-One output path is genuinely safe: `skill_14_inference.py` L317–318 reindexes
-test probabilities by ID against `SampleSubmission`, and L287 builds output
-from `sample[id_col]`. So **final submission row order is correct**; the
-test-side defect is a wrong-feature-per-row defect, not a row-order defect.
-It cannot be fixed by re-ordering — it requires regenerating features.
+One output path is ID-safe in *row order*: `skill_14_inference.py` L317–318
+reindexes test probabilities by ID against `SampleSubmission`, and L287 builds
+output from `sample[id_col]`, so the submission's row order is correct.
+
+**But that is a magnitude, not a clean bill of health.** The IDs on skill_07's
+`test_probs` were attached **by position** from raw `Test.csv` onto
+predictions derived from permuted features (L1693), so skill_14 faithfully
+reindexes *wrong pairings*. Measured exposure: **~28 of 1,030 test rows
+(≈2.7%)** carry another row's features. Small — but it is a wrong-feature
+defect on real submitted rows, not a formatting issue, and it is fixed only by
+regenerating features, never by re-ordering.
 
 ### 1.5 L2 is the same bug, not a second corruption
 
@@ -279,14 +358,17 @@ has no branch for it and **silently degrades to shuffled `KFold`** for any
 caller reaching it with that config. The DAG avoids this only because
 explicit splits load first.
 
-**The buffer removes far more training data than the draft assumed.** Rows
-excluded from training per fold: `[641, 1672, 616, 1943, 1034]`. The union of
-all training folds is 2832 of 3146, so **314 rows are never in any training
-fold** — their OOF prediction comes from models that never saw them. The sum
-of validation folds is exactly 3146, so every row is validated exactly once
-(no overlap, no duplicates). This is expected behaviour for buffered CV, not
-a bug, but OOF is pessimistic by construction and the 314 never-trained rows
-deserve explicit reporting rather than silent inclusion.
+**The 5 km buffer is heavy — fold quality is uneven.** Rows excluded from
+training per fold: `[641, 1672, 616, 1943, 1034]`; the union of all training
+folds is 2,832 of 3,146, so 314 rows never appear in any training fold. The sum
+of validation folds is exactly 3,146, so every row is validated exactly once
+(no overlap, no duplicates) — this is expected buffered-CV behaviour, not a
+bug, and it is **not** about OOF rows being unseen (every row is unseen by its
+own fold). The real point: the buffer removes on the order of 10% of rows
+from every fold's training set, and **fold 3 trains on only 644 of 3,146
+rows**, so per-fold estimates are not equally well-supported. That matters
+when reading the anchor OOF and any Nadeau-Bengio fold-variance correction,
+which should carry the fold sizes.
 
 ### 1.9 mtime-based cleanliness is a hypothesis — measurement is the standard
 
@@ -295,14 +377,9 @@ the buggy run. That is inference from timestamps, and the ID-join check it
 lacks cannot detect it either: comparing only columns carried from raw will
 show zero mismatches even when *macro-derived* columns are attached to the
 wrong rows. The only sound standard is re-deriving features from raw inputs
-and comparing by ID. Folded into Phase 7.
-
-**(b) Latent trap in `zindian/cv.py` L60–64** — `make_cv_splitter` has
-branches only for `stratified` / `group` / default. There is **no
-`BufferedSpatialCV` branch**, so any caller reaching it with
-`type="BufferedSpatialCV"` silently receives shuffled `KFold`. Currently
-unreachable in the DAG (explicit splits load first, skill_08 L207), but it
-is a live footgun and directly contradicts the config.
+and comparing by ID. **Resolved by measurement** — see Phase 7, where
+`climate-interactions` and `seasonal-deathdate` are confirmed clean by ID
+join (0/0) and `shap_audit` is found to have no feature file at all.
 
 ### 1.10 Blocking syntax error — RESOLVED
 
@@ -312,14 +389,16 @@ collection-dependent test files (0 tests passing). **Fixed in Phase 0.**
 Verified: HEAD was clean; the error existed only in the working tree.
 Baseline restored to **404 passed, 6 skipped**.
 
-### 1.11 Test-set leakage in the shared trainer (separate, deferred)
+### 1.11 Encoder fit on train+test category vocabulary (separate, deferred)
 
 `zindian/skills/_lightgbm_shared.py` fits the label encoder on
-`pd.concat([train_vals, test_vals])`. This is a genuine train/test leakage
-finding — the encoder sees test label values. Should be fit on train only
-and applied via `.transform()` on test. **Deferred pending explicit
-go-ahead**, as it is unrelated to this defect class and changes model
-inputs.
+`pd.concat([train_vals, test_vals])`. This is a genuine, but **minor**,
+train/test coupling: the encoder's *category vocabulary* is derived from both
+frames. Note the severity precisely — the test set carries **no labels**, so
+this is not label leakage; it is vocabulary derived from test inputs. Should
+be fit on train only and applied via `.transform()` on test. **Deferred
+pending explicit go-ahead**, as it is unrelated to this defect class and
+changes model inputs.
 
 ---
 
@@ -351,10 +430,12 @@ Internal guarantees, all hard-fail:
   `assert out[id_col].reset_index(drop=True).equals(raw_ids.reset_index(drop=True))`
 - assert no NaN in the newly joined key column unless `tolerance` was given
 
-**Why ID round-trip and not `.loc` restore:** `merge_asof` returns a
-non-unique index whenever the left key has ties. `.loc[RangeIndex]` then
-selects *the first matching rows of the wrong ordering*, scrambling collision
-neighbourhoods. Carrying the ID through the join makes ordering irrelevant —
+**Why ID round-trip and not `.loc` restore:** `merge_asof` does not preserve
+the left frame's row-to-label mapping — it returns a fresh `0..n-1` index
+discarding the original labels. A positional `.loc[RangeIndex]` restore then
+selects by *position* against that fresh index, which scrambles rows whenever
+the preceding sort moved any row (measured: 387 rows, driven by tied dates).
+Carrying the ID through the join makes ordering irrelevant —
 `set_index(id_col).reindex(raw_ids)` is order-independent and was proven
 0/0/0/0 against the real `Train.csv` in Round 3.
 
@@ -400,13 +481,28 @@ raise a hard error naming the responsible plugin — never silently re-attach
 raw IDs to foreign predictions. This is the single change that makes the
 defect class detectable at all.
 
-### Phase 5 — ID-alignment guards on all OOF consumers
-Every consumer of an OOF vector (`skill_11_gate`, `skill_12_metric`,
-`skill_13_ensemble`, `oracle_fusion_core`, `skill_21_pseudo_label`) must
-verify the vector length equals the *current* training-set length and that
-the associated `cv_strategy_id` resolves against the active strategy
-(§1.5(a) shows this check is currently bypassable). Add the length assertion
-at the consumption boundary, not only at write time.
+### Phase 5 — ID-order guards (schema change first)
+
+**A length check cannot detect this defect class.** A permutation preserves
+length exactly, so a same-length misalignment passes every count-based
+assertion. Worse, the artifacts themselves carry no IDs today:
+`scores/branch_*_oof.json` is a bare list of 3,146 floats with no identifier
+column, so a consumer has nothing to compare against.
+
+1. **Schema change (`write_oof_record`, SoT S-1/S-6).** Persist an
+   `id_order` list alongside `scores`, or at minimum an `id_order_hash`
+   (sha256 of the comma-joined IDs) plus `id_count`. Without this the guard
+   is decoration. Backfill for existing records on next write.
+2. **Consumer guards** — `skill_11_gate`, `skill_12_metric`,
+   `skill_13_ensemble`, `oracle_fusion_core`, `skill_21_pseudo_label`:
+   recompute the expected hash from the *current* training IDs and compare.
+   A hash mismatch is a hard failure naming the branch. A length check is
+   kept only as a cheap pre-filter, never as the guard itself.
+3. Keep the `cv_strategy_id` resolution check (§1.7) — currently bypassable.
+
+**Test requirement:** build two frames of *identical length* whose `id_col`
+orders differ, and assert the guard **rejects** them. A test that passes on
+length alone is worthless.
 
 ### Phase 6 — Single CV-split source
 - Fix both refit scripts to read the real path
@@ -418,34 +514,74 @@ at the consumption boundary, not only at write time.
 - Both `macro-stress-geofence-refit` and `residual-dlnm-specialist` must be
   re-run after the fix, and their OOF provenance re-verified.
 
+### Phase 6a — Fusion must read labels from raw, not a feature file
+
+`oracle_fusion_core.py` currently sources `y_true` from
+`features_train_ensemble.csv` (L386–394 → L714–728), which drives member
+verification scoring **and** collinearity pruning. Even after regeneration
+that dependency remains. Change it to read `y_true` from raw `Train.csv`
+joined by `id_col`, and stop opening the feature file for labels entirely.
+
+This is S-2's code half. Regenerating the file (Phase 7 step 4) does **not**
+discharge it.
+
 ### Phase 7 — Regenerate the 14 corrupted branches
+
+**Step 0 — prerequisite: recompute the anchor baseline on the 0.5 basis.**
+The stored `anchor_oof_score = 0.8156538` was produced by the old threshold
+sweep; candidates are now scored at fixed 0.5. Measured on the ID-aligned
+vector, the anchor at 0.5 is **0.8070989** — a **0.008555** penalty applied to
+every candidate. Re-derive the anchor on the ID-aligned vector at 0.5 and
+write that as the gate baseline *before* any candidate is re-gated. Until
+this is done, Phase 7's re-gate inherits the bias.
+
 Order matters — upstream first:
 1. Re-run both plugins' feature extraction for all 14 branches.
 2. Verify each with an **ID-based** restore against real `Train.csv`:
    expect **0/0/0/0** (coord match / label match / test / count).
-3. Re-anchor: re-run the anchor OOF, then re-gate.
+3. Re-anchor: re-run the anchor OOF on the 0.5 basis (step 0), then re-gate.
 4. `features_train_ensemble.csv` is **load-bearing** — `oracle_fusion_core.py`
    L386–394 reads it for `y_true` (L714–728), which drives member verification
    scoring *and* collinearity pruning. It must be regenerated before
    `sub_008` or any fusion governance is re-evaluated. Round 3 found `sub_008`
    exposed through exactly this 3-layer chain (scrambled member vectors →
    verification/pruning scored against 168 shifted labels → blend locked into
-   slot 2).
+   slot 2). Phase 6a then removes the label dependency entirely.
 5. Re-run fusion governance, then re-submit only after Gate 4 re-approval.
 
-**Clean and unaffected (verified 0/0):** `anchor-baseline`, `cohort-only`,
-`temporal-anomaly-only`, `ai4eac-longmemory-cohorts`, `climate-longmemory-only`,
-`shap_audit`, `sub_005`. Do not regenerate these.
+**Clean, confirmed by ID-join against raw (not by mtime):**
+`anchor-baseline`, `ai4eac-longmemory-cohorts`, `climate-interactions`,
+`climate-longmemory-only`, `cohort-only`, `seasonal-deathdate`,
+`temporal-anomaly-only` — all 0 label and 0 coordinate mismatches under an
+ID join. `shap_audit` has **no feature file** and is not a regeneration
+target at all. Do not regenerate these.
+
+Re-derived in a scratch dir outside the competition tree (2026-10-02):
+
+```
+climate-interactions        n=3146  lab_mis=0    coord_mis=0    [ID]
+seasonal-deathdate          n=3146  lab_mis=0    coord_mis=0    [ID]
+shap_audit                  MISSING
+macro-stress-geofence       n=3146  lab_mis=168  coord_mis=368  [pos]
+catboost-climate-interactions n=3146 lab_mis=168 coord_mis=368  [pos]
+```
+
+This resolves the reviewer's point 6: the earlier draft had dropped
+`climate-interactions` and `seasonal-deathdate` from the clean set on mtime
+inference and added `shap_audit` unmeasured. Measurement puts both back in
+the clean set, and `shap_audit` is not a feature-file branch.
 
 ### Phase 8 — Governance reconciliation
 - The fusion exclusion list is **stale**: it was frozen against 8 submissions,
   but 8 newer live submissions now exist.
-- `residual-dlnm-specialist` is currently excluded and must be
-  un-excluded and re-gated after the Phase 6 provenance fix. Note: it declares
-  `feature_extraction_plugin`, which the DAG honours only for ad-hoc refits
-  (skill_07 L1890 resolves the plugin solely from
-  `config.get("feature_extraction_plugin")`), so the declaration alone did not
-  cause the corruption and does not protect against it.
+- `residual-dlnm-specialist` is **NOT** in `fusion_excluded_branches` — this
+  corrects an earlier draft in this document, which wrongly claimed it was
+  excluded. Verified: the list is
+  `[ensemble, calibration_ensemble, calibration_anchor-baseline, pseudo_label_augmented]`.
+  The exposure is the opposite of "excluded": the branch sits **inside** the
+  fusion pool while correlating 0.7268 with the anchor and resting on
+  scrambled features. It must be explicitly excluded, then re-gated after
+  Phase 6, rather than "un-excluded" as previously written.
 - Harden `composite_metric`: it defaults to `f1_origin="oof"` and **0 of 12
   call sites pass provenance**, so the LB-contamination guard is effectively
   inert.
@@ -540,47 +676,61 @@ Run `pytest tests/ -q` after **every** phase and report the delta against
 
 ---
 
-## 3. Decisions I need confirmed before starting
+## 3. Decisions resolved and outstanding
 
+**Resolved in this round:**
 
-1. **Regeneration blast radius.** Phase 7 re-runs features for 14 branches
-   and re-anchors. That invalidates the OOF baseline, which invalidates gate
-   margins, which may force re-review at human gates. Confirm you accept
-   invalidating the current OOF baseline, or prefer a staged rollout
-   (plugins + tests first, regeneration after you review).
-2. **Plugin ID retention (Phase 3).** Keeping `id_col` in plugin output
-   requires the corresponding change in skill_07 Phase 4. Do you want the ID
-   carried all the way through, or dropped in the plugin with the assertion
-   enforced before the drop?
-3. **Two untouched findings** that I will *not* fix without a separate
-   go-ahead: the `_lightgbm_shared.py` concat encoder leakage (§1.11) and the
-   `make_cv_splitter` `BufferedSpatialCV` gap (§1.8, now covered by S-4 in the
-   SoT patch). Both are real; both widen scope.
-4. **NEW — L1 investigation (§1.3).** Resolving what rewrote `scores/` at
-   11:46 today is on the critical path for Phase 7; without it the anchor
-   reference is unstable. Trace it now (git reflog, shell history, ledger
-   timestamps), or proceed with Phases 3–6 and treat L1 as a hard blocker at
-   Phase 7?
-5. **NEW — final-pick decision.** The leaderboard facts in the September audit
-   are 12 days stale, and the top two submissions differ by ~0.001, which is
-   inside public-LB noise at n≈1000. Any final blend decision should be
-   deferred until after regeneration rather than made on stale numbers. Tori's
-   blends also inherit whatever branches they were built from, and that
-   provenance is unknown.
+- **Rollout** — staged, as directed. Plugins, guards and tests land first and
+  are reviewed before any regeneration. Phase 3 is next.
+- **Plugin ID retention** — carry `id_col` all the way through plugin output.
+  The training paths already exclude `id_col` from the feature set, so keeping
+  it is safe, and dropping it early would make S-1 and the Phase 4 hard error
+  unreachable.
+- **Snapshot before Phase 7** — required, and done. `scores/` and
+  `data/processed` are checksummed into a read-only copy
+  (`~/snapshots/climate-2026-10-02`, 509 files, manifest verified with 0
+  failures, `chmod -R a-w`), because L1 shows overwrites destroy evidence.
+  The three untracked source files are copied to
+  `~/snapshots/untracked-2026-10-02`.
+- **Commit history** — `851428a` is on `origin/anchor-baseline`, so it is not
+  rewritten; `acd260d` documents the behaviour change instead.
+
+**Still outstanding:**
+
+1. **L1 (§1.3).** The anchor vector is provably a *different model*, not a
+   permutation (sorted values differ by up to 0.1193). Best lead: the
+   unexplained `0.651694` anchor ledger row alongside the `0.6533` submission
+   comment — two near-0.65 values suggesting a scoring path over misaligned
+   pairs. Read the full columns of both records. **Does not block Phases
+   3-6**; blocks Phase 7.
+2. **Second snapshot copy off-box.** The untracked sources are now copied, but
+   both snapshots live on the same disk. A copy to another disk or machine is
+   outstanding.
+3. **Re-verify audit findings sourced from test-written files.** The mutation
+   set includes the phase summaries, diagnostics, session log, feature policy
+   and the ledger, and earlier suite runs did the same. Any finding drawn from
+   those — e.g. the `phase_4` summary metadata showing an F1 value under
+   `anchor_oof_score` — must be re-verified against something tests do not
+   write, or against the snapshot's oldest surviving copy.
+4. **Phase 9 `skill_22` audit must run against the frozen snapshot**, never the
+   live tree: `test_skill22_audit.py` was one of the four mutating tests, so
+   any earlier skill_22 agreement result was produced against a directory the
+   suite was rewriting.
 
 ---
 
-## 4. Notes carried forward from the reviewer
+## 4. Notes carried forward
 
 **Staleness.** The audit is dated Sep 20; today is Oct 2. Board facts need
-re-querying before any leaderboard-dependent decision.
+re-querying before any leaderboard-dependent decision, and the top two
+submissions differ by ~0.001 - inside public-LB noise at n~1000. Tori's
+blends also inherit unknown branch provenance.
 
-**Commit discipline (reviewer's point 5).** Phase 0's `SyntaxError` fix and
-the two untracked refit scripts should be committed on a clean branch before
-any regeneration run, so it is reproducible from a known commit rather than a
-dirty tree.
+**Commit discipline.** The tree still carries an untracked plugin, two
+untracked refit scripts, and a modified `skill_08_anchor.py`. They are copied
+into the snapshot, but the branch should be cleaned before Phase 7 so the
+regeneration is reproducible from a known commit.
 
-**Independent of this defect class**, to be tracked separately: the fusion
-exclusion gaps, the bypassable `ScoreProvenance` defaults (0 of 12 call sites
-pass provenance), and a stale governance lock.
-
+**Independent of this defect class:** the fusion exclusion gaps, the
+bypassable `ScoreProvenance` defaults (0 of 12 call sites pass provenance),
+and a stale governance lock.

@@ -1,5 +1,32 @@
 # Competition State Audit — climate-risk-health-prediction-challenge
 
+> **⚠️ PARTIALLY SUPERSEDED — read `merge_asof_remediation_plan.md` first.**
+>
+> This document is the 2026-09-20 audit snapshot and is retained as the
+> record of what was known then. Later rounds **retracted or corrected** parts
+> of it; the authoritative statements are in
+> [`merge_asof_remediation_plan.md`](merge_asof_remediation_plan.md) §1.1–§1.11.
+>
+> Known-wrong in this document:
+> - **§12.1 mechanism** — claims `merge_asof` yields a *non-unique index* and
+>   `.loc` then matches several rows per label. **Incorrect.** `merge_asof`
+>   returns a fresh unique `RangeIndex`; the real cause is that it discards the
+>   left frame's original labels, making the positional `.loc` restore a no-op.
+>   See plan §1.1.
+> - **§12.1 "56 duplicate `(date, lat, lon)` keys"** — not the trigger. The
+>   real driver is tied `deathdate` values under the plugin's unstable sort
+>   (1,609 rows in tied dates; both raw files are pre-sorted by date).
+> - **§12.4 / §12.5 anchor-OOF claims** — superseded. The vector is provably a
+>   *different model*, not a permutation. See plan §1.3.
+> - **"every number is untrustworthy"** — too strong for per-branch OOF. Damage
+>   is *positional*; features and labels stay paired inside each file. See §1.2.
+> - **`residual-dlnm-specialist` exclusion** — the plan earlier claimed it was
+>   excluded; it is **not** in `fusion_excluded_branches`. See plan Phase 8.
+>
+> Also note: the audit's §12.2/§12.3 branch lists were partly inferred from
+> file mtimes. `climate-interactions` and `seasonal-deathdate` are **confirmed
+> clean by ID join**; `shap_audit` has no feature file at all.
+
 **Audit date**: 2026-09-20
 **Auditor**: Zindian Coding Agent (read-only investigation; no files modified, no training run, no submissions made)
 **Repository**: `/home/adrian/Projects/zindian-orchestrator` (branch `anchor-baseline` @ `5943d18`)

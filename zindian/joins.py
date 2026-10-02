@@ -9,9 +9,10 @@ merge, then restore the original row order afterwards, typically with::
     merged = merged.loc[df.index]
 
 That restore is **incorrect whenever the left key contains ties**. Under a
-tie, `merge_asof` produces a non-unique index, and `.loc[<RangeIndex>]`
-resolves each label to the *first* match rather than to the intended row.
-The result is a silent, local row-scrambling: labels stay attached to the
+tie, `merge_asof` can emit rows in an order that no longer corresponds to the
+left frame, and `.loc[<RangeIndex>]` resolves each label positionally rather
+than by identity. The result is a silent, local row-scrambling: labels stay
+attached to the
 wrong feature values while every row count and every file-level ID check
 still passes.
 
